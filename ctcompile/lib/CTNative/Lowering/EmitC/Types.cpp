@@ -353,10 +353,12 @@ void lowering::retype(ctjs::FuncOp fn) {
         }
         mlir::Value(object.getResult()).setType(classType(shapeAt(object.getResult())));
     });
-    // A read of a field owning an instance by value names the member itself.
+    // A read of a field owning an instance by value is a pointer to the
+    // instance the member holds (Runtime/Owned.hpp's reading), as a lifted
+    // method's receiver is.
     fn.getBody().walk([&](ctjs::GetPropertyOp get) {
         if (get->hasAttr(kNativeOwnedInstance)) {
-            mlir::Value(get.getResult()).setType(classType(shapeAt(get.getResult())));
+            mlir::Value(get.getResult()).setType(receiverType(shapeAt(get.getResult())));
         }
     });
     // The receiver of a lifted method has the same shape, behind a pointer.

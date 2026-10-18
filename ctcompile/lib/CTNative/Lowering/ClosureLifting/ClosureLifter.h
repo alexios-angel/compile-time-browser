@@ -852,16 +852,16 @@ struct closureLifter {
     /// Otherwise the reason goes into `why` when given.
     bool returnsAnInstance(ctjs::ReturnOp ret, std::string * why = nullptr);
     /// Whether `set` stores a `new`'s instance into a field of `this` that owns
-    /// it by value: the instance has no other use, `set` is the only store of
-    /// its key in the module and runs unconditionally in a class constructor
-    /// before anything but other keys' reads and writes uses `this`, and every
-    /// read of that key is of `this` in that constructor or a method of its
-    /// prototype, used only through constant keys or as a method call's
-    /// receiver. So the instance is never shared, aliased or published, and no
-    /// read can run before the store. The reads go into `reads` when given;
-    /// otherwise the reason goes into `why` when given.
+    /// it by value (as a ctnative::owned member, Runtime/Owned.hpp): the
+    /// instance has no other use, `set` is in a class constructor, the only
+    /// other stores of its key store null through the `this` of that
+    /// constructor or a method of its prototype, and every read of the key is
+    /// of that `this`, used only through constant keys or as a method call's
+    /// receiver. So the instance is never shared, aliased or published. The
+    /// reads and the null stores go into `uses` when given; otherwise the
+    /// reason goes into `why` when given.
     bool ownsByValue(ctjs::SetPropertyOp set,
-                     llvm::SmallVectorImpl<ctjs::GetPropertyOp> * reads = nullptr,
+                     llvm::SmallVectorImpl<mlir::Operation *> * uses = nullptr,
                      std::string * why = nullptr);
     /// Why `object`'s uses do not close its shape: the first store of it into
     /// a field, or return of it, that ownsByValue or returnsAnInstance refuses,
@@ -873,8 +873,9 @@ struct closureLifter {
     /// the reason the unrewritten IR gave.
     llvm::DenseMap<mlir::Operation *, std::string> refusedInstanceUses;
     /// The stores ownsByValue proved during methodCensus, before any rewrite
-    /// turned a method call through a read into a direct call, with the reads.
-    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::GetPropertyOp>> ownedStores;
+    /// turned a method call through a read into a direct call, with the reads
+    /// and the null stores of their keys.
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> ownedStores;
 
     bool retainedByLocalMap(mlir::OpOperand & use,
                             llvm::DenseMap<mlir::Value, mlir::Value> * reads = nullptr);

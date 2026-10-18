@@ -203,7 +203,7 @@ void lowering::censusShapes(llvm::ArrayRef<ctjs::FuncOp> accepted) {
                                             ? "js_" + name.getValue().str()
                                             : name.getValue().str();
             ownedFieldTypes[ctjs::constantKey(set.getKey())] =
-                ec::OpaqueType::get(context, spelled);
+                ec::OpaqueType::get(context, "ctnative::owned<" + spelled + ">");
         });
     }
     std::vector<llvm::StringSet<>> keys; // per family, its distinct (name, type) keys

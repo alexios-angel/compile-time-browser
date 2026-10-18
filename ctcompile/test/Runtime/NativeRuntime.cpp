@@ -17,6 +17,7 @@
 #include "ctcompile/CTNative/Runtime/Browser.hpp"
 #include "ctcompile/CTNative/Runtime/Json.hpp"
 #include "ctcompile/CTNative/Runtime/Object.hpp"
+#include "ctcompile/CTNative/Runtime/Owned.hpp"
 #include "ctcompile/CTNative/Runtime/RegExp.hpp"
 #include "ctcompile/CTNative/Runtime/StaticTable.hpp"
 #include "ctcompile/CTNative/Runtime/ctnative.hpp"
@@ -1489,6 +1490,39 @@ int main() {
         CHECK(line(nullable_string{std::string{"s"}}) == "s");
         CHECK(line(js_string{"a"}, ctnative::js_num{2.0}, js_boolean_t{false}) == "a 2 false");
         CHECK(line() == "");
+    }
+
+    // A field that owns an instance (Owned.hpp): undefined before its store,
+    // the instance after it, null after a null store, and a read or write
+    // through it in the other two states throws the interpreter's TypeError.
+    {
+        struct helper {
+            double width = 3.0;
+        };
+        const auto message = [](auto && use) {
+            try {
+                use();
+            } catch (const ctnative::type_error & error) { return std::string{error.what()}; }
+            return std::string{"no throw"};
+        };
+        ctnative::owned<helper> field;
+        CHECK(message([&] { (void)ctnative::reading(&field, "hide"); }) ==
+              "Cannot read properties of undefined (reading 'hide')");
+        CHECK(message([&] { (void)ctnative::setting(&field, "width"); }) ==
+              "Cannot set properties of undefined (setting 'width')");
+        ctnative::own(&field, helper{4.0});
+        CHECK(ctnative::reading(&field, "width")->width == 4.0);
+        ctnative::setting(&field, "width")->width = 0.0;
+        CHECK(field.value.width == 0.0);
+        const helper * kept = &field.value;
+        ctnative::disown(&field);
+        CHECK(message([&] { (void)ctnative::reading(&field, "width"); }) ==
+              "Cannot read properties of null (reading 'width')");
+        CHECK(message([&] { (void)ctnative::setting(&field, "width"); }) ==
+              "Cannot set properties of null (setting 'width')");
+        CHECK(&field.value == kept && kept->width == 0.0);
+        ctnative::own(&field, helper{});
+        CHECK(ctnative::reading(&field, "width")->width == 3.0);
     }
 
     CHECK(unbound());

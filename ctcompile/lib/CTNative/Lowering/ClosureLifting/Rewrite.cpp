@@ -565,14 +565,19 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             // `produced.is_object_like() ? produced : self`, and
             // whyConstructorReturnsAnObject proved `produced` is never
             // object-like, so the answer is always `self`.
-            // A field of `this` that owns the instance by value, and its reads.
+            // A field of `this` that owns the instance by value, its reads
+            // and its null stores.
             if (built.getResult().hasOneUse()) {
                 mlir::Operation * set = *built.getResult().getUsers().begin();
                 if (const auto owned = ownedStores.find(set); owned != ownedStores.end()) {
                     const auto mark = mlir::UnitAttr::get(context);
                     set->setAttr(kNativeOwnedInstance, mark);
-                    for (ctjs::GetPropertyOp read : owned->second) {
-                        read->setAttr(kNativeOwnedInstance, mark);
+                    // A store of null is marked "null" (Runtime/Owned.hpp's disown).
+                    const auto null = mlir::StringAttr::get(context, "null");
+                    for (mlir::Operation * use : owned->second) {
+                        use->setAttr(kNativeOwnedInstance, llvm::isa<ctjs::SetPropertyOp>(use)
+                                                               ? mlir::Attribute(null)
+                                                               : mlir::Attribute(mark));
                     }
                 }
             }

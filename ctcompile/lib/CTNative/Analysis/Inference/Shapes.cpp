@@ -253,10 +253,12 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> TypeInference::gr
         }
     });
 
-    // A read of a field owning an instance by value is that instance.
+    // A read of a field owning an instance by value is that instance; the
+    // field's null stores store no instance.
     llvm::StringMap<mlir::Value> ownedByKey;
     top->walk([&](ctjs::SetPropertyOp set) {
-        if (set->hasAttr(kNativeOwnedInstance)) {
+        if (set->hasAttr(kNativeOwnedInstance) &&
+            !ctjs::constantAttr<ctjs::NullAttr>(set.getValue())) {
             ownedByKey[ctjs::constantKey(set.getKey())] = set.getValue();
         }
     });
