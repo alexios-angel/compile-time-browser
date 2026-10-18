@@ -27,6 +27,20 @@ CASES = {
         "%clangxx -std=c++20 %S/../../../probes/deduction.cpp -o %t.clangxx && %t.clangxx",
         "%host_cxx -std=c++20 -pedantic -Wall -Wextra -Werror -Wconversion %S/../../../probes/deduction.cpp -o %t.host && %t.host",
     ],
+    "page-scripts": [
+        "split-file %s %t",
+        "not %native_reference --page %t/throw.html > %t/throw.out 2> %t/throw.err",
+        "FileCheck %s --check-prefix=THROW --match-full-lines < %t/throw.out",
+        "FileCheck %s --check-prefix=THROWERR < %t/throw.err",
+        "%native_reference --page %t/hoist.html | FileCheck %s --check-prefix=HOIST --match-full-lines",
+        "%native_reference --page %t/strict.html | FileCheck %s --check-prefix=STRICT --match-full-lines",
+        "%native_reference --page %t/body.html | FileCheck %s --check-prefix=BODY --match-full-lines",
+        "%native_reference --page %t/lexical.html | FileCheck %s --check-prefix=LEXICAL --match-full-lines",
+        "not %native_reference --page %t/redeclare.html > %t/redeclare.out 2> %t/redeclare.err",
+        "FileCheck %s --check-prefix=REDECLARE --match-full-lines --implicit-check-not=second < %t/redeclare.out",
+        "FileCheck %s --check-prefix=REDECLAREERR < %t/redeclare.err",
+        "%native_reference --page %t/module.html | FileCheck %s --check-prefix=MODULE --match-full-lines",
+    ],
 }
 
 
