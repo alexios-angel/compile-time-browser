@@ -11,6 +11,7 @@
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
 #include "ctcompile/CTNative/Analysis/NativeObjectIdentity.h"
+#include "ctcompile/CTNative/Analysis/TypeInference.h"
 
 #include "ClosedValueFlow.h"
 #include "NativeMap/Presence.h"
@@ -377,6 +378,8 @@ std::string collect(plan & out, closedValueFlow & graph,
         } else if (auto read = object.getDefiningOp<ctjs::LoadUpvalueOp>();
                    read && read->hasAttr(kNativeEnvironmentRead)) {
             // The graph connected this extraction to its proved owning slot.
+        } else if (graph.staticReads.contains(object)) {
+            // A read of a run-once static that runs after its one write.
         } else if (!sites.contains(object.getDefiningOp())) {
             return ("native Map flow contains a non-Map producer `" +
                     object.getDefiningOp()->getName().getStringRef() + "`")
@@ -384,6 +387,10 @@ std::string collect(plan & out, closedValueFlow & graph,
         }
         for (mlir::OpOperand & use : object.getUses()) {
             if (closedValueFlow::captured(use)) { continue; }
+            // The write that stores it into a run-once static.
+            if (use.getOperandNumber() == 1 && graph.staticWrites.contains(use.getOwner())) {
+                continue;
+            }
             if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
                 call && use.getOperandNumber() >= 3) {
                 auto fn = call.getTarget();
@@ -624,6 +631,7 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals,
     closedValueFlow graph;
     for (ctjs::ConstructOp made : madeSites) { graph.add(made.getResult()); }
     graph.connectEnvironmentReads(module);
+    graph.connectRunOnceStatics(module);
     graph.build(module);
     connectSetReceivers(graph, module);
     connectPayloads(graph, module, madeSites);
@@ -716,6 +724,23 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals,
     for (mlir::Operation * copy : copies.calls) {
         copy->setAttr(kNativeMapSnapshotCopy, mlir::UnitAttr::get(context));
     }
+    // A proved Map held in a run-once static is read only after its one
+    // write (connectRunOnceStatics), so the hoisted undefined of the
+    // variable is never seen, and its type is the Map's alone.
+    llvm::DenseSet<mlir::Attribute> heldStatics;
+    for (mlir::Operation * write : graph.staticWrites) {
+        auto store = llvm::cast<ctjs::CellSetOp>(write);
+        auto cell = store.getCell().getDefiningOp<ctjs::CreateCellOp>();
+        if (cell && families.contains(graph.find(store.getValue()))) {
+            heldStatics.insert(cell->getAttr(kNativeStaticCell));
+        }
+    }
+    module.walk([&](ctjs::CreateCellOp cell) {
+        if (const auto name = cell->getAttr(kNativeStaticCell);
+            name && heldStatics.contains(name)) {
+            cell->setAttr(kAssignedBeforeRead, mlir::UnitAttr::get(context));
+        }
+    });
     int64_t group = 0;
     for (const plan & candidate : plans) {
         for (ctjs::ConstructOp made : candidate.made) {

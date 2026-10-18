@@ -340,7 +340,9 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             statics.try_emplace(name.str(), type.getValueType());
             mlir::Value place = ec::GetGlobalOp::create(
                 b, where, type, mlir::FlatSymbolRefAttr::get(context, name.getValue()));
-            if (!o->hasAttr(kNativeStaticReference)) {
+            // A static nothing reads before its one write (kAssignedBeforeRead)
+            // never shows its initial.
+            if (!o->hasAttr(kNativeStaticReference) && !o->hasAttr(kAssignedBeforeRead)) {
                 ec::AssignOp::create(
                     b, where, place,
                     convertScalar(b, where, cell.getInitial(), type.getValueType()));
