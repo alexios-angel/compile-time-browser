@@ -7,12 +7,14 @@
 // callee never stores the callback, so it borrows the caller's callable
 // instead of owning a copy: no allocation and no copy.
 //
-// Also ctnative::bound and ctnative::bind, one member of a closure set: a
-// value that is one of a proved, finite set of lifted callables, each bound to
-// its own captures. The set is a std::variant of bound members, and a call
-// through it is invoke_callable, which std::visit dispatches to the member the
-// variant holds. Only programs with a borrowed parameter or a closure set
-// include this header.
+// Also ctnative::parameter_t, for a closure set: a value that is one of a
+// proved, finite set of lifted callables, each bound to its own captures.
+// ctcompile emits one struct per set (EmitC/ClosureSets.cpp), with a tag
+// naming the member and each member's captures as named fields; a capture
+// whose type only the lifted function's signature spells, such as the
+// pointer to an arrow's lexical `this`, is declared as parameter_t of that
+// function. Only programs with a borrowed parameter or a closure set include
+// this header.
 //
 //===----------------------------------------------------------------------===//
 
@@ -23,7 +25,6 @@
 #include <tuple>
 #include <type_traits>
 #include <utility>
-#include <variant>
 
 namespace ctnative {
 
@@ -59,58 +60,17 @@ private:
     R (*call_)(void *, A...);
 };
 
-/// One member of a closure set: the lifted function `F`, whose leading
-/// parameters are its captures, bound to their values. Each `F` is its own
-/// type, so two members with the same signature and capture types are still
-/// two alternatives of the set's std::variant. The captures are copies, which
-/// is what a closure set proves safe (ClosureLifting/ClosureSets.cpp refuses
-/// a binding written after it is captured).
-template <auto F, class... Captures> struct bound {
-    std::tuple<Captures...> captures;
-
-    /// Calls `F` with the captures, then `arguments`.
-    template <class... A> decltype(auto) operator()(A &&... arguments) const {
-        return std::apply(
-            [&](const Captures &... values) -> decltype(auto) {
-                return F(values..., std::forward<A>(arguments)...);
-            },
-            captures);
-    }
-};
-
-/// Binds `F` to `captures`, as the closure that makes one member of a set.
-template <auto F, class... Captures>
-bound<F, std::decay_t<Captures>...> bind(Captures &&... captures) {
-    return {{std::forward<Captures>(captures)...}};
-}
-
 namespace detail {
 template <class Function> struct parameters_of;
 template <class R, class... P> struct parameters_of<R (*)(P...)> {
     using type = std::tuple<std::decay_t<P>...>;
 };
-template <auto F, class Parameters, class Indices> struct bound_prefix;
-template <auto F, class Parameters, std::size_t... I>
-struct bound_prefix<F, Parameters, std::index_sequence<I...>> {
-    using type = bound<F, std::tuple_element_t<I, Parameters>...>;
-};
 } // namespace detail
 
-/// The member of a closure set that binds `F`'s first `N` parameters, its
-/// captures, as the types `F` declares them: what bind<F> makes from those
-/// captures. Generated code spells a member this way when a capture's type is
-/// one only `F`'s signature names, such as the pointer to an arrow's lexical
-/// `this`.
-template <auto F, std::size_t N>
-using bound_prefix =
-    typename detail::bound_prefix<F, typename detail::parameters_of<decltype(F)>::type,
-                                  std::make_index_sequence<N>>::type;
-
-/// Calls the member of a closure set that `callable` holds. Admission proved
-/// every member takes `Args` and returns one type.
-template <class... Members, class... Args>
-auto invoke_callable(const std::variant<Members...> & callable, Args... args) {
-    return std::visit([&](const auto & member) { return member(args...); }, callable);
-}
+/// The type of function `F`'s parameter `I`, without reference or cv: what a
+/// closure-set member's capture is declared as when only `F`'s signature
+/// spells its type.
+template <auto F, std::size_t I>
+using parameter_t = std::tuple_element_t<I, typename detail::parameters_of<decltype(F)>::type>;
 
 } // namespace ctnative

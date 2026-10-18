@@ -378,7 +378,7 @@ template <class Scalar, bool Nullable> struct string_union {
             return tag == union_kind::string;
         }
     }
-    /// The same kind holding equal values, as std::variant compares.
+    /// Equal when both hold the same kind with equal values.
     friend bool operator==(const string_union & a, const string_union & b) {
         if (a.tag != b.tag) { return false; }
         switch (a.tag) {

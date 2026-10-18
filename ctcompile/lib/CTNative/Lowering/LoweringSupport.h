@@ -76,7 +76,7 @@ enum class carrier {
     map,
     closure,
     /// One of a proved set of callables (Analysis lattice `closure_set`), a
-    /// std::variant spelled per set by EmitC/ClosureSets.cpp.
+    /// struct emitted per set by EmitC/ClosureSets.cpp.
     closureSet,
     methodTable,
     objectIdentity,
