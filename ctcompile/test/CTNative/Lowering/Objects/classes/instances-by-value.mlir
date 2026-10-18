@@ -7,8 +7,10 @@
 // a ctnative::owned member of the owner's class (ClosureLifting/Methods.cpp
 // ownsByValue, kNativeOwnedInstance, Runtime/Owned.hpp): the field is
 // undefined before its store and null after a store of null in a method, and
-// a read through it then throws the interpreter's TypeError. A refused store
-// or return is named in the constructor's closure_reason.
+// a read through it then throws the interpreter's TypeError. The field may
+// also be read through the `this` of an arrow the class's code makes and only
+// calls. A refused store or return is named in the constructor's
+// closure_reason.
 //
 // RUN: split-file %s %t
 //
@@ -163,6 +165,46 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=FOREIGN --implicit-check-not=ctnative.owned_instance
 // FOREIGN: ctnative.closure_reason = "the instance `new` makes does not have a closed shape - it is stored into a field that does not own it by value - field `_scrollBar` is read in `peek${{[0-9]+}}` through something other than the `this` of the class's constructor or methods"
+//
+// An arrow a method makes reads the field through the `this` it captures,
+// which is the method's (ClosureLifting/ArrowThis.cpp lexicalThisMaker).
+// When the method only calls it, directly or from an arrow it only calls,
+// the arrow runs while the method's call does, so the instance outlives it:
+// native, and GCC, Clang, the interpreter and Node print the same value.
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/arrow.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/arrow.mlir
+// RUN: FileCheck %s --check-prefix=OWNED --implicit-check-not=ctnative.not_native < %t/arrow.mlir
+// RUN: ctjs-opt %t/arrow.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/arrow.cpp
+// RUN: FileCheck %s --check-prefix=ARROW-CPP < %t/arrow.cpp
+// RUN: %gxx -O2 %t/arrow.cpp -o %t/arrow-gcc
+// RUN: %t/arrow-gcc | FileCheck %s --check-prefix=RUN-ARROW
+// RUN: %clangxx -O2 %t/arrow.cpp -o %t/arrow-clang
+// RUN: %t/arrow-clang | FileCheck %s --check-prefix=RUN-ARROW
+// RUN: %native_reference %t/arrow.js | FileCheck %s --check-prefix=RUN-ARROW
+// RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/arrow.js | FileCheck %s --check-prefix=RUN-ARROW
+// ARROW-CPP: ctnative::owned<ScrollBarHelper> _scrollBar;
+// ARROW-CPP: ctnative::js_num close_{{[0-9]+}}(Modal* const {{v[0-9]+}}) {
+// ARROW-CPP: ctnative::js_num fn_{{[0-9]+}}(Modal* const {{v[0-9]+}}) {
+// ARROW-CPP: = &{{v[0-9]+}}->_scrollBar;
+// ARROW-CPP-NEXT: ScrollBarHelper* const {{v[0-9]+}} = ctnative::reading({{v[0-9]+}}, "reset");
+// RUN-ARROW: r=805109052
+//
+// An arrow that is stored (arrow-stored.js) or passed to a call
+// (arrow-passed.js) can run after the call that made it returns, when
+// nothing holds the instance: refused, naming the arrow and that use. In
+// arrow-nested-stored.js the reading arrow is only called, but the arrow
+// that makes it is stored, and that one is named.
+// RUN: for name in arrow-stored arrow-passed arrow-nested-stored; do \
+// RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/$name.mlir; done
+// RUN: FileCheck %s --check-prefix=ARROW-STORED --implicit-check-not=ctnative.owned_instance < %t/arrow-stored.mlir
+// RUN: FileCheck %s --check-prefix=ARROW-PASSED --implicit-check-not=ctnative.owned_instance < %t/arrow-passed.mlir
+// RUN: FileCheck %s --check-prefix=ARROW-NESTED --implicit-check-not=ctnative.owned_instance < %t/arrow-nested-stored.mlir
+// ARROW-STORED: ctnative.closure_reason = "the instance `new` makes does not have a closed shape - it is stored into a field that does not own it by value - field `_scrollBar` is read in `[[FN:fn\$[0-9]+]]` through the `this` that arrow `[[FN]]` captures, and that arrow is stored into an object, so it can run after the call that made it returns, when nothing holds the instance"
+// ARROW-PASSED: ctnative.closure_reason = "the instance `new` makes does not have a closed shape - it is stored into a field that does not own it by value - field `_scrollBar` is read in `[[FN:fn\$[0-9]+]]` through the `this` that arrow `[[FN]]` captures, and that arrow is passed to a call, so it can run after the call that made it returns, when nothing holds the instance"
+// ARROW-NESTED: ctnative.closure_reason = "the instance `new` makes does not have a closed shape - it is stored into a field that does not own it by value - field `_scrollBar` is read in `fn$[[READS:[0-9]+]]` through the `this` that arrow `[[ESCAPES:fn\$[0-9]+]]` captures, and that arrow is stored into an object, so it can run after the call that made it returns, when nothing holds the instance"
+// ARROW-NESTED: ctjs.func {{(private )?}}@[[ESCAPES]](
+// ARROW-NESTED: ctjs.create_closure %arg2{{\[}}[[READS]]{{\]}}
 //
 // One instance stored into two fields would be shared by them: refused.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/aliased.js 2>/dev/null \
@@ -408,3 +450,73 @@ function run() {
     return pass(3).v;
 }
 var r = run();
+
+//--- arrow.js
+var r = (function () {
+    class ScrollBarHelper {
+        constructor() { this.width = 3; }
+        reset() { this.width = 5; return 2; }
+    }
+    class Modal {
+        constructor(k) { this._scrollBar = new ScrollBarHelper(); this.k = k; }
+        close() {
+            const done = () => this._scrollBar.reset() + this._scrollBar.width + this.k;
+            return done();
+        }
+        nested() {
+            const outer = () => {
+                const inner = () => this._scrollBar.width * 10;
+                return inner() + this.k;
+            };
+            return outer();
+        }
+    }
+    function show(k) { const m = new Modal(k); return m.close() * 1000 + m.nested(); }
+    return show(1) * 100000 + show(2);
+})();
+
+//--- arrow-stored.js
+var r = (function () {
+    class ScrollBarHelper {
+        constructor() { this.width = 3; }
+        reset() { this.width = 5; return 2; }
+    }
+    class Modal {
+        constructor() { this._scrollBar = new ScrollBarHelper(); this.later = null; }
+        close() { this.later = () => this._scrollBar.reset(); return 1; }
+    }
+    function show() { const m = new Modal(); const a = m.close(); return a + m.later(); }
+    return show();
+})();
+
+//--- arrow-passed.js
+var kept = [];
+function keep(f) { kept.push(f); return 0; }
+var r = (function () {
+    class ScrollBarHelper {
+        constructor() { this.width = 3; }
+        reset() { this.width = 5; return 2; }
+    }
+    class Modal {
+        constructor() { this._scrollBar = new ScrollBarHelper(); }
+        close() { return keep(() => this._scrollBar.reset()); }
+    }
+    function show() { const m = new Modal(); return m.close() + kept[0](); }
+    return show();
+})();
+
+//--- arrow-nested-stored.js
+var r = (function () {
+    class ScrollBarHelper {
+        constructor() { this.width = 3; }
+    }
+    class Modal {
+        constructor() { this._scrollBar = new ScrollBarHelper(); this.later = null; }
+        close() {
+            this.later = () => { const inner = () => this._scrollBar.width; return inner(); };
+            return 1;
+        }
+    }
+    function show() { const m = new Modal(); return m.close() + m.later(); }
+    return show();
+})();

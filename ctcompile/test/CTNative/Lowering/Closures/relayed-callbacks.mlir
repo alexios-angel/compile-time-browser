@@ -30,7 +30,10 @@
 // RUN:   | FileCheck %s --check-prefix=FUNCTION
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/shared.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
-// RUN:   | FileCheck %s --check-prefix=SHARED
+// RUN:   | FileCheck %s --check-prefix=SHARED --implicit-check-not=ctnative.not_native
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/shared-escaped.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=SHAREDESCAPED
 
 // The listener calls the callback. Each call of `queue` gets its own copy of
 // `queue`, `whenEnds` and the listener, which takes the label the callback
@@ -70,12 +73,19 @@
 // ARGS: @parts${{[0-9]+}}({{.*}}ctnative.not_native = "a closure used as a value: it is passed as an argument - lifting has no call site to move the captures to, so this needs a specialised callee (Phase 63), not a lift"
 // FUNCTION: @parts${{[0-9]+}}({{.*}}ctnative.not_native = "a closure used as a value: it is passed as an argument - lifting has no call site to move the captures to, so this needs a specialised callee (Phase 63), not a lift"
 
-// Not native yet: the original of the last link, which no call reaches once
-// both calls have copies, still calls `trigger` from its timer with an
-// element no caller proves, and admission keeps that call until it removes
-// the original as unreachable, so `trigger` is refused. The copies are made.
-// SHARED: ctnative.copies = {afterTransition${{[0-9]+}} = "afterTransition$2"
-// SHARED: @fn$10({{.*}}ctnative.not_native = "parameter 0 is !ctnative.boxed - no caller proves it
+// The original of the last link, which no call reaches once both calls have
+// copies, also calls `trigger` from its timer. The copier makes such an
+// original private and admission skips it (CallSiteCopies.cpp, LowerToEmitC's
+// closeNativeSet), so `trigger` is typed by its live callers alone and the
+// whole program lowers; the originals are removed as unreachable. In
+// shared-escaped.js a function handed to the global object still calls the
+// original, which keeps a caller no one proves, so `trigger` keeps its
+// refusal; the copies are made there too.
+// SHARED: ctnative.copies = {afterTransition${{[0-9]+}} = "afterTransition$[[AT:[0-9]+]]"
+// SHARED-SAME: ctnative.unreachable_refusals = [{function = "afterTransition$[[AT]]", reason = "removed: unreachable
+// SHARED: emitc.func @trigger_{{[0-9]+}}(%arg0: !emitc.opaque<"ctnative::js_element_t">)
+// SHAREDESCAPED: ctnative.copies = {afterTransition${{[0-9]+}} = "afterTransition${{[0-9]+}}"
+// SHAREDESCAPED: @trigger${{[0-9]+}}({{.*}}ctnative.not_native = "parameter 0 is !ctnative.boxed - no caller proves it
 
 //--- listener.js
 var log = '';
@@ -281,9 +291,9 @@ var log = '';
 (function () {
     const execute = (possibleCallback, args = [], defaultValue = possibleCallback) =>
         typeof possibleCallback === 'function' ? possibleCallback.call(...args) : defaultValue;
-    const trigger = element => {
+    function trigger(element) {
         element.dispatchEvent(new Event('transitionend'));
-    };
+    }
     function afterTransition(callback, element, waits) {
         if (!waits) {
             execute(callback);
@@ -301,6 +311,50 @@ var log = '';
     function queue(callback, element, waits) {
         afterTransition(callback, element, waits);
     }
+    function parts(part, label) {
+        queue(() => {
+            log = log + 'a' + label;
+        }, part, true);
+        queue(() => {
+            log = log + 'b' + label;
+        }, part, false);
+    }
+    trigger(document.documentElement);
+    const kids = document.documentElement.children;
+    for (let k = 0; k < kids.length; k++) {
+        parts(kids[k], 'k');
+    }
+})();
+
+//--- shared-escaped.js
+var log = '';
+(function () {
+    const execute = (possibleCallback, args = [], defaultValue = possibleCallback) =>
+        typeof possibleCallback === 'function' ? possibleCallback.call(...args) : defaultValue;
+    function trigger(element) {
+        element.dispatchEvent(new Event('transitionend'));
+    }
+    function afterTransition(callback, element, waits) {
+        if (!waits) {
+            execute(callback);
+            return;
+        }
+        const handler = () => {
+            element.removeEventListener('transitionend', handler);
+            execute(callback);
+        };
+        element.addEventListener('transitionend', handler);
+        setTimeout(() => {
+            trigger(element);
+        }, 5);
+    }
+    function queue(callback, element, waits) {
+        afterTransition(callback, element, waits);
+    }
+    function later(callback, element) {
+        afterTransition(callback, element, true);
+    }
+    globalThis.later = later;
     function parts(part, label) {
         queue(() => {
             log = log + 'a' + label;

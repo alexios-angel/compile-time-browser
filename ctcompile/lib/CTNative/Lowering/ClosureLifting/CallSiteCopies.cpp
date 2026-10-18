@@ -15,14 +15,17 @@
 //
 // A call is copied only when:
 //  - it is a direct call, or a method call `o.m(...)` that the method census
-//    resolves to one function reading neither its receiver nor its own
-//    closure, as Bootstrap's `this._queueCallback(cb, ...)` reaches
-//    `_queueCallback`. Every object the receiver may name must be known: a
-//    closed object the caller made, or the caller's own receiver when the
-//    caller is a method stored only into the fields the census proved. Such
-//    a call becomes a direct call of its copy, with both undefined. The
-//    census runs on a clone of the module (methodSitesForCopies), because
-//    the main one comes after this rewrite;
+//    resolves to one function that does not read its own closure, as
+//    Bootstrap's `this._queueCallback(cb, ...)` reaches `_queueCallback`.
+//    Every object the receiver may name must be known: a closed object the
+//    caller made, or the caller's own receiver when the caller is a method
+//    stored only into the fields the census proved. Such a call becomes a
+//    direct call of its copy with an undefined callee value. A copy that
+//    reads `this` keeps the call's receiver, carried as a lifted method's is
+//    (kNativeReceiver), so it must use `this` as a method may (whyThisLeaks);
+//    the census then treats that operand as a method call's receiver
+//    (carriesReceiverToCopy). The census runs on a clone of the module
+//    (methodSitesForCopies), because the main one comes after this rewrite;
 //  - the argument is a closure made for that call alone, in the call's own
 //    block, with no capture relayed from the enclosing closure and no `this`
 //    it reads from where it is made (an arrow's is a capture by now,
@@ -283,6 +286,16 @@ bool closureLifter::writesUpvalues(ctjs::FuncOp fn, unsigned depth) {
 /// method fields the census proved (the first half of whyNotLiftableMethod),
 /// so no call the census did not see can pass another. Asked after
 /// methodCensus.
+/// Whether `use` is the receiver of a direct call copyCallSitesForClosures
+/// made of a copy that keeps its method call's receiver, and that copy uses
+/// `this` only as a method's receiver may: the census then treats the
+/// operand as the receiver of a resolved method call.
+bool closureLifter::carriesReceiverToCopy(mlir::OpOperand & use) {
+    auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+    return call && use.getOperandNumber() == 0 && receiverCopyCalls.contains(call.getOperation()) &&
+           call.getTarget() && !whyThisLeaks(call.getTarget());
+}
+
 bool closureLifter::knowsEveryReceiver(ctjs::CallOp call) {
     const mlir::Value receiver = call.getReceiver();
     const auto named = behind.lookup(receiver);
@@ -311,7 +324,7 @@ bool closureLifter::knowsEveryReceiver(ctjs::CallOp call) {
 /// callee value it is given; it must take every argument the call passes.
 /// The method census decides it on a clone, because it marks the module
 /// and reads it before the rewrites that still come before the main census;
-/// calls correspond by walk order.
+/// calls correspond by walk order, which the census must not change.
 llvm::DenseMap<mlir::Operation *, ctjs::FuncOp> closureLifter::methodSitesForCopies() {
     const auto passesAClosure = [](ctjs::CallOp call) {
         return call.getCallee().getDefiningOp<ctjs::GetPropertyOp>() &&
@@ -321,14 +334,13 @@ llvm::DenseMap<mlir::Operation *, ctjs::FuncOp> closureLifter::methodSitesForCop
                           made->getBlock() == call->getBlock();
                });
     };
-    // Whether `target` can stand for the call: it reads neither receiver nor
-    // callee value, takes every argument, and some closure the call passes
-    // would be copied down a chain from it.
+    // Whether `target` can stand for the call: it reads no callee value,
+    // takes every argument, and some closure the call passes would be copied
+    // down a chain from it.
     const auto copiesFrom = [&](ctjs::CallOp call, ctjs::FuncOp target) {
         if (!target || target.getBody().empty() || needsCallee(target)) { return false; }
         mlir::Block & entry = target.getBody().front();
-        if (!entry.getArgument(ctjs::arg_receiver).use_empty() ||
-            call.getArgs().size() > entry.getNumArguments() - ctjs::implicit_arguments) {
+        if (call.getArgs().size() > entry.getNumArguments() - ctjs::implicit_arguments) {
             return false;
         }
         return llvm::any_of(llvm::enumerate(call.getArgs()), [&](auto argument) {
@@ -361,21 +373,51 @@ llvm::DenseMap<mlir::Operation *, ctjs::FuncOp> closureLifter::methodSitesForCop
         return sites;
     }
     mlir::OwningOpRef<mlir::ModuleOp> clone(module.clone());
+    // Each call of the clone carries its walk position, which is that of the
+    // call it copies here, through the census. A census that added, erased or
+    // reordered a call would pair a resolution with the wrong call here and
+    // copy it, so that is a fatal error.
+    const auto position = mlir::StringAttr::get(context, "ctnative.census_position");
+    unsigned next = 0;
+    clone->walk([&](ctjs::CallOp twin) {
+        twin->setAttr(position,
+                      mlir::IntegerAttr::get(mlir::IntegerType::get(context, 32), next++));
+    });
     closureLifter census{*clone};
     census.census();
     census.constructorCensus();
     census.argumentCensus();
     census.methodCensus();
     llvm::SmallVector<ctjs::CallOp> twins;
-    clone->walk([&](ctjs::CallOp call) { twins.push_back(call); });
-    if (twins.size() != calls.size()) { return sites; }
+    clone->walk([&](ctjs::CallOp twin) {
+        auto at = twin->getAttrOfType<mlir::IntegerAttr>(position);
+        if (!at || at.getInt() != static_cast<std::int64_t>(twins.size())) {
+            llvm::report_fatal_error(
+                "ctnative lowering: the method census added, erased or reordered a ctjs.call "
+                "in its clone of the module - methodSitesForCopies pairs its resolutions with "
+                "this module's calls by position, so a rewrite the census runs must keep "
+                "every call in place, or this pairing must follow it");
+        }
+        twins.push_back(twin);
+    });
+    if (twins.size() != calls.size()) {
+        llvm::report_fatal_error("ctnative lowering: the method census erased a ctjs.call in its "
+                                 "clone of the module - methodSitesForCopies pairs its "
+                                 "resolutions with this module's calls by position");
+    }
     for (auto [call, twin] : llvm::zip(calls, twins)) {
         if (!passesAClosure(call) || !census.knowsEveryReceiver(twin)) { continue; }
         std::optional<methodCall> resolved = census.resolveMethod(twin);
         auto target = resolved
                           ? module.lookupSymbol<ctjs::FuncOp>(resolved->target.getSymNameAttr())
                           : ctjs::FuncOp{};
-        if (copiesFrom(call, target)) { sites[call.getOperation()] = target; }
+        // A target that reads `this` keeps the call's receiver, which it must
+        // use only as a method's receiver may (whyThisLeaks).
+        if (copiesFrom(call, target) &&
+            (target.getBody().front().getArgument(ctjs::arg_receiver).use_empty() ||
+             !census.whyThisLeaks(resolved->target))) {
+            sites[call.getOperation()] = target;
+        }
     }
     return sites;
 }
@@ -540,15 +582,23 @@ bool closureLifter::copyCallSitesForClosures() {
             ctjs::FuncOp copy = cloneDeep(original);
             if (!link) {
                 // The method call becomes a direct call of the copy. The copy
-                // reads neither receiver nor callee value, so both are
-                // undefined, and the load of the method goes with the call.
+                // reads no callee value, so that is undefined, and the load of
+                // the method goes with the call. A copy that reads `this` keeps
+                // the call's receiver, carried as a lifted method's is.
                 auto method = llvm::cast<ctjs::CallOp>(call);
                 mlir::OpBuilder here(method);
                 const mlir::Value undefined = undefinedAt(here, method.getLoc());
-                link =
-                    directCall(here, method.getLoc(), copy, undefined, undefined, undefined, {},
-                               method.getArgs(),
-                               copy.getBody().front().getNumArguments() - ctjs::implicit_arguments);
+                const bool keepsReceiver =
+                    !copy.getBody().front().getArgument(ctjs::arg_receiver).use_empty();
+                link = directCall(
+                    here, method.getLoc(), copy, keepsReceiver ? method.getReceiver() : undefined,
+                    undefined, undefined, {}, method.getArgs(),
+                    copy.getBody().front().getNumArguments() - ctjs::implicit_arguments);
+                if (keepsReceiver) {
+                    link->setAttr(kNativeReceiver, mlir::UnitAttr::get(context));
+                    copy->setAttr(kNativeReceiver, mlir::UnitAttr::get(context));
+                    receiverCopyCalls.insert(link.getOperation());
+                }
                 method.getResult().replaceAllUsesWith(link.getResult());
                 mlir::Operation * load = method.getCallee().getDefiningOp();
                 method.erase();
@@ -710,6 +760,17 @@ bool closureLifter::copyCallSitesForClosures() {
         }
         boundCaptureCalls.erase(op);
         siblingBindingTargets.erase(op);
+    }
+    // A dead original keeps the importer's public visibility otherwise, and
+    // MLIR's DeadCodeAnalysis gives a public function unknown callers: its
+    // parameters read !ctnative.boxed, and every call it makes passes that on,
+    // so a live function it shares with the copies is refused for a caller
+    // that never runs. Private, it has no callers and is dead to the type
+    // solve too, as lift() makes its targets private for the same reason; the
+    // sweep after admission removes it.
+    for (mlir::Operation * op : dead) {
+        mlir::SymbolTable::setSymbolVisibility(llvm::cast<ctjs::FuncOp>(op),
+                                               mlir::SymbolTable::Visibility::Private);
     }
 
     llvm::SmallVector<mlir::NamedAttribute> all;
