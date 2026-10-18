@@ -141,6 +141,11 @@ inline constexpr llvm::StringLiteral kNativePromiseCallback = "ctnative.promise_
 /// which follows the captures; a handler that declares none has no
 /// parameter at that index.
 inline constexpr llvm::StringLiteral kNativePromiseParameter = "ctnative.promise_parameter";
+/// On such a callback's `ctjs.func`, the entry-block indices of the arguments
+/// that hold a resolve function, which the callback only calls: an
+/// executor's own parameter, and a then-handler's captures of the executor
+/// that made it (ClosureLifting/Promises.cpp).
+inline constexpr llvm::StringLiteral kNativePromiseResolveArgs = "ctnative.promise_resolve_args";
 /// On a specialised `addEventListener` call whose receiver is the realm's own
 /// `document` or `window`: that name, since the lowering replaces the load.
 inline constexpr llvm::StringLiteral kNativeHostTarget = "ctnative.host_target";
