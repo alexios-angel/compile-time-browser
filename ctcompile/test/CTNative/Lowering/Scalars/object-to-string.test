@@ -59,6 +59,36 @@
 # RUN: %native_reference %t/primitive.js | FileCheck %s --check-prefix=PRIMITIVE
 # RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/primitive.js | FileCheck %s --check-prefix=PRIMITIVE-NODE
 #
+# Bootstrap's own toType tests `null == t` first and answers `${t}` for null
+# and undefined. In each copy that test has one answer, so only the arm it
+# selects is left (ArgumentTypeCopies.cpp's foldTypeTests and the guard
+# precompute): the Number, String and Boolean copies keep the toString arm,
+# the nullable one keeps `${t}`. All of them lower.
+#
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/bootstrap.js -o %t/bootstrap-input.mlir
+# RUN: ctjs-opt %t/bootstrap-input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/bootstrap.mlir
+# RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/bootstrap.mlir
+# RUN: FileCheck %s --check-prefix=PRIMITIVE-COPIES < %t/bootstrap.mlir
+# RUN: ctjs-translate --mlir-to-cpp %t/bootstrap.mlir | FileCheck %s --check-prefix=CPP --implicit-check-not=number_string --implicit-check-not=boolean_string --implicit-check-not=std::variant
+# RUN: %compilation_unit --cxx g++ --module %t/bootstrap.mlir --js %t/bootstrap.js --work %t --name bootstrap_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/bootstrap.mlir --js %t/bootstrap.js --work %t --name bootstrap_clang --core-build %build
+# RUN: %native_reference %t/bootstrap.js | FileCheck %s --check-prefix=PRIMITIVE
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/bootstrap.js | FileCheck %s --check-prefix=PRIMITIVE-NODE
+#
+# kinds.js tests `typeof t === "string"` and calls toLowerCase in that arm.
+# Unfolded, the Number and Boolean copies keep a String narrowing of their
+# parameter in the arm no call reaches, which admission refuses ("a value
+# narrowed by `string` from !ctnative.num<i32>"); folded, all of them lower.
+#
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/kinds.js -o %t/kinds-input.mlir
+# RUN: ctjs-opt %t/kinds-input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/kinds.mlir
+# RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/kinds.mlir
+# RUN: FileCheck %s --check-prefix=KINDS-COPIES < %t/kinds.mlir
+# RUN: %compilation_unit --cxx g++ --module %t/kinds.mlir --js %t/kinds.js --work %t --name kinds_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/kinds.mlir --js %t/kinds.js --work %t --name kinds_clang --core-build %build
+# RUN: %native_reference %t/kinds.js | FileCheck %s --check-prefix=KINDS
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/kinds.js | FileCheck %s --check-prefix=KINDS-NODE
+#
 # A call that passes a union itself is a real merge, so its function is not
 # copied, and Object.prototype.toString takes no union (that would need
 # std::visit). union.js's only call passes a Number|String: no copy, and
@@ -94,6 +124,9 @@
 # PRIMITIVE-COPIES: ctnative.copies = {[[COPY1:[^ ]+]] = "[[SOURCE:[^"]+]]", [[COPY2:[^ ]+]] = "[[SOURCE]]", [[COPY3:[^ ]+]] = "[[SOURCE]]"}
 # PRIMITIVE: r="number%7Cstring%7Cboolean%7Cnull%7Cundefined"
 # PRIMITIVE-NODE: r=number|string|boolean|null|undefined
+# KINDS-COPIES: ctnative.copies = {[[COPY1:[^ ]+]] = "[[SOURCE:[^"]+]]", [[COPY2:[^ ]+]] = "[[SOURCE]]"}
+# KINDS: r="abc%7CNumber%7CBoolean"
+# KINDS-NODE: r=abc|Number|Boolean
 # UNION-REFUSED: Object.prototype.toString's argument 0 is {{.*}}, not a String, Number, Boolean, null or undefined
 # UNION: r="number%7Cstring"
 # UNION-NODE: r=number|string
@@ -143,6 +176,21 @@ var r = (function () {
     var none;
     return toType(5) + "|" + toType("x") + "|" + toType(true) + "|" + toType(empty) + "|" +
         toType(none);
+})();
+
+#--- bootstrap.js
+var r = (function () {
+    const toType = t => null == t ? `${t}` : Object.prototype.toString.call(t).match(/\s([a-z]+)/i)[1].toLowerCase();
+    var empty = null;
+    var none;
+    return toType(5) + "|" + toType("x") + "|" + toType(true) + "|" + toType(empty) + "|" +
+        toType(none);
+})();
+
+#--- kinds.js
+var r = (function () {
+    const kind = t => typeof t === "string" ? t.toLowerCase() : Object.prototype.toString.call(t).match(/\s([a-z]+)/i)[1];
+    return kind("ABC") + "|" + kind(5) + "|" + kind(true);
 })();
 
 #--- union.js

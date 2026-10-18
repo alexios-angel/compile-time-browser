@@ -1117,6 +1117,19 @@ int main() {
           js_string{"\xED\xA0\x80"});
     CHECK(ctnative::String.prototype.toLowerCase.call(js_string{}) == js_string{});
     CHECK(ctbrowser::unicode_case("\xC3\x9F", true) == "SS");
+    // String.prototype.toUpperCase: ASCII, ß expanding to SS, Latin-1, a
+    // final sigma's capital, a lone surrogate copied, and the empty string.
+    CHECK(ctnative::String.prototype.toUpperCase.call(js_string{"abc XYZ"}) ==
+          js_string{"ABC XYZ"});
+    CHECK(ctnative::String.prototype.toUpperCase.call(js_string{"stra\xC3\x9F"
+                                                                "e"}) == js_string{"STRASSE"});
+    CHECK(ctnative::String.prototype.toUpperCase.call(js_string{"\xC3\xA9"}) ==
+          js_string{"\xC3\x89"});
+    CHECK(ctnative::String.prototype.toUpperCase.call(js_string{"\xCF\x82"}) ==
+          js_string{"\xCE\xA3"});
+    CHECK(ctnative::String.prototype.toUpperCase.call(js_string{"\xED\xA0\x80"}) ==
+          js_string{"\xED\xA0\x80"});
+    CHECK(ctnative::String.prototype.toUpperCase.call(js_string{}) == js_string{});
 
     // String.prototype.trim: ASCII space and line terminators, NBSP, LS and
     // the BOM are all StrWhiteSpaceChar; interior space stays.
