@@ -132,6 +132,11 @@ struct closureLifter {
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<boundCaptureCall>> boundCaptureCalls;
     llvm::DenseSet<mlir::Operation *> siblingBindingTargets;
     bool allowSiblingCaptures = false;
+    /// The sibling binding targets, by name, that an earlier trial of this
+    /// run could not lift with all their capture holders. bindLocalFunctions
+    /// holds their bindings to the stricter rule, so the other bindings can
+    /// still take sibling captures (Rewrite.cpp's trials).
+    llvm::StringSet<> siblingDenied;
 
     // --- Rule 1: a binding with one dominating write ---------------------------
     //

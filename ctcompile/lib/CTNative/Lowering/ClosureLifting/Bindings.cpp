@@ -390,7 +390,11 @@ bool closureLifter::bindLocalFunctions(liftReport & out, bool probeSiblings) {
             for (unsigned j = 0; j < captures; ++j) {
                 auto held = plan.closure.getUpvalues()[j].getDefiningOp<ctjs::CreateCellOp>();
                 if (held && taken.contains(held.getOperation())) { continue; }
-                if ((allowSiblingCaptures || probeSiblings) &&
+                // A target an earlier trial denied keeps the stricter rule.
+                const bool siblings =
+                    probeSiblings ||
+                    (allowSiblingCaptures && !siblingDenied.contains(plan.target.getSymName()));
+                if (siblings &&
                     llvm::all_of(plan.slots, [&](const functionBinding::capturedSlot & slot) {
                         return siblingCaptureSlot(plan.closure, j, slot.made).has_value() ||
                                canAddSiblingCapture(plan.closure, j, slot.made);
