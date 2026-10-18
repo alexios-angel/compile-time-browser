@@ -1275,6 +1275,22 @@ std::optional<std::string> closureLifter::whyThisLeaks(ctjs::FuncOp target) {
     return std::nullopt;
 }
 
+/// A proved registry class's method runs only on an instance of its class
+/// (Analysis/Instances.h), and type inference gives its receiver that class
+/// (setToEntryState), so it needs no caller to type it. A capture or a
+/// parameter would have nothing to type it, and a boxed value it stored would
+/// reach the class's fields.
+bool closureLifter::liftsOnRegistryReceiver(ctjs::CreateClosureOp c) {
+    ctjs::FuncOp target = targetOf(c);
+    return methodClosures.contains(c.getOperation()) &&
+           !callsOfTarget.contains(target.getOperation()) &&
+           !copiedAwayMethods.contains(target.getOperation()) &&
+           target->hasAttr(kNativeInstanceMethod) && c.getUpvalues().empty() &&
+           llvm::all_of(target.getBody().front().getArguments(), [](mlir::BlockArgument argument) {
+               return argument.getArgNumber() == ctjs::arg_receiver || argument.use_empty();
+           });
+}
+
 /// The method form of whyNotLiftable: conditions 1 to 4, one sentence each.
 /// The capture and own-closure clauses are the closure lift's, unchanged,
 /// because a method is a closure in the IR.
@@ -1337,11 +1353,13 @@ std::optional<std::string> closureLifter::whyNotLiftableMethod(ctjs::CreateClosu
                 }
             }
         }
-        if (!copiedAway) { return "nothing calls it"; }
+        // A copied-away method needs no call, and neither does a proved
+        // registry class's method that types its receiver without one.
+        if (!copiedAway && !liftsOnRegistryReceiver(c)) { return "nothing calls it"; }
     }
     const unsigned parameters = entry.getNumArguments() - ctjs::implicit_arguments;
     const llvm::SmallVector<methodCall> sites =
-        copiedAway ? llvm::SmallVector<methodCall>{} : calls->second;
+        calls == callsOfTarget.end() ? llvm::SmallVector<methodCall>{} : calls->second;
     for (methodCall at : sites) {
         if (auto why =
                 whyCallSiteDoesNotLift(at.call, at.call.getArgs().size(), parameters, "a call")) {
