@@ -94,14 +94,13 @@
 
 # A function with unstructured control flow (a try/catch the lift cannot
 # structure) is not a reader the proof checks: it is refused before
-# admission, and its direct call of `get` becomes a call through a closure,
-# so what it does with the table never reaches native code. `get` lowers and
-# returns the table, and the refusals name `guarded` and its caller. A
-# structured function's use is still checked (stored.js, argument.js).
-# GUARDED: ctjs.func private @fn$1
-# GUARDED-SAME: ctnative.not_native = "calls `guarded$3`, which is not native"
-# GUARDED: emitc.func @get_2() -> !emitc.opaque<"ctnative::static_table_ptr">
-# GUARDED: ctjs.func private @guarded$3
+# admission, and the direct call of the static getter that the class statics
+# rewrite made there becomes a call through a closure, so what it does with
+# the table never reaches native code. The getter lowers and returns the
+# table, and `guarded` is refused for its control flow. A structured
+# function's use is still checked (stored.js, argument.js).
+# GUARDED: emitc.func @fn_3() -> !emitc.opaque<"ctnative::static_table_ptr">
+# GUARDED: ctjs.func @guarded$5
 # GUARDED-SAME: ctnative.not_native = "unstructured control flow"
 
 # A spread of the table writes out one read per field. The first spread runs
@@ -302,11 +301,16 @@ var r = (function () {
 #--- guarded.js
 var r = (function () {
     var config = {interval: 5000, pause: "hover"};
-    function get() { return config; }
-    function guarded() {
-        var o;
-        try { o = get(); } catch (e) { o = null; }
-        return o === null ? 0 : 1;
+    class Box {
+        constructor(v) { this.v = v; }
+        static get Default() { return config; }
+        size() { return this.v + this.constructor.Default.interval; }
+        guarded() {
+            var o = this.constructor.Default;
+            try { o = o.interval > 0 ? o : null; } catch (e) { o = null; }
+            return o === null ? 0 : 1;
+        }
     }
-    return get().interval + guarded();
+    const box = new Box(1);
+    return box.size() + box.guarded();
 })();

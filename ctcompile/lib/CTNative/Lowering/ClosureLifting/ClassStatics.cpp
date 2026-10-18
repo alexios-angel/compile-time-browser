@@ -1210,6 +1210,7 @@ bool closureLifter::bindClassStatics(liftReport & out) {
             const mlir::Value undefined = undefinedAt(at, s.call.getLoc());
             auto direct = directCall(at, s.call.getLoc(), s.target, undefined, undefined, undefined,
                                      {}, s.call.getArgs(), parametersOf(s.target));
+            direct->setAttr(kNativeStaticMemberCall, mlir::UnitAttr::get(context));
             if (exported.contains(s.call.getReceiver())) {
                 direct->setAttr(kNativeExportClass, exportMark);
             }
@@ -1222,6 +1223,7 @@ bool closureLifter::bindClassStatics(liftReport & out) {
             const mlir::Value undefined = undefinedAt(at, load.getLoc());
             auto direct = directCall(at, load.getLoc(), target, undefined, undefined, undefined, {},
                                      mlir::ValueRange{}, parametersOf(target));
+            direct->setAttr(kNativeStaticMemberCall, mlir::UnitAttr::get(context));
             if (exported.contains(load.getObject())) {
                 direct->setAttr(kNativeExportClass, exportMark);
             }
