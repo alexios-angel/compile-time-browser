@@ -14,6 +14,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include <ctcompile/CTJS/Import/BytecodeImport.hpp>
+#include <ctcompile/CTJS/Lowering/WholePage.h>
 #include <ctcompile/Support/MLIRContextSetup.hpp>
 #include <ctcompile/Target/Cpp/CppEmitter.h>
 
@@ -27,6 +28,7 @@
 #include "mlir/IR/Verifier.h"
 #include "mlir/Tools/mlir-translate/MlirTranslateMain.h"
 #include "mlir/Tools/mlir-translate/Translation.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/SourceMgr.h"
 
@@ -34,6 +36,15 @@
 #include <vector>
 
 namespace {
+
+/// The page driver's promise (ctcompile/CTJS/Lowering/WholePage.h): the input
+/// is every script its page will ever run, and the driver checked that the
+/// page has no other <script> and no inline on* handler.
+llvm::cl::opt<bool> whole_page(
+    "whole-page",
+    llvm::cl::desc("Record the JavaScript input as every script its page will ever run "
+                   "(ctjs.whole_page); the caller checked the page's scripts and handlers"),
+    llvm::cl::init(false));
 
 /// Records the functions the importer could not compile, in three places: a
 /// warning per function for a person, the module's `ctjs.skipped` attribute
@@ -108,7 +119,16 @@ mlir::OwningOpRef<mlir::Operation *> import_source(llvm::StringRef text, llvm::S
             << "the JavaScript did not compile: " << compiled.error;
         return {};
     }
-    return adopt(ctcompile::js::import_program(compiled, name, context));
+    mlir::OwningOpRef<mlir::Operation *> module =
+        adopt(ctcompile::js::import_program(compiled, name, context));
+    if (module && whole_page) {
+        mlir::Builder builder(context);
+        module.get()->setAttr(
+            ctcompile::ctjs::kWholePage,
+            builder.getDictionaryAttr(
+                {builder.getNamedAttr("scripts", builder.getStrArrayAttr({name}))}));
+    }
+    return module;
 }
 
 mlir::OwningOpRef<mlir::Operation *> import_image(llvm::StringRef bytes, llvm::StringRef name,

@@ -79,6 +79,7 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-method.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERNAMED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-binding.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERNAMED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-method-write.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERMETHODWRITE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-method-swapped.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERMETHODSWAPPED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-stored.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERSTORED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-cell.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERNAMED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-return.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERNAMED
@@ -627,6 +628,15 @@
 // --- Negatives: what a named body does with it still counts ----------------------
 //
 // ENTERMETHODWRITE: ctjs.global_escapes = ["the global object is written through (ctjs.set_property{{[^"]*}}"]
+//
+// A literal read with a key it does not own is not frozen: the read is looked
+// up on its prototype, where an inherited getter (here reached through
+// `tools.swap`) replaces `see` with a function that writes `window.add` before
+// `tools.see(window)` runs. Following the literal's own `see` instead would
+// resolve `add`, which that write rebinds.
+//
+// ENTERMETHODSWAPPED: ctjs.global_escapes = ["the global object escapes into a call whose callee this module does not name (ctjs.call{{[^"]*}}"]
+// ENTERMETHODSWAPPED-NOT: call_direct @add
 // ENTERSTORED: ctjs.global_escapes = ["the global object escapes into ctjs.set_property{{[^"]*}}"]
 
 // --- Bindings and returns ---------------------------------------------------------
@@ -1132,6 +1142,19 @@ function add(a, b) { return a + b; }
 (function () {
     var tools = { put: function (w, k) { w[k] = 1; } };
     tools.put(window, "x");
+})();
+var z = add(1, 2);
+
+//--- enter-method-swapped.js
+function add(a, b) { return a + b; }
+var width = (function () {
+    "use strict";
+    var tools = { see: function (w) { return w.innerWidth; } };
+    Object.defineProperty(Object.prototype, "swap", {
+        get: function () { this.see = function (w) { w.add = 1; }; return 0; }
+    });
+    tools.swap;
+    return tools.see(window);
 })();
 var z = add(1, 2);
 

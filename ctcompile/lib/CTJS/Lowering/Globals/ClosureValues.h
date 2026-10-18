@@ -8,6 +8,10 @@
 // with the reason, and a value it does follow contributes every closure it
 // can hold. ClosureValues.cpp lists the steps it follows.
 //
+// It takes the realm's built-ins to be untouched when the script starts, which
+// holds only because the module is the whole page (the model the window fold
+// uses); do not use it on a module that is only part of a page.
+//
 //===----------------------------------------------------------------------===//
 #pragma once
 

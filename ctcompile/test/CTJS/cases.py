@@ -94,6 +94,8 @@ CASES = {
         "ctjs-translate --ctbrowser-js-to-ctjs %t/inherited.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=INHERITED",
         "sed 's|// escape: ||' %t/methods.js > %t/escape.js",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/escape.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=ESCAPE",
+        "sed 's|// static: ||' %t/methods.js > %t/static.js",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/static.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=STATIC",
     ],
     "Transforms/closure-values-nested": [
         "ctjs-opt %s --ctjs-test-closure-values | FileCheck %s",
@@ -150,6 +152,7 @@ CASES = {
         "ctjs-translate --ctbrowser-js-to-ctjs %t/enter-method.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERNAMED",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/enter-binding.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERNAMED",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/enter-method-write.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERMETHODWRITE",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/enter-method-swapped.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERMETHODSWAPPED",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/enter-stored.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERSTORED",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/enter-cell.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERNAMED",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/enter-return.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERNAMED",
@@ -180,6 +183,17 @@ CASES = {
     ],
     "roundtrip": [
         "ctjs-opt %s | ctjs-opt | FileCheck %s",
+    ],
+    "Transforms/runtime-code": [
+        "split-file %s %t",
+        "for name in script timer url markup handler; do    ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --mlir-print-debuginfo --whole-page      2>/dev/null | ctjs-opt --ctjs-resolve-globals > %t/$name.mlir; done",
+        "FileCheck %s --check-prefix=SCRIPT < %t/script.mlir",
+        "FileCheck %s --check-prefix=TIMER < %t/timer.mlir",
+        "FileCheck %s --check-prefix=URL < %t/url.mlir",
+        "FileCheck %s --check-prefix=MARKUP < %t/markup.mlir",
+        "FileCheck %s --check-prefix=HANDLER < %t/handler.mlir",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/safe.js --mlir-print-debuginfo --whole-page    2>/dev/null | ctjs-opt --ctjs-resolve-globals    | FileCheck %s --check-prefix=SAFE --implicit-check-not=ctjs.runtime_code",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/timer.js --mlir-print-debuginfo --whole-page    2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc    | FileCheck %s --check-prefix=NATIVE",
     ],
 }
 

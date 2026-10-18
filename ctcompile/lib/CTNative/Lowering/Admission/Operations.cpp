@@ -12,6 +12,7 @@
 #include "../../Analysis/OwnedMethodTableSlots.h"
 #include "../ForOf.h"
 #include "Admission.h"
+#include "ctcompile/CTJS/Lowering/WholePage.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "ctcompile/CTNative/Analysis/StaticTables.h"
 #include "ctcompile/CTNative/IR/CTNativeOps.h"
@@ -456,6 +457,8 @@ std::optional<bool> stringCallbackOperation(admission & self, mlir::Operation * 
 
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
+    // Code made at run time, which a native program cannot run (WholePage.h).
+    if (auto why = o->getAttrOfType<mlir::StringAttr>(kRuntimeCode)) { return refuse(why.str()); }
     if (auto admitted = domOperation(o)) { return *admitted; }
     // A folded for-of indexes its source as an array (ForOf.cpp).
     if (auto read = llvm::dyn_cast<GetPropertyOp>(o);

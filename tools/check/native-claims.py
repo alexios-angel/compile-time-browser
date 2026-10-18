@@ -257,7 +257,10 @@ def run(argv: argparse.Namespace) -> dict:
     """Run the pipeline on argv.corpus, assert the five invariants (exiting on a
     violation) and return the counts as a dict."""
     translate = subprocess.run(
-        [argv.translate, "--ctbrowser-js-to-ctjs", argv.corpus, "--mlir-print-debuginfo"],
+        # Measured as its page's only script (WholePage.h), as pipeline.cmake
+        # builds it.
+        [argv.translate, "--ctbrowser-js-to-ctjs", argv.corpus, "--mlir-print-debuginfo",
+         "--whole-page"],
         capture_output=True,
         timeout=argv.timeout,
     )
