@@ -18,7 +18,7 @@
 // page's whole program, and nothing is marked.
 //
 // RUN: split-file %s %t
-// RUN: for name in script timer url markup handler safe; do \
+// RUN: for name in script timer url markup handler safe name-o name-oncap name-onconst name-param name-mixed; do \
 // RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --mlir-print-debuginfo --whole-page \
 // RUN:     2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:     > %t/$name.mlir; done
@@ -28,6 +28,11 @@
 // RUN: FileCheck %s --check-prefix=MARKUP < %t/markup.mlir
 // RUN: FileCheck %s --check-prefix=HANDLER < %t/handler.mlir
 // RUN: FileCheck %s --check-prefix=SAFE --implicit-check-not=ctjs.runtime_code < %t/safe.mlir
+// RUN: FileCheck %s --check-prefix=NAME < %t/name-o.mlir
+// RUN: FileCheck %s --check-prefix=NAME < %t/name-oncap.mlir
+// RUN: FileCheck %s --check-prefix=NAMEON < %t/name-onconst.mlir
+// RUN: FileCheck %s --check-prefix=NAME < %t/name-param.mlir
+// RUN: FileCheck %s --check-prefix=NAME < %t/name-mixed.mlir
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/timer.js --mlir-print-debuginfo \
 // RUN:   2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --implicit-check-not=ctjs.runtime_code
@@ -47,6 +52,10 @@
 // Nothing is marked, and the timer taking a closure lowers natively.
 // SAFE-NOT: ctnative.not_native
 // SAFE: {name = "later", reason = "closed: 1 call(s) rewritten"
+
+// Each name-* witness is refused with the setAttribute name rule's reason.
+// NAME: ctnative.not_native = "`setAttribute` with a name not known at build time may add an on* event handler, whose code a native program cannot compile
+// NAMEON: ctnative.not_native = "`setAttribute` with the name `On` adds an on* event handler, whose code a native program cannot compile
 
 // Without --whole-page, the String timer marks nothing.
 
@@ -79,3 +88,27 @@ function later(el, key) {
     el.href = "https://example.com/";
 }
 later(document.body, "x");
+
+//--- name-o.js
+function arm(el, x) { el.setAttribute("o" + x, "go()"); }
+arm(document.body, "nclick");
+
+//--- name-oncap.js
+function arm(el, x) { el.setAttribute("ON" + x, "go()"); }
+arm(document.body, "click");
+
+//--- name-onconst.js
+function arm(el) { el.setAttribute("On", "go()"); }
+arm(document.body);
+
+//--- name-param.js
+function arm(el, name) { el.setAttribute(name, "go()"); }
+arm(document.body, "onclick");
+
+//--- name-mixed.js
+function arm(el, which) {
+    var name = "data-x";
+    if (which) { name = el.getAttribute("data-name"); }
+    el.setAttribute(name, "1");
+}
+arm(document.body, 1);

@@ -84,27 +84,56 @@ bool markupMayAddHandler(llvm::StringRef text) {
     return false;
 }
 
-/// Why an attribute named by `name` may be an `on*` handler, or empty: a
-/// constant that starts with "on", or a name not known at build time. A name
-/// built as a constant prefix plus more (`data-bs-` + key) starts with that
-/// prefix.
-std::string handlerName(mlir::Value name, llvm::StringRef api) {
+/// The leftmost constant first part of a concatenation `value` lowers to, or
+/// null: a String the name always starts with. HTML lowercases attribute
+/// names, so the comparison is case-insensitive.
+std::optional<llvm::StringRef> leftmostPart(mlir::Value value) {
+    mlir::Value origin = registerFlowOrigin(value);
+    while (auto sum = origin ? origin.getDefiningOp<BinaryOp>() : BinaryOp{}) {
+        if (sum.getKind() != BinaryKind::Add && sum.getKind() != BinaryKind::Concat) { break; }
+        origin = registerFlowOrigin(sum.getLhs());
+        if (!origin) { break; }
+    }
+    auto text = origin ? constantAttr<StringAttr>(origin) : StringAttr{};
+    return text ? std::optional<llvm::StringRef>(text.getValue()) : std::nullopt;
+}
+
+/// Why an attribute named by `name` may be an `on*` handler, or empty. A name
+/// is known not to start a handler when every value it may hold (`closures`
+/// answers which, followed through calls) is one of:
+///  - a constant String whose lowercase does not start with "on"; or
+///  - a concatenation whose first part is a constant String `p` that rules
+///    "on" out: two or more characters and not starting with "on", or one
+///    character that is not "o".
+/// Anything else (a name the query cannot follow, a 1-character "o" prefix,
+/// an "on..." constant) may add a handler and is refused with the reason.
+std::string handlerName(mlir::Value name, llvm::StringRef api,
+                        globals_detail::ClosureValues & closures) {
+    const auto refused = [&]() {
+        return "`" + api.str() +
+               "` with a name not known at build time may add an on* event "
+               "handler, whose code a native program cannot compile";
+    };
     if (const auto text = constantString(name)) {
         return startsWithLower(*text, "on")
                    ? "`" + api.str() + "` with the name `" + text->str() +
                          "` adds an on* event handler, whose code a native program cannot compile"
                    : std::string{};
     }
-    const mlir::Value origin = registerFlowOrigin(name);
-    auto sum = origin ? origin.getDefiningOp<BinaryOp>() : BinaryOp{};
-    const auto prefix =
-        sum && (sum.getKind() == BinaryKind::Add || sum.getKind() == BinaryKind::Concat)
-            ? constantString(sum.getLhs())
-            : std::nullopt;
-    if (prefix && prefix->size() >= 2 && !startsWithLower(*prefix, "on")) { return {}; }
-    return "`" + api.str() +
-           "` with a name not known at build time may add an on* event "
-           "handler, whose code a native program cannot compile";
+    globals_detail::ClosureValues::Leaves leaves = closures.leafValuesOf(name);
+    if (!leaves.unknown.empty() || leaves.values.empty()) { return refused(); }
+    for (mlir::Value leaf : leaves.values) {
+        if (const auto text = constantString(leaf)) {
+            if (startsWithLower(*text, "on")) { return refused(); }
+            continue;
+        }
+        const auto prefix = leftmostPart(leaf);
+        const bool rules_out =
+            prefix && ((prefix->size() == 1 && (*prefix)[0] != 'o' && (*prefix)[0] != 'O') ||
+                       (prefix->size() >= 2 && !startsWithLower(*prefix, "on")));
+        if (!rules_out) { return refused(); }
+    }
+    return {};
 }
 
 /// Why markup `value` written through `api` may add a handler, or empty.
@@ -180,7 +209,7 @@ std::string methodCall(llvm::StringRef method, CallOp call,
         const bool namespaced = method.ends_with("NS");
         const mlir::Value name = arg(namespaced ? 1 : 0);
         if (!name) { return {}; }
-        if (std::string why = handlerName(name, method); !why.empty()) { return why; }
+        if (std::string why = handlerName(name, method, closures); !why.empty()) { return why; }
         // A link or form target set to a URL.
         const auto text = constantString(name);
         const bool target = text && llvm::StringSwitch<bool>(text->lower())

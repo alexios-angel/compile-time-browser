@@ -157,13 +157,23 @@ ClosureValues::Answer ClosureValues::closuresOf(mlir::Value value) {
     return answer;
 }
 
+ClosureValues::Leaves ClosureValues::leafValuesOf(mlir::Value value) {
+    objects found = objectsOf(value);
+    Leaves answer;
+    answer.unknown = found.unknown;
+    if (answer.unknown.empty()) {
+        answer.values.append(found.leaves.begin(), found.leaves.end());
+    }
+    return answer;
+}
+
 ClosureValues::objects ClosureValues::objectsOf(mlir::Value root) {
     if (auto found = objectsMemo.find(root); found != objectsMemo.end()) { return found->second; }
     // ponytail: a query that meets its own root again through a call is
     // unknown, and remembered so; a fixpoint over such cycles would answer
     // more of them.
     if (!active.insert(root).second) {
-        return {{}, "a value that depends on itself through a call"};
+        return {{}, {}, "a value that depends on itself through a call"};
     }
     objects answer;
     llvm::SmallVector<mlir::Value> work{root};
@@ -172,7 +182,10 @@ ClosureValues::objects ClosureValues::objectsOf(mlir::Value root) {
         const mlir::Value value = work.pop_back_val();
         if (seen.insert(value).second) { answer.unknown = step(value, work, answer); }
     }
-    if (!answer.unknown.empty()) { answer.made.clear(); }
+    if (!answer.unknown.empty()) {
+        answer.made.clear();
+        answer.leaves.clear();
+    }
     active.erase(root);
     objectsMemo[root] = answer;
     return answer;
@@ -190,10 +203,12 @@ std::string ClosureValues::step(mlir::Value value, llvm::SmallVectorImpl<mlir::V
     mlir::Operation * op = value.getDefiningOp();
     if (mlir::isa<CreateClosureOp, CreateArrayOp, CreateObjectOp>(op)) {
         into.made.insert(op);
+        into.leaves.insert(value);
         return {};
     }
     if (mlir::isa<ConstantOp, UnaryOp, BinaryOp, BinaryStaticOp, CompareOp, InstanceOfOp,
                   HasPropertyOp, DeletePropertyOp, FromBoolOp>(op)) {
+        into.leaves.insert(value);
         return {};
     }
     if (mlir::isa<CallOp, CallDirectOp>(op)) { return resultSources(op, work); }
