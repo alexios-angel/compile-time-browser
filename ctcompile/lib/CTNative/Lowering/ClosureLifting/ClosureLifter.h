@@ -682,6 +682,11 @@ struct closureLifter {
     /// Appends `cell` to `holder`'s captures, with its `enclosing_indices`
     /// entry and its target's `upvalue_count`.
     void addCaptureSlot(ctjs::CreateClosureOp holder, mlir::Value cell);
+    /// Answers `typeof` and truthiness of a closure, folds what the answers
+    /// meet (a compare with a constant, a negation), and replaces an scf.if
+    /// they decide by the branch it takes when the branch it drops only
+    /// computes values (ConstantTests.cpp).
+    void foldConstantTests();
     /// Whether `holder`, made one frame further in than `closure`, can take
     /// the cell in slot `index` of `closure` relayed from its enclosing
     /// closure, which is made in `closure`'s frame and captures the cell or
