@@ -1392,6 +1392,15 @@ inline void copy_json_properties(ctbrowser::json_value & target,
     }
 }
 
+/// `typeof` of a parsed JSON value (ECMA-262 13.5.3): "boolean", "number" or
+/// "string" for those kinds, and "object" for null, an array or an object.
+inline js_string json_typeof(const ctbrowser::json_value & value) {
+    if (std::holds_alternative<bool>(value.data)) { return js_string{"boolean"}; }
+    if (std::holds_alternative<double>(value.data)) { return js_string{"number"}; }
+    if (std::holds_alternative<std::string>(value.data)) { return js_string{"string"}; }
+    return js_string{"object"};
+}
+
 inline void require_element(ctbrowser::element_ref element) {
     ctbrowser::validate_element(element).value();
 }

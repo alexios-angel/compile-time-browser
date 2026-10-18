@@ -129,7 +129,7 @@ carrier carrierOf(mlir::Type type) {
         // ctnative::timer_id, which names no timer.
         if (inner == carrier::timer) { return carrier::timer; }
         // A possibly absent member of a closure set: std::optional of its
-        // variant (EmitC/ClosureSets.cpp).
+        // struct (EmitC/ClosureSets.cpp).
         if (inner == carrier::closureSet) { return carrier::closureSet; }
         if (llvm::isa<BottomType>(opt.getElementType()) || isScalarCarrier(inner)) {
             return carrier::nullable;

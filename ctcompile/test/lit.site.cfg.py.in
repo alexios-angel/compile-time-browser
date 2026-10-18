@@ -11,6 +11,9 @@ config.ctcompile_tools_dirs = "@CTCOMPILE_TOOLS_DIRS@".split(";")
 # strictest verifier this pipeline has, and it is free.
 config.host_cxx = "@CMAKE_CXX_COMPILER@"
 config.ctbrowser_include = "@CTBROWSER_MONOREPO_ROOT@/ctbrowser/include"
+# Boost::headers' include directories (a CMake list), which the engine's
+# headers need (Lit.cmake).
+config.boost_include = "@CTCOMPILE_LIT_BOOST_INCLUDE@"
 
 # THE ORACLES THE CTNative PYTHON DRIVERS COMPARE AGAINST: the Node CMake found
 # for the Bootstrap data probes (BootstrapData.cmake, REQUIRED) and the
