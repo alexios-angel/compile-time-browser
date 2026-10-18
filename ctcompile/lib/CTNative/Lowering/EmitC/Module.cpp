@@ -50,9 +50,10 @@ void lowering::finish() {
         // type becomes a class template: the varying fields' types are template
         // parameters listed in `ctnative.template_params`, an attribute only
         // ctcompile's patched C++ emitter reads.
-        // A class whose field holds another class by value (an instance a
-        // field owns) needs that class defined first: a depth-first order
-        // over those fields, otherwise the census order.
+        // A class whose field owns an instance of another class
+        // (ctnative::owned<C> or ctnative::replaceable<C>, Runtime/Owned.hpp)
+        // needs C defined first: a depth-first order over those fields,
+        // otherwise the census order.
         llvm::StringMap<unsigned> byName;
         for (unsigned i = 0; i < families.size(); ++i) { byName[families[i].name] = i; }
         llvm::SmallVector<unsigned> order;
@@ -62,8 +63,15 @@ void lowering::finish() {
             placed.set(i);
             for (mlir::Type type : families[i].types) {
                 auto opaque = llvm::dyn_cast_or_null<ec::OpaqueType>(type);
-                const auto member = opaque ? byName.find(opaque.getValue()) : byName.end();
-                if (member != byName.end()) { self(self, member->second); }
+                llvm::StringRef held = opaque ? opaque.getValue() : llvm::StringRef{};
+                if ((!held.consume_front("ctnative::owned<") &&
+                     !held.consume_front("ctnative::replaceable<")) ||
+                    !held.consume_back(">")) {
+                    continue;
+                }
+                if (const auto member = byName.find(held); member != byName.end()) {
+                    self(self, member->second);
+                }
             }
             order.push_back(i);
         };
@@ -267,6 +275,12 @@ void lowering::declareGlobals() {
     if (needsPromises) {
         ec::IncludeOp::create(b, module.getLoc(),
                               b.getStringAttr("ctcompile/CTNative/Runtime/Promise.hpp"),
+                              b.getUnitAttr());
+    }
+    // A field that owns a class instance is a ctnative::owned member.
+    if (!ownedFieldTypes.empty()) {
+        ec::IncludeOp::create(b, module.getLoc(),
+                              b.getStringAttr("ctcompile/CTNative/Runtime/Owned.hpp"),
                               b.getUnitAttr());
     }
     if (needsObjectIdentity) { verbatim(b, identityDefinition()); }

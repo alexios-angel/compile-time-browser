@@ -330,8 +330,8 @@ def forge_reports(text):
     return text
 
 
-def main():
-    args = native_args(__doc__)
+def main(argv=None):
+    args = native_args(__doc__, argv=argv)
     compilers, nm = native_tools(args.reference)
     node, reference = args.node, args.reference
 
@@ -565,6 +565,14 @@ def main():
         "lifetime sanitizers; null/undefined outputs agree under both policies; no-manifest 1/3; "
         f"{len(sources)} source refusals and stale/forged/rerun/budget controls pass; "
         f"preparation rolls back at {rollback}, completes at {completed}"
+    )
+
+
+def test_global_methods(lit):
+    main(
+        lit.args(
+            "--translate ctjs-translate --opt ctjs-opt --work %t --node %node --reference %native_reference"
+        )
     )
 
 

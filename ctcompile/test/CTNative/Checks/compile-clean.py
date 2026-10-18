@@ -31,7 +31,7 @@ DEFINITION = re.compile(
 )
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--translate", required=True)
     parser.add_argument("--module", required=True)
@@ -39,7 +39,7 @@ def main():
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--name", required=True)
     parser.add_argument("--mutate", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     def fail(message):
         sys.exit(f"compile-clean ({args.name}): {message}")

@@ -71,6 +71,19 @@ void keepThen(mlir::scf::IfOp branch) {
     }
 }
 
+/// What erasing `close` erases: the call, or the ctjs.invoke that drops its
+/// errors when that invocation's continuations do nothing
+/// (Exceptions/SuppressedCloses.h). Null for any other invocation.
+mlir::Operation * closeSite(ctjs::CallOp close) {
+    auto invocation = llvm::dyn_cast<ctjs::InvokeOp>(close->getParentOp());
+    if (!invocation) { return close; }
+    const auto inert = [](mlir::Region & region) { return llvm::hasSingleElement(region.front()); };
+    return invocation->getNumResults() == 0 && inert(invocation.getNormalBody()) &&
+                   inert(invocation.getUnwindBody())
+               ? invocation.getOperation()
+               : nullptr;
+}
+
 /// Folds one for-of whose record `open` makes; false (and nothing changed)
 /// when the record has a use this shape does not explain.
 bool fold(ctjs::CallOp open) {
@@ -80,6 +93,7 @@ bool fold(ctjs::CallOp open) {
         if (auto branch = fastPathTest(use)) { tests.push_back(branch); }
         auto close = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
         if (close && helperOf(close) == "__ctbrowser_iter_close" && use.getOperandNumber() == 2) {
+            if (!closeSite(close)) { return false; }
             closes.push_back(close);
         }
     }
@@ -107,7 +121,7 @@ bool fold(ctjs::CallOp open) {
     }
     for (ctjs::CallOp close : closes) {
         mlir::Operation * helper = close.getCallee().getDefiningOp();
-        close.erase();
+        closeSite(close)->erase();
         if (helper && helper->use_empty()) { helper->erase(); }
     }
     for (mlir::scf::IfOp branch : tests) { keepThen(branch); }

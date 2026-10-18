@@ -12,6 +12,11 @@
 namespace ctcompile::ctnative::lowering_detail {
 
 std::optional<bool> admission::staticTableOperation(mlir::Operation * o) {
+    // A call whose caller uses the table the callee returns in a way the
+    // proof does not take refuses that caller only.
+    if (auto why = o->getAttrOfType<mlir::StringAttr>(kNativeStaticTableUseRefusal)) {
+        return refuse(why.str());
+    }
     // Each cell of a static carries the proof's reason when its literal is
     // not a table. When the static has no carrier for another reason either
     // (a method table or an identity object has one), that is why the frame
@@ -22,12 +27,7 @@ std::optional<bool> admission::staticTableOperation(mlir::Operation * o) {
         if (!why || !name || carrierOf(typeOf(o->getResult(0))) != carrier::none) {
             return std::nullopt;
         }
-        return refuse(("it reads `" +
-                       name.getValue().drop_front(llvm::StringRef("static_").size()) +
-                       "`, a static variable of a function that runs once, holding an object "
-                       "literal that " +
-                       why.getValue())
-                          .str());
+        return refuse(staticTableRefusal(name.getValue(), why.getValue()));
     }
     if (!o->hasAttr(kNativeStaticTable)) {
         if (llvm::isa<ctjs::GetPropertyOp>(o) &&

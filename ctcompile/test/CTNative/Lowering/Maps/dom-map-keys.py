@@ -146,11 +146,11 @@ int main() {
 """
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--opt", required=True)
     parser.add_argument("--work", type=Path, required=True)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     work = args.work.resolve()
     work.mkdir(parents=True, exist_ok=True)
     binary = Path(shutil.which(args.opt) or args.opt).resolve()
@@ -190,6 +190,10 @@ def main():
         "DOM Map keys: both layouts preserve owner/slot/generation identity; "
         "raw/owned scalar/String/object reads and snapshots; GCC/Clang ASan/UBSan"
     )
+
+
+def test_dom_map_keys(lit):
+    main(lit.args("--opt ctjs-opt --work %t"))
 
 
 if __name__ == "__main__":

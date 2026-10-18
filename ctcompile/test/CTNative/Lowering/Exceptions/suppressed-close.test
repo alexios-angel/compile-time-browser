@@ -1,0 +1,143 @@
+# A `throw` in a for-of body closes the loop's iterator first, inside a
+# handler whose catch drops what the close threw, so the thrown value wins
+# (Lowering/Exceptions/SuppressedCloses.h). The lift refuses that handler's
+# terminators, which left the function unstructured and refused. The native
+# lowering now rewrites the handler into an invocation of the close; the
+# function is lifted again, its loop over an array keeps only the index path
+# (which takes the invocation away with the close), and its
+# `throw new TypeError(message)` lowers as type-error.test describes.
+#
+# checked.js never throws: both compilers, the interpreter and Node print the
+# same `r`. thrown.js throws on its second call: the native program and the
+# interpreter print the same stdout, exit with the same status and report
+# the same first line on stderr.
+#
+# The lift alone leaves both programs' check function unstructured behind
+# the handler, which shows the cases reach the rewrite:
+# RUN: split-file %s %t
+# RUN: for name in checked thrown; do \
+# RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
+# RUN:   | FileCheck %s --check-prefix=LIFTED; done
+#
+# RUN: for name in checked thrown; do \
+# RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/$name.mlir; \
+# RUN:   ctjs-opt %t/$name.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/$name.cpp; done
+# RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/checked.mlir
+# RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/thrown.mlir
+# RUN: FileCheck %s --check-prefix=CPP < %t/thrown.cpp
+# RUN: %gxx -O2 %t/checked.cpp -o %t/checked-gcc && %t/checked-gcc | FileCheck %s --check-prefix=CHECKED
+# RUN: %clangxx -O2 %t/checked.cpp -o %t/checked-clang && %t/checked-clang | FileCheck %s --check-prefix=CHECKED
+# RUN: %native_reference %t/checked.js | FileCheck %s --check-prefix=CHECKED
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/checked.js | FileCheck %s --check-prefix=CHECKED-NODE
+#
+# RUN: %native_reference %t/thrown.js > %t/vm.out 2> %t/vm.err; echo "status=$?" >> %t/vm.out
+# RUN: head -n 1 %t/vm.err | sed 's/^.* threw: /threw: /' > %t/vm.first
+# RUN: FileCheck %s --check-prefix=THROWN < %t/vm.first
+# RUN: FileCheck %s --check-prefix=STATUS < %t/vm.out
+# RUN: %gxx -O2 %t/thrown.cpp -o %t/thrown-gcc
+# RUN: %t/thrown-gcc > %t/gcc.out 2> %t/gcc.err; echo "status=$?" >> %t/gcc.out
+# RUN: head -n 1 %t/gcc.err | sed 's/^.* threw: /threw: /' > %t/gcc.first
+# RUN: diff %t/vm.out %t/gcc.out
+# RUN: diff %t/vm.first %t/gcc.first
+# RUN: %clangxx -O2 %t/thrown.cpp -o %t/thrown-clang
+# RUN: %t/thrown-clang > %t/clang.out 2> %t/clang.err; echo "status=$?" >> %t/clang.out
+# RUN: head -n 1 %t/clang.err | sed 's/^.* threw: /threw: /' > %t/clang.first
+# RUN: diff %t/vm.out %t/clang.out
+# RUN: diff %t/vm.first %t/clang.first
+#
+# A handler the rewrite cannot prove keeps its refusal. In caught.js, as in
+# Bootstrap's hydrateObj, the catch does work of its own (it defines the
+# property instead), so the handler is not a suppressed close and the
+# function stays unstructured. In replaced.js the program stores the close
+# helper, so reading it outside the handler could differ from reading it
+# inside, and nothing is rewritten:
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/caught.js 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+# RUN:   | FileCheck %s --check-prefix=CAUGHT
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/replaced.js 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+# RUN:   | FileCheck %s --check-prefix=REPLACED
+
+# LIFTED: ctjs.func {{.*}}@check${{[0-9]+}}({{.*}}ctjs.not_structured = "'ctjs.push_handler' op transformation does not support terminators with side effects"
+# LIFTED: ctjs.push_handler
+# LIFTED: ctjs.load_global "__ctbrowser_iter_close"
+# LIFTED: ctjs.pop_handler
+# NATIVE: emitc.func @main
+# NATIVE: emitc.func @check_{{[0-9]+}}
+# CPP: ctnative::throw_type_error(
+# CHECKED: r="okok"
+# CHECKED-NODE: r=okok
+# THROWN: threw: uncaught TypeError: name not allowed
+# STATUS: status=1
+# CAUGHT: ctjs.func {{.*}}@assign${{[0-9]+}}({{.*}}ctjs.not_structured = "'ctjs.push_handler' op transformation does not support terminators with side effects"{{.*}}ctnative.not_native = "unstructured control flow"
+# CAUGHT: ctjs.push_handler
+# CAUGHT: ctjs.catch_land
+# CAUGHT: ctjs.call
+# REPLACED: ctjs.func {{.*}}@check${{[0-9]+}}({{.*}}ctjs.not_structured = "'ctjs.push_handler' op transformation does not support terminators with side effects"{{.*}}ctnative.not_native = "unstructured control flow"
+# REPLACED: ctjs.push_handler
+# REPLACED: ctjs.load_global "__ctbrowser_iter_close"
+# REPLACED: ctjs.pop_handler
+
+#--- checked.js
+var r = (function () {
+    function check(bad) {
+        var names = [];
+        names.push("a");
+        names.push("b");
+        for (const name of names) {
+            if (name === bad) {
+                throw new TypeError("name not allowed");
+            }
+        }
+        return "ok";
+    }
+    return check("x") + check("y");
+})();
+
+#--- thrown.js
+var r = (function () {
+    function check(bad) {
+        var names = [];
+        names.push("a");
+        names.push("b");
+        for (const name of names) {
+            if (name === bad) {
+                throw new TypeError("name not allowed");
+            }
+        }
+        return "ok";
+    }
+    return check("x") + check("b");
+})();
+
+#--- caught.js
+function assign(target, source) {
+    for (const [key, value] of Object.entries(source)) {
+        try {
+            target[key] = value;
+        } catch (e) {
+            Object.defineProperty(target, key, {configurable: true, get: () => value});
+        }
+    }
+    return target;
+}
+var r = assign({}, {a: 1}).a;
+
+#--- replaced.js
+var __ctbrowser_iter_close = __ctbrowser_iter_close;
+var r = (function () {
+    function check(bad) {
+        var names = [];
+        names.push("a");
+        names.push("b");
+        for (const name of names) {
+            if (name === bad) {
+                throw new TypeError("name not allowed");
+            }
+        }
+        return "ok";
+    }
+    return check("x");
+})();

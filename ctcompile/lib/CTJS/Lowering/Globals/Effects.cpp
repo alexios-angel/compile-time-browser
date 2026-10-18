@@ -7,9 +7,11 @@
 //
 //===----------------------------------------------------------------------===//
 #include "Effects.h"
+#include "RegisterFlow.h"
 #include "ctcompile/CTJS/IR/CTJSAttrs.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "ctcompile/CTJS/Lowering/NativeRealm.h"
 #include "ctcompile/CTJS/Transforms/Passes.h"
 
 #include "mlir/IR/Builders.h"
@@ -186,6 +188,142 @@ bool hands_back_the_compiler(llvm::StringRef key) {
                                            "call",        "apply",     "bind"};
     // "constructor" (11) is the longest alias; see hands_back_the_global_object.
     return key.empty() || (key.size() <= 11 && aliases.contains(key));
+}
+
+/// Reading a property off `Function` finds it on `Function` itself, on
+/// Function.prototype or on Object.prototype. The realm's own properties of
+/// those three, and of any function (a function constructor's own are the
+/// same names), from ECMA-262 20.2.2, 20.2.3, 20.1.3 and Annex B; the VM
+/// installs the same set (ctbrowser/lib/Script/builtins/objects/function.cpp
+/// and object.cpp).
+static bool realm_function_member(llvm::StringRef key) {
+    static const llvm::StringSet<> members{"length",
+                                           "name",
+                                           "prototype",
+                                           "apply",
+                                           "arguments",
+                                           "bind",
+                                           "call",
+                                           "caller",
+                                           "constructor",
+                                           "toString",
+                                           "__defineGetter__",
+                                           "__defineSetter__",
+                                           "__lookupGetter__",
+                                           "__lookupSetter__",
+                                           "__proto__",
+                                           "hasOwnProperty",
+                                           "isPrototypeOf",
+                                           "propertyIsEnumerable",
+                                           "toLocaleString",
+                                           "valueOf"};
+    return members.contains(key);
+}
+
+/// The program can add a property to `Function` or to the global object only
+/// by writing through it, which clause 5 refuses or counts as a binding, or
+/// through a prototype table the realm made, which it inherits from
+/// (Function.prototype, Object.prototype, Window.prototype, ...). So this
+/// reads, with constant keys only:
+///   - every path that may yield such a table: `prototype` off
+///     anything but a function made here (whose own table it is), and
+///     `__proto__`, may be read through and nothing else; a prototype link
+///     (ctjs.get_proto, as `super` compiles) the same; `getPrototypeOf` and
+///     `getOwnPropertyDescriptor(s)` are not read at all, and neither
+///     "prototype" nor "__proto__" is passed as a value;
+///   - a `prototype` table replaced by anything but a literal made here;
+///   - the keys written onto an object this module did not create (a
+///     literal, a closure or an array made here cannot be one of those
+///     tables), and every key string used other than as a property key;
+///   - a spread into such an object, which may write any key.
+/// A key computed at run time is not seen. A table reached through one and
+/// written through one is the hole the `.constructor` marking above has too,
+/// since it follows only a constant `constructor` read.
+prototype_writes read_prototype_writes(mlir::ModuleOp module) {
+    prototype_writes keys;
+    // Through the block arguments the importer's register file uses, as
+    // a literal spread into across conditional parts travels.
+    const auto made_here = [](mlir::Value object) {
+        const mlir::Value origin = registerFlowOrigin(object);
+        return origin && mlir::isa_and_nonnull<CreateObjectOp, CreateClosureOp, CreateArrayOp>(
+                             origin.getDefiningOp());
+    };
+    const auto only_read = [](mlir::Value table) {
+        return llvm::all_of(table.getUses(), [](mlir::OpOperand & use) {
+            auto read = mlir::dyn_cast<GetPropertyOp>(use.getOwner());
+            return read && use.getOperandNumber() == 0 && !constantKey(read.getKey()).empty();
+        });
+    };
+    const auto note = [](std::string & into, const llvm::Twine & why, mlir::Operation * at) {
+        if (into.empty()) { into = (why + " (" + describe(at) + ")").str(); }
+    };
+    module.walk([&](mlir::Operation * op) {
+        if (auto get = mlir::dyn_cast<GetPropertyOp>(op)) {
+            const llvm::StringRef key = constantKey(get.getKey());
+            const bool table =
+                key == "__proto__" ||
+                (key == "prototype" && !get.getObject().getDefiningOp<CreateClosureOp>());
+            if (table && !only_read(get.getResult())) {
+                note(keys.prototypes, "a prototype table is used other than to read it", op);
+            }
+            if (key == "getPrototypeOf" || key == "getOwnPropertyDescriptor" ||
+                key == "getOwnPropertyDescriptors") {
+                note(keys.prototypes, "`" + key + "` can hand back a prototype table", op);
+            }
+        } else if (auto link = mlir::dyn_cast<GetProtoOp>(op)) {
+            if (!only_read(link.getResult())) {
+                note(keys.prototypes, "a prototype link is used other than to read it", op);
+            }
+        } else if (auto set = mlir::dyn_cast<SetPropertyOp>(op)) {
+            const llvm::StringRef key = constantKey(set.getKey());
+            if (key == "prototype" && !set.getValue().getDefiningOp<CreateObjectOp>()) {
+                note(keys.prototypes, "a `prototype` table is replaced", op);
+            }
+            if (!key.empty()) { keys.defined.insert(key); }
+            if (!key.empty() && !made_here(set.getObject())) { keys.written.insert(key); }
+        } else if (auto accessor = mlir::dyn_cast<DefineAccessorOp>(op)) {
+            keys.defined.insert(accessor.getName());
+            if (!made_here(accessor.getTarget())) { keys.written.insert(accessor.getName()); }
+        } else if (auto copy = mlir::dyn_cast<CopyPropsOp>(op)) {
+            if (!made_here(copy.getTarget())) {
+                note(keys.any_key, "a spread writes every key of its source", op);
+            }
+        } else if (auto constant = mlir::dyn_cast<ConstantOp>(op)) {
+            auto text = mlir::dyn_cast<StringAttr>(constant.getValue());
+            if (!text) { return; }
+            const bool asKey =
+                llvm::all_of(constant.getResult().getUses(), [](mlir::OpOperand & use) {
+                    return use.getOperandNumber() == 1 &&
+                           mlir::isa<GetPropertyOp, SetPropertyOp, HasPropertyOp, DeletePropertyOp>(
+                               use.getOwner());
+                });
+            if (asKey) { return; }
+            keys.written.insert(text.getValue());
+            keys.defined.insert(text.getValue());
+            if (text.getValue() == "prototype" || text.getValue() == "__proto__") {
+                note(keys.prototypes, "\"" + text.getValue() + "\" is passed as a value", op);
+            }
+        }
+    });
+    return keys;
+}
+
+bool compiler_lacks(const prototype_writes & writes, llvm::StringRef key) {
+    return !key.empty() && !realm_function_member(key) && writes.prototypes.empty() &&
+           writes.any_key.empty() && !writes.written.contains(key);
+}
+
+bool argument_inert_native(const prototype_writes & writes, llvm::StringRef key) {
+    static const llvm::StringSet<> methods{"contains", "isSameNode"};
+    return methods.contains(key) && writes.prototypes.empty() && writes.any_key.empty() &&
+           !writes.defined.contains(key) && !writes.written.contains("toString") &&
+           !writes.written.contains("valueOf");
+}
+
+bool global_object_lacks(const prototype_writes & writes, llvm::StringRef key) {
+    const bool absent = !nativeRealmProvides(key) && !realm_function_member(key);
+    return !key.empty() && (absent || key == "toString") && writes.prototypes.empty() &&
+           writes.any_key.empty() && !writes.written.contains(key);
 }
 
 /// Reads the module's `ctjs.skipped` rows: functions the importer did not

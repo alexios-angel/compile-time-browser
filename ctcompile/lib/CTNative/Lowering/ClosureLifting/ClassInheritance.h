@@ -9,6 +9,8 @@
 
 #pragma once
 
+#include "ctcompile/CTNative/IR/CTNativeAttrNames.h"
+
 #include "mlir/IR/BuiltinOps.h"
 #include "llvm/ADT/StringRef.h"
 

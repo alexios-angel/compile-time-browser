@@ -53,6 +53,20 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ctor-prototype-replaced.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=PROTOSET
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ctor-member.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=MEMBER
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ctor-member-prototype.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=MEMBERPROTO
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ctor-static-call.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=STATICCALL
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ctor-static-polluted.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=STATICPOLLUTED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ctor-static-realm.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=STATICREALM
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ctor-static-written.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=STATICWRITTEN
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/window-lacks.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=WINLACKS
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/window-lacks-bound.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=WINLACKSBOUND
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/window-lacks-polluted.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=WINLACKSPOLLUTED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/argument-inert.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ARGINERT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/argument-defined.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ARGDEFINED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/argument-tostring.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ARGTOSTRING
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/container-read.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=CONTAINERREAD
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/container-unknown.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=CONTAINERUNKNOWN
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/container-write.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=CONTAINERWRITE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/container-stored.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=CONTAINERSTORED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/window-read.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=WINREAD
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/window-alias.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=WINALIAS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-read.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERREAD
@@ -355,6 +369,141 @@
 // MEMBERPROTO: ctjs.globals = [
 // MEMBERPROTO-SAME: reason = "a value that may be the run-time compiler escapes into ctjs.return{{[^"]*}}"
 
+// --- Positive: a method called off a value that may be the compiler ---------------
+//
+// `this.constructor.eventName("show")`, Bootstrap's idiom, passes the tainted
+// value as the receiver of a callee nobody can name. If the value is
+// `Function`, `Function.eventName` is undefined, since neither the realm nor
+// the program gives `Function`, Function.prototype or Object.prototype that
+// key (compiler_lacks), so the call throws before it runs any code; if it is
+// not `Function`, it is not the compiler.
+//
+// STATICCALL: ctjs.globals = [
+// STATICCALL-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
+// STATICCALL: ctjs.call_direct @add$1
+
+// --- Negative: unless the program puts the key on Object.prototype -----------------
+//
+// Here `Function.eventName` is the program's function, and `grab` calls it
+// with `this` = `Function`, which compiles source: a real escape. The key
+// itself is only ever written onto a literal made here; Object.prototype
+// handed to Object.assign is what retires the proof.
+//
+// STATICPOLLUTED-NOT: call_direct
+// STATICPOLLUTED: ctjs.globals = [
+// STATICPOLLUTED-SAME: reason = "a value that may be the run-time compiler escapes into a call whose callee this module does not name{{[^"]*}}"
+
+// --- Negative: or the key is one the realm gives functions -------------------------
+//
+// `Function.valueOf()` hands back `Function` itself.
+//
+// STATICREALM-NOT: call_direct
+// STATICREALM: ctjs.globals = [
+// STATICREALM-SAME: reason = "a value that may be the run-time compiler escapes into a call whose callee this module does not name{{[^"]*}}"
+
+// --- Negative: or the key is written onto an object not made here ------------------
+//
+// `t` could be any object, Function.prototype included, so a write of
+// `eventName` through it retires the proof for that key.
+//
+// STATICWRITTEN-NOT: call_direct
+// STATICWRITTEN: ctjs.globals = [
+// STATICWRITTEN-SAME: reason = "a value that may be the run-time compiler escapes into a call whose callee this module does not name{{[^"]*}}"
+
+// --- Positive: a method the window does not have, called on a value that may be it -
+//
+// Popper calls getBoundingClientRect, contains and the like on a node that
+// may be the window. On the window the read answers nothing callable (no
+// such property, or a named element), so the call throws and runs no code;
+// on anything else the receiver is not the window. Object.prototype's
+// toString, which answers "[object Window]", runs no code either.
+//
+// WINLACKS: ctjs.globals = [
+// WINLACKS-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
+// WINLACKS: ctjs.call_direct @add$1
+
+// --- Negative: unless the program binds a global of that name ----------------------
+//
+// Then `window.getRootNode` is this function, run with `this` = the window,
+// and its write binds a global.
+//
+// WINLACKSBOUND-NOT: call_direct @add
+// WINLACKSBOUND: ctjs.globals = [
+// WINLACKSBOUND-SAME: reason = "the global object is the receiver of `getRootNode`, which this program rebinds{{[^"]*}}"
+
+// --- Negative: or puts it on a prototype the window inherits -----------------------
+//
+// `window.contains` is then this function, through Object.prototype.
+//
+// WINLACKSPOLLUTED-NOT: call_direct @add
+// WINLACKSPOLLUTED: ctjs.globals = [
+// WINLACKSPOLLUTED-SAME: reason = "the global object escapes into a call whose callee this module does not name{{[^"]*}}"
+
+// --- Positive: the global object as an argument of contains and isSameNode ---------
+//
+// Popper's contains(parent, child) passes a node that may be the window. No
+// object here has a `contains` or `isSameNode` the program gave it, so the
+// method is the realm's (Node's, DOMTokenList's) or nothing callable, and it
+// only compares its argument or converts it to a string with the realm's
+// toString.
+//
+// ARGINERT: ctjs.globals = [
+// ARGINERT-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
+// ARGINERT: ctjs.call_direct @add$1
+
+// --- Negative: unless the program gives some object such a method ------------------
+//
+// `box.contains` is the program's function, and it writes through its
+// argument, the window.
+//
+// ARGDEFINED-NOT: call_direct @add
+// ARGDEFINED: ctjs.globals = [
+// ARGDEFINED-SAME: reason = "the global object escapes into a call whose callee this module does not name{{[^"]*}}"
+
+// --- Negative: or binds a global toString ------------------------------------------
+//
+// A global `toString` is the window's own, so converting the window to a
+// string runs it with `this` = the window.
+//
+// ARGTOSTRING-NOT: call_direct @add
+// ARGTOSTRING: ctjs.globals = [
+// ARGTOSTRING-SAME: reason = "the global object may be converted to a string ({{[^)]*}}), and this program binds `toString`"
+
+// --- Positive: the global object kept in a literal and an array made here ----------
+//
+// Storing the window into a literal or array made here is not an escape: the
+// object is followed instead (follow_holder), into the callee it is passed
+// to, where reading it back yields the window again, which is only read
+// through by name.
+//
+// CONTAINERREAD: ctjs.globals = [
+// CONTAINERREAD-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
+// CONTAINERREAD: ctjs.call_direct @add$1
+
+// --- Negative: unless the object reaches a callee nobody can name ------------------
+//
+// That callee can read the window out of it and write through it.
+//
+// CONTAINERUNKNOWN-NOT: call_direct @add
+// CONTAINERUNKNOWN: ctjs.globals = [
+// CONTAINERUNKNOWN-SAME: reason = "an object that may hold the global object escapes into a call whose callee this module does not name{{[^"]*}}"
+
+// --- Negative: or the window read back out is written through ----------------------
+//
+// A computed write through it can bind any global, `add` included.
+//
+// CONTAINERWRITE-NOT: call_direct @add
+// CONTAINERWRITE: ctjs.globals = [
+// CONTAINERWRITE-SAME: reason = "the global object is written through (ctjs.set_property{{[^"]*}}"
+
+// --- Negative: or the object is stored into one not made here ----------------------
+//
+// `o` may be any object, so the literal leaves this walk's sight.
+//
+// CONTAINERSTORED-NOT: call_direct @add
+// CONTAINERSTORED: ctjs.globals = [
+// CONTAINERSTORED-SAME: reason = "an object that may hold the global object escapes into ctjs.set_property{{[^"]*}}"
+
 // --- Positive: a named read off the global object ----------------------------------
 //
 // The same precision, applied to the global object. A read off `window`
@@ -487,12 +636,13 @@
 // result of every call of a function whose callers are all in sight
 // (ENTERNAMED above, enter-cell.js and enter-return.js). Writing another value
 // into the binding keeps its reads watched, so one passed to an unknown callee
-// is still refused; a returned window stored into an object is refused; and a
-// return is refused outright when the function is also used as a value,
-// because a caller out of sight would receive the window.
+// is still refused; a returned window stored into a literal is followed
+// through the literal, which is refused here because it then reaches an
+// unknown callee; and a return is refused outright when the function is also
+// used as a value, because a caller out of sight would receive the window.
 //
 // ENTERCELLLEAK: ctjs.global_escapes = ["the global object escapes into a call whose callee this module does not name (ctjs.call{{[^"]*}}"]
-// ENTERRETURNSTORED: ctjs.global_escapes = ["the global object escapes into ctjs.set_property{{[^"]*}}"]
+// ENTERRETURNSTORED: ctjs.global_escapes = ["an object that may hold the global object escapes into a call whose callee this module does not name (ctjs.call{{[^"]*}}"]
 // ENTERRETURNVALUE: ctjs.global_escapes = ["the global object escapes into ctjs.return{{[^"]*}} - `host${{[0-9]+}}` is also used as a value by ctjs.call{{[^"]*}}"]
 
 // --- Positive: a cycle terminates -------------------------------------------------
@@ -813,6 +963,110 @@ function grab(o) { return o.constructor.prototype; }
 var t = grab(1);
 var z = add(1, 2);
 
+//--- ctor-static-call.js
+function add(a, b) { return a + b; }
+// A static method called through `this.constructor` from an instance method.
+class Base {
+    static eventName(t) { return t + ".base"; }
+    fire() { return this.constructor.eventName("show"); }
+}
+var e = new Base().fire();
+var z = add(1, 2);
+
+//--- ctor-static-polluted.js
+function add(a, b) { return a + b; }
+// The key on Object.prototype, which `Function` inherits from.
+Object.assign(Object.prototype, { eventName: function () { return this("return 1"); } });
+function grab(o) { return o.constructor.eventName("show"); }
+var g = grab(function () {});
+var z = add(1, 2);
+
+//--- ctor-static-realm.js
+function add(a, b) { return a + b; }
+// `valueOf` is a realm method every function inherits.
+function grab(o) { return o.constructor.valueOf(); }
+var g = grab(function () {});
+var z = add(1, 2);
+
+//--- ctor-static-written.js
+function add(a, b) { return a + b; }
+// The key written through a parameter, which may be any object.
+function put(t, f) { t.eventName = f; }
+put({}, function () { return 1; });
+function grab(o) { return o.constructor.eventName("show"); }
+var g = grab(function () {});
+var z = add(1, 2);
+
+//--- window-lacks.js
+function add(a, b) { return a + b; }
+// Each call throws on the window, which is the point: it runs no code there.
+(function (g) { return g.getBoundingClientRect(); })(globalThis);
+(function (g) { return g.toString(); })(globalThis);
+var z = add(1, 2);
+
+//--- window-lacks-bound.js
+function add(a, b) { return a + b; }
+function getRootNode() { this.injected = 1; }
+(function (g) { return g.getRootNode(); })(globalThis);
+var z = add(1, 2);
+
+//--- window-lacks-polluted.js
+function add(a, b) { return a + b; }
+Object.assign(Object.prototype, { contains: function () { this.injected = 1; return true; } });
+(function (g) { return g.contains(1); })(globalThis);
+var z = add(1, 2);
+
+//--- argument-inert.js
+function add(a, b) { return a + b; }
+(function (child) {
+    return document.body.contains(child) || document.body.isSameNode(child);
+})(globalThis);
+var z = add(1, 2);
+
+//--- argument-defined.js
+function add(a, b) { return a + b; }
+var box = { contains: function (x) { x.injected = 1; return true; } };
+(function (child) { return box.contains(child); })(globalThis);
+var z = add(1, 2);
+
+//--- argument-tostring.js
+function add(a, b) { return a + b; }
+function toString() { this.injected = 1; return ""; }
+(function (child) { return document.body.classList.contains(child); })(globalThis);
+var z = add(1, 2);
+
+//--- container-read.js
+function add(a, b) { return a + b; }
+(function () {
+    var box = { w: globalThis };
+    var list = [globalThis];
+    return (function (o, a) { return o.w.innerWidth + a[0].innerHeight; })(box, list);
+})();
+var z = add(1, 2);
+
+//--- container-unknown.js
+function add(a, b) { return a + b; }
+(function () {
+    var box = { w: globalThis };
+    return someHost(box);
+})();
+var z = add(1, 2);
+
+//--- container-write.js
+function add(a, b) { return a + b; }
+(function (k) {
+    var box = { w: globalThis };
+    box.w[k] = 1;
+})("add");
+var z = add(1, 2);
+
+//--- container-stored.js
+function add(a, b) { return a + b; }
+(function (o) {
+    o.box = { w: globalThis };
+})({});
+var z = add(1, 2);
+
 //--- enter-read.js
 function add(a, b) { return a + b; }
 // The global object handed to a closure defined two tokens earlier (a UMD
@@ -920,7 +1174,7 @@ function add(a, b) { return a + b; }
 (function () {
     function host() { return window; }
     function use() { var box = {}; box.held = host(); return box; }
-    use();
+    someHost(use());
 })();
 var z = add(1, 2);
 

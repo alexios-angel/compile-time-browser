@@ -9,29 +9,55 @@ root reason. Fixing a reason that is not a root gains nothing until its root
 is fixed.
 
 A refused function F depends on:
-  - its direct callers, when its reason is a parameter or capture that no
-    caller proves (a callee cannot be typed while its callers are refused);
+  - its callers, when its reason is a parameter or capture that no caller
+    proves (a callee cannot be typed while its callers are refused): the
+    functions with a direct call of it, and those that call it through a
+    run-once function's static variable holding its closure;
   - the ctjs.create_closure that makes it, when that closure was refused and
     F's reason is a parameter, `this`, new.target or its own closure (an
     unlifted closure has no call site that passes them);
   - a refused ctjs.create_closure inside F, when F's reason is that closure's
     refusal ("a closure used as a value: ...", "uses `this` - ...").
 A refused create_closure depends on its enclosing closure when its reason is
-"capture N is filled from the enclosing closure"; otherwise it is a root.
+"capture N is filled from the enclosing closure", and on its class when it is
+the class's constructor or is stored on the constructor or its prototype: a
+class the class rule refused (`ctnative.class_reason`), or a class whose
+constructor's own closure is refused. Otherwise it is a root.
 Every other refused function is a root. A dependent with no refused
 dependency is a root too, under its own reason.
 
-For each root reason (names and numbers normalized) the report prints the
-roots, every refused function at or behind them ("blocks"), and the ones whose
-every root has that reason ("solely"): fixing the reason can free at most the
-"solely" functions, and only if nothing behind them refuses next.
+Functions are counted by source function, as native-claims.py counts
+admission: a copy listed in the module's `ctnative.copies` (per class, per
+call site, per argument type) stands for the function it copies. A root inside
+a copied function is one root however many copies repeat it, and a source is
+blocked by every root behind any of its copies.
+
+For each root reason (names and numbers normalized) the report prints its
+roots, the source functions at or behind them ("blocks"), and the two counts
+that rank the rows by what fixing the reason would free:
+  solely  the source functions whose every root has this reason. Fixing it
+          frees them, unless one refuses next for a reason the module cannot
+          show yet.
+  then    the source functions blocked by this reason and exactly one other.
+          Fixing it leaves each of them blocked by that other reason alone, so
+          they open up with one more fix; the most common such reason is
+          printed under the row ("then blocked by").
+The default pipeline erases the refused functions that nothing able to run
+creates or calls (`ctnative.unreachable_refusals`), so every function counted
+can run.
 """
 
 import argparse
 import collections
+from pathlib import Path
 import re
 import subprocess
 import sys
+
+from selftest import load
+
+# Reads ctnative.copies the way native-claims.py does.
+claims = load(Path(__file__).with_name("native-claims.py"))
 
 # The same IR patterns tools/check/named-callees.py matches.
 FUNC = re.compile(r"^  (emitc\.func|ctjs\.func) (?:private )?@([A-Za-z0-9_$]+)\(([^\n]*)")
@@ -52,6 +78,12 @@ STRING = re.compile(r'ctjs\.constant #ctjs\.string<"([^"]*)">')
 SET = re.compile(r"ctjs\.set_property (%[\w#]+)\[(%[\w#]+)\], (%[\w#]+)")
 ACCESSOR = re.compile(r"ctjs\.define_accessor \S+ on (%[\w#]+) get (%[\w#]+) set (%[\w#]+)")
 INDEX = re.compile(r"[$_](\d+)$")
+# A static variable of a run-once function (ClosureLifting/RunOnce.cpp): its
+# box, and the reference to it in each function that reads it, carry its name.
+STATIC_CELL = re.compile(r'ctjs\.create_cell .*ctnative\.static_cell = "([^"]+)"')
+CELL_GET = re.compile(r"ctjs\.cell_get (%[\w#]+)")
+CELL_SET = re.compile(r"ctjs\.cell_set (%[\w#]+), (%[\w#]+)")
+CALL = re.compile(r"ctjs\.call (%[\w#]+)\(")
 
 ENCLOSING = "capture N is filled from the enclosing closure, which did not lift: "
 VALUE = "a closure used as a value: "
@@ -64,19 +96,48 @@ def normalize(reason):
     return re.sub(r"\b\d+\b", "N", reason)
 
 
+def index_of(name):
+    """The function index a name ends in, which names the function in both
+    spellings: `f$9` in ctjs, `f_9` once lowered to C++. The name itself when
+    it ends in none."""
+    found = INDEX.search(name)
+    return int(found.group(1)) if found else name
+
+
+def copies_of(text):
+    """Each copy in the module's `ctnative.copies`, mapped to its source, both
+    by function index."""
+    found = claims._COPIES.search(text)
+    pairs = claims._COPY_PAIR.findall(found.group(1)) if found else []
+    return {
+        index_of(claims.unquote(copy)): index_of(claims.unquote(source)) for copy, source in pairs
+    }
+
+
+def source_of(name, copies):
+    """The source function `name` stands for, by function index."""
+    key = index_of(name)
+    return copies.get(key, key)
+
+
 def parse(text):
     """Functions, call edges, closures and refused classes of a lowered module.
 
     Returns (funcs, callers, closures, classes): funcs maps a name to its
     not_native reason (None when it lowered); callers maps a name to the
-    functions with a direct call of it; closures lists (creator, target,
+    functions with a direct call of it, or a call through a static variable
+    written with a closure of it; closures lists (creator, target,
     reason or None, class target or None), where the class is the refused
     class whose constructor or prototype the closure is stored on, or which
     the closure constructs; classes maps a constructor's target to its
-    ctnative.class_reason.
+    ctnative.class_reason. A class is refused when the class rule refused it
+    or when its constructor's closure is refused.
     """
     funcs, callers, closures, classes = {}, collections.defaultdict(set), [], {}
     by_index, pending = {}, []
+    # Static variable -> the closures written to it, and the functions that
+    # call through it.
+    held, through = collections.defaultdict(set), collections.defaultdict(set)
     current = None
     for line in text.splitlines():
         header = FUNC.match(line)
@@ -87,8 +148,9 @@ def parse(text):
             index = INDEX.search(current)
             if index:
                 by_index[int(index.group(1))] = current
-            # Per function: SSA name -> pending closure, string, or class.
-            made_at, strings, class_of = {}, {}, {}
+            # Per function: SSA name -> pending closure, string, class, static
+            # box, or read of a static box.
+            made_at, strings, class_of, boxes, reads = {}, {}, {}, {}, {}
             continue
         if current is None:
             continue
@@ -101,6 +163,16 @@ def parse(text):
         constant = STRING.search(line)
         if result and constant:
             strings[result.group(1)] = constant.group(1)
+        box, read = STATIC_CELL.search(line), CELL_GET.search(line)
+        if result and box:
+            boxes[result.group(1)] = box.group(1)
+        elif result and read and read.group(1) in boxes:
+            reads[result.group(1)] = boxes[read.group(1)]
+        written, call = CELL_SET.search(line), CALL.search(line)
+        if written and written.group(1) in boxes and written.group(2) in made_at:
+            held[boxes[written.group(1)]].add(made_at[written.group(2)][1])
+        if call and call.group(1) in reads:
+            through[reads[call.group(1)]].add(current)
         made = CLOSURE.search(line)
         if made:
             why = CLOSURE_REASON.search(line)
@@ -118,6 +190,12 @@ def parse(text):
         stored = SET.search(line)
         if stored:
             owner, key, value = stored.groups()
+            # A constructor whose closure is refused with no class rule
+            # reason stands for its class: the constructor lift refused it, so
+            # its members are stored closures that no proved class lowers.
+            ctor = made_at.get(owner)
+            if strings.get(key) == "prototype" and owner not in class_of and ctor and ctor[2]:
+                class_of[owner] = ctor[1]
             if owner in class_of and strings.get(key) == "prototype":
                 class_of[value] = class_of[owner]
             elif owner in class_of and value in made_at and made_at[value][3] is None:
@@ -130,6 +208,11 @@ def parse(text):
     for creator, index, why, cls in pending:
         if index in by_index:
             closures.append((creator, by_index[index], why, by_index.get(cls)))
+    # A call through a static variable reaches the function it holds.
+    for symbol, calling in through.items():
+        for index in held[symbol]:
+            if index in by_index:
+                callers[by_index[index]] |= calling
     classes = {by_index[i]: why for i, why in classes.items() if i in by_index}
     return funcs, callers, closures, classes
 
@@ -152,9 +235,12 @@ def blame(funcs, callers, closures, classes):
         while tail.startswith(ENCLOSING):
             tail = tail[len(ENCLOSING) :]
         # A class member, and the constructor itself, are only values because
-        # the class rule refused the class: a proved class lowers them all.
+        # the class was refused: a proved class lowers them all. Without a
+        # class rule reason, the refusal is the constructor closure's own.
         if cls and ("class", cls) in nodes:
             deps.add(("class", cls))
+        elif cls and cls != target:
+            deps.add(("closure", cls))
         nodes[("closure", target)] = (tail, deps)
     for name, why in funcs.items():
         if why is None:
@@ -213,32 +299,54 @@ def roots_of(nodes):
     return {node: visit(node, set())[0] for node in nodes}
 
 
-def report(nodes):
-    """Rows (reason, roots, blocks, solely) sorted by solely, then blocks."""
+def report(nodes, copies):
+    """Rows (reason, roots, blocks, solely, then, after) sorted by solely, then,
+    blocks; every count is of source functions, through `copies` (copies_of).
+    `after` is (reason, count): the other reason that most of the "then"
+    functions stay blocked by, or None."""
     rooted = roots_of(nodes)
-    roots = collections.Counter()
-    blocks = collections.Counter()
-    solely = collections.Counter()
+    roots = collections.defaultdict(set)
+    blocked = collections.defaultdict(set)
     for node, found in rooted.items():
+        kind, name = node
+        source = source_of(name, copies)
         if found == {node}:
-            roots[nodes[node][0]] += 1
-        if node[0] != "fn":
-            continue
-        reasons = {nodes[r][0] for r in found}
-        for reason in reasons:
-            blocks[reason] += 1
+            roots[nodes[node][0]].add((kind, source))
+        if kind == "fn":
+            blocked[source] |= {nodes[root][0] for root in found}
+    blocks, solely, then = collections.Counter(), collections.Counter(), collections.Counter()
+    after = collections.defaultdict(collections.Counter)
+    for reasons in blocked.values():
+        blocks.update(reasons)
         if len(reasons) == 1:
-            solely[next(iter(reasons))] += 1
-    rows = [(reason, roots[reason], blocks[reason], solely[reason]) for reason in roots]
-    rows.sort(key=lambda row: (-row[3], -row[2], row[0]))
+            solely.update(reasons)
+        elif len(reasons) == 2:
+            then.update(reasons)
+            first, second = reasons
+            after[first][second] += 1
+            after[second][first] += 1
+    rows = [
+        (
+            reason,
+            len(found),
+            blocks[reason],
+            solely[reason],
+            then[reason],
+            min(after[reason].items(), key=lambda kv: (-kv[1], kv[0]), default=None),
+        )
+        for reason, found in roots.items()
+    ]
+    rows.sort(key=lambda row: (-row[3], -row[4], -row[2], row[0]))
     return rows
 
 
-def print_rows(rows, refused, width):
-    print(f"refused functions: {refused}")
-    print(f"{'solely':>6} {'blocks':>6} {'roots':>5}  root reason")
-    for reason, nroots, nblocks, nsolely in rows:
-        print(f"{nsolely:>6} {nblocks:>6} {nroots:>5}  {reason[:width]}")
+def print_rows(rows, refused, sources, width):
+    print(f"refused functions: {refused}, from {sources} source functions")
+    print(f"{'solely':>6} {'then':>5} {'blocks':>6} {'roots':>5}  root reason")
+    for reason, nroots, nblocks, nsolely, nthen, after in rows:
+        print(f"{nsolely:>6} {nthen:>5} {nblocks:>6} {nroots:>5}  {reason[:width]}")
+        if after:
+            print(f"{'':>27}then blocked by: {after[0][:width]} ({after[1]})")
 
 
 def self_test():
@@ -278,8 +386,10 @@ def main():
     else:
         ap.error("give --self-test, --ir, or --translate, --opt and --corpus")
     funcs, callers, closures, classes = parse(text)
-    rows = report(blame(funcs, callers, closures, classes))
-    print_rows(rows, sum(1 for why in funcs.values() if why is not None), a.width)
+    copies = copies_of(text)
+    rows = report(blame(funcs, callers, closures, classes), copies)
+    refused = [name for name, why in funcs.items() if why is not None]
+    print_rows(rows, len(refused), len({source_of(n, copies) for n in refused}), a.width)
 
 
 if __name__ == "__main__":

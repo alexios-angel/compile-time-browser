@@ -262,8 +262,8 @@ var symbolDescriptionSecond = observeDescriptions(true);
     run([args.node, str(node)])
 
 
-def main():
-    args = dom.parse_args(__doc__, oracles=True)
+def main(argv=None):
+    args = dom.parse_args(__doc__, oracles=True, argv=argv)
     oracle(args)
     compilers = args.compilers
     includes, libraries = dom.link_options(args)
@@ -363,6 +363,10 @@ def main():
         f"Symbol DOM: {len(OBSERVATIONS)} attributes and 2 returns agree with Node/VM; "
         f"{24 + 4 * len(TRANSPORT)} native executions, {2 * len(REFUSALS) + 6} refusals, 1 mutation; DOM/Core only"
     )
+
+
+def test_symbols(lit):
+    main(lit.args("%dom_driver --node %node --reference %native_reference"))
 
 
 if __name__ == "__main__":

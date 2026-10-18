@@ -64,7 +64,21 @@ private:
     llvm::DenseMap<mlir::Value, Fact> arguments;
     llvm::DenseMap<mlir::Operation *, Fact> returns;
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CallDirectOp>> callers;
+    /// Each function by index, and the ctjs.create_closure operations that
+    /// make a closure of it.
+    llvm::DenseMap<unsigned, ctjs::FuncOp> byIndex;
+    llvm::DenseMap<unsigned, llvm::SmallVector<ctjs::CreateClosureOp>> madeAt;
     bool collectCallers(llvm::ArrayRef<ctjs::FuncOp> functions);
+    /// The one function every closure `value` can hold is a closure of, or
+    /// null when it may hold anything else.
+    ctjs::FuncOp calleeOf(mlir::Value value, unsigned depth) const;
+    /// The same for every value `cell` holds, and for upvalue `slot` of every
+    /// closure of `fn`.
+    ctjs::FuncOp cellHolds(mlir::Value cell, unsigned depth) const;
+    ctjs::FuncOp slotHolds(ctjs::FuncOp fn, unsigned slot, unsigned depth) const;
+    /// Whether every write to upvalue `slot` of `fn`'s closures, in `fn` and
+    /// in the closures it fills from that slot, stores a closure of `target`.
+    bool slotWritesOnly(ctjs::FuncOp fn, unsigned slot, ctjs::FuncOp target, unsigned depth) const;
     bool region(mlir::Region & region);
     Fact operation(mlir::Operation * op);
 };

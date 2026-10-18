@@ -55,6 +55,7 @@
 #include "ClassInheritance.h"
 #include "ClosureLifter.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/IRMapping.h"
 
 #include "llvm/ADT/SetVector.h"
 
@@ -366,7 +367,16 @@ bool closureLifter::bindClassStatics(liftReport & out) {
     llvm::SmallVector<std::pair<mlir::StringAttr, mlir::StringAttr>> keptCopies;
     std::function<ctjs::FuncOp(ctjs::FuncOp, llvm::SmallVectorImpl<mlir::Operation *> &)>
         cloneDeep = [&](ctjs::FuncOp fn, llvm::SmallVectorImpl<mlir::Operation *> & made) {
-            auto copy = llvm::cast<ctjs::FuncOp>(fn->clone());
+            mlir::IRMapping mapping;
+            auto copy = llvm::cast<ctjs::FuncOp>(fn->clone(mapping));
+            // bindLocalFunctions has run: a binding it refused in the helper
+            // is refused in the copy for the same reason.
+            fn.walk([&](ctjs::CreateCellOp cell) {
+                const auto why = whyNotAFunctionBinding.find(cell.getOperation());
+                if (why == whyNotAFunctionBinding.end()) { return; }
+                std::string reason = why->second;
+                whyNotAFunctionBinding[mapping.lookup(cell.getOperation())] = std::move(reason);
+            });
             const unsigned index = nextIndex++;
             const llvm::StringRef name = fn.getSymName();
             copy.setSymName((name.substr(0, name.rfind('$')) + "$" + llvm::Twine(index)).str());
@@ -728,6 +738,9 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                     byIndex.erase(*index);
                 }
                 passesNewTarget.erase(fn);
+                fn->walk([&](ctjs::CreateCellOp cell) {
+                    whyNotAFunctionBinding.erase(cell.getOperation());
+                });
                 fn->erase();
             }
             for (auto & [call, direct] : llvm::reverse(converted)) {
@@ -1213,6 +1226,7 @@ bool closureLifter::bindClassStatics(liftReport & out) {
             const mlir::Value undefined = undefinedAt(at, s.call.getLoc());
             auto direct = directCall(at, s.call.getLoc(), s.target, undefined, undefined, undefined,
                                      {}, s.call.getArgs(), parametersOf(s.target));
+            direct->setAttr(kNativeStaticMemberCall, mlir::UnitAttr::get(context));
             if (exported.contains(s.call.getReceiver())) {
                 direct->setAttr(kNativeExportClass, exportMark);
             }
@@ -1225,6 +1239,7 @@ bool closureLifter::bindClassStatics(liftReport & out) {
             const mlir::Value undefined = undefinedAt(at, load.getLoc());
             auto direct = directCall(at, load.getLoc(), target, undefined, undefined, undefined, {},
                                      mlir::ValueRange{}, parametersOf(target));
+            direct->setAttr(kNativeStaticMemberCall, mlir::UnitAttr::get(context));
             if (exported.contains(load.getObject())) {
                 direct->setAttr(kNativeExportClass, exportMark);
             }

@@ -28,19 +28,24 @@
 #include "../HostContract/Preparation.h"
 #include "../Reachability/Analysis.h"
 #include "Admission/Admission.h"
+#include "ClosureLifting/ClassInheritance.h"
 #include "ClosureLifting/ClosureLifter.h"
 #include "EmitC/Emitter.h"
 #include "EmitC/Vectors.h"
 #include "Exceptions/Recovery.h"
+#include "Exceptions/SuppressedCloses.h"
 #include "Exceptions/TypeErrors.h"
 #include "ForOf.h"
 #include "Refinements.h"
+#include "ctcompile/CTJS/Lowering/NativeRealm.h"
 #include "ctcompile/CTJS/Transforms/Passes.h"
 #include "ctcompile/CTNative/Analysis/StaticTables.h"
 #include "ctcompile/CTNative/Analysis/WorkBudget.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Pass/PassManager.h"
+#include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Support/MemoryBuffer.h"
 
 #include <optional>
@@ -52,6 +57,61 @@ namespace ctcompile::ctnative {
 
 namespace {
 using namespace lowering_detail;
+
+/// Folds to undefined each read of a global object property that
+/// --ctjs-resolve-globals marked kAbsentGlobalProperty: a name no script
+/// writes and the native realm does not provide, left for the VM only because
+/// something could write the globals table dynamically. Native code cannot:
+/// every such write is refused where it sits, and a program with a refused
+/// function has no native build. A key that something else in the module
+/// spells (a write by that name through another value, or a call that passes
+/// it) keeps its reads. The folded names go on the module as
+/// ctnative.absent_globals. As in --ctjs-resolve-globals' own fold, the page
+/// is taken to have no element of that id or name, which named access on the
+/// Window object (HTML 7.3.3) would return.
+void foldAbsentGlobalReads(mlir::ModuleOp module) {
+    llvm::SmallVector<ctjs::GetPropertyOp> marked;
+    module.walk([&](ctjs::GetPropertyOp get) {
+        if (get->hasAttr(ctjs::kAbsentGlobalProperty)) { marked.push_back(get); }
+    });
+    if (marked.empty()) { return; }
+    llvm::StringSet<> spelled;
+    module.walk([&](ctjs::ConstantOp constant) {
+        auto text = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue());
+        if (!text) { return; }
+        for (mlir::OpOperand & use : constant.getResult().getUses()) {
+            auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
+            if (!llvm::isa<ctjs::RootOp>(use.getOwner()) &&
+                (!get || use.getOperandNumber() != 1 ||
+                 !get->hasAttr(ctjs::kAbsentGlobalProperty))) {
+                spelled.insert(text.getValue());
+                return;
+            }
+        }
+    });
+    llvm::SetVector<mlir::Attribute> folded;
+    for (ctjs::GetPropertyOp get : marked) {
+        get->removeAttr(ctjs::kAbsentGlobalProperty);
+        const llvm::StringRef key = ctjs::constantKey(get.getKey());
+        auto holder = get.getObject().getDefiningOp<ctjs::LoadGlobalOp>();
+        if (!holder || key.empty() || spelled.contains(key) || ctjs::nativeRealmProvides(key)) {
+            continue;
+        }
+        mlir::OpBuilder at(get);
+        auto undefined = ctjs::ConstantOp::create(at, get.getLoc(), get.getType(),
+                                                  ctjs::UndefinedAttr::get(module.getContext()));
+        get.getResult().replaceAllUsesWith(undefined.getResult());
+        folded.insert(mlir::StringAttr::get(module.getContext(), key));
+        mlir::Operation * keyed = get.getKey().getDefiningOp();
+        get.erase();
+        if (keyed && keyed->use_empty()) { keyed->erase(); }
+        if (holder->use_empty()) { holder->erase(); }
+    }
+    if (!folded.empty()) {
+        module->setAttr("ctnative.absent_globals",
+                        mlir::ArrayAttr::get(module.getContext(), folded.getArrayRef()));
+    }
+}
 
 /// Replaces host-declared undefined bindings (and absent bindings read through
 /// `typeof`) with an `undefined` constant, and `typeof` of a proved fresh owner
@@ -361,6 +421,11 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             domEntry = std::make_unique<DOMEntryAnalysis>(module, *hostContract, hostMaxSteps);
         }
 
+        // Before the default optimizations, so that precomputation drops the
+        // branches the folded reads guard, and before the closure lift, so that
+        // the helpers the class statics rewrite copies have lost them too.
+        if (!hostContract) { foldAbsentGlobalReads(module); }
+
         // Run the default optimizations here, so clients do not need to
         // rebuild them in a shell or test pipeline. They run before closure
         // lifting: reachability still sees ctjs's complete reference forms,
@@ -458,10 +523,14 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // Before the lift: an object parameter must be read only through
         // constant keys, which `config[key]` in a loop over a table parameter
         // becomes only once the loop is written out per key.
-        // A `throw new TypeError(message)` the lift left beside the
-        // function's returns is put in a saved-throw region, and the
-        // functions are lifted again (Exceptions/TypeErrors.h).
-        if (!hostContract && structureTypeErrorThrows(module)) {
+        // A handler that only drops an iterator close's errors before a throw
+        // becomes an invocation of the close first; it is not a catch that
+        // could see the throw (Exceptions/SuppressedCloses.h). A `throw new
+        // TypeError(message)` the lift left beside the function's returns is
+        // put in a saved-throw region, and the functions are lifted again
+        // (Exceptions/TypeErrors.h).
+        const bool closes = !hostContract && structureSuppressedCloses(module);
+        if (!hostContract && (structureTypeErrorThrows(module) || closes)) {
             mlir::OpPassManager relift(mlir::ModuleOp::getOperationName());
             relift.addPass(ctjs::createCTJSLiftToSCF());
             if (failed(runPipeline(relift, module))) { return signalPassFailure(); }
@@ -750,9 +819,45 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // which must name a ctjs.func with a body, and a lowered function no
         // longer has one. So a refusal propagates along the call graph both
         // ways, each step naming the function that caused it, except back to
-        // a callee that a refused caller can call through a closure. The global
-        // census below can refuse the script entry after this has run, so it
-        // runs again then.
+        // a static member that a refused caller can call through a closure.
+        // The global census below can refuse the script entry after this has
+        // run, so it runs again then.
+        //
+        // A refused caller of a static member that the class statics rewrite
+        // turned into a direct call (kNativeStaticMemberCall), when the member
+        // is native, takes no parameters and reads neither new.target nor its
+        // own closure (a static getter), calls it through a closure instead, as
+        // it did through the class before that rewrite. A closure names its
+        // function by index, not by symbol, so the member stays native for its
+        // native callers, and the call means the same. Any other direct call
+        // keeps the rule above: its callee is refused with its caller.
+        const auto callThroughClosure = [&](ctjs::FuncOp fn, ctjs::CallDirectOp call) {
+            if (!call->hasAttr(kNativeStaticMemberCall)) { return false; }
+            auto callee = llvm::dyn_cast_or_null<ctjs::FuncOp>(symbols.lookup(call.getCallee()));
+            mlir::Block * entry =
+                callee && !callee.getBody().empty() ? &callee.getBody().front() : nullptr;
+            const std::optional<unsigned> index =
+                entry ? ctjs::functionIndex(callee) : std::nullopt;
+            if (!index || !nativeSet.contains(callee.getOperation()) ||
+                entry->getNumArguments() != ctjs::implicit_arguments ||
+                !entry->getArgument(ctjs::arg_new_target).use_empty() ||
+                !entry->getArgument(ctjs::arg_callee).use_empty()) {
+                return false;
+            }
+            mlir::OpBuilder at(call);
+            const mlir::Type type = call.getResult().getType();
+            auto undefined = ctjs::ConstantOp::create(at, call.getLoc(), type,
+                                                      ctjs::UndefinedAttr::get(&getContext()));
+            auto closure = ctjs::CreateClosureOp::create(
+                at, call.getLoc(), type, fn.getBody().front().getArgument(ctjs::arg_callee),
+                undefined, at.getI32IntegerAttr(static_cast<std::int32_t>(*index)),
+                mlir::ValueRange{}, mlir::DenseI32ArrayAttr{});
+            auto through = ctjs::CallOp::create(at, call.getLoc(), type, closure,
+                                                call.getReceiver(), call.getArgs());
+            call.getResult().replaceAllUsesWith(through.getResult());
+            call.erase();
+            return true;
+        };
         const auto closeNativeSet = [&] {
             for (bool changed = true; changed;) {
                 changed = false;
@@ -789,40 +894,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                              "retained by `" + fn.getSymName() + "`, which is not native");
                     });
                     fn.getBody().walk([&](ctjs::CallDirectOp call) {
-                        // A refused caller of a native function that takes no
-                        // parameters and reads neither new.target nor its own
-                        // closure (a static getter, which the class statics
-                        // rewrite turned into a direct call) calls it through a
-                        // closure instead, as it did through the class before
-                        // that rewrite. A closure names its function by index,
-                        // not by symbol, so the callee stays native for its
-                        // native callers, and the call means the same.
-                        auto callee =
-                            llvm::dyn_cast_or_null<ctjs::FuncOp>(symbols.lookup(call.getCallee()));
-                        mlir::Block * entry = callee && !callee.getBody().empty()
-                                                  ? &callee.getBody().front()
-                                                  : nullptr;
-                        const std::optional<unsigned> index =
-                            entry ? ctjs::functionIndex(callee) : std::nullopt;
-                        if (!native && index && nativeSet.contains(callee.getOperation()) &&
-                            entry->getNumArguments() == ctjs::implicit_arguments &&
-                            entry->getArgument(ctjs::arg_new_target).use_empty() &&
-                            entry->getArgument(ctjs::arg_callee).use_empty()) {
-                            mlir::OpBuilder at(call);
-                            const mlir::Type type = call.getResult().getType();
-                            auto undefined = ctjs::ConstantOp::create(
-                                at, call.getLoc(), type, ctjs::UndefinedAttr::get(&getContext()));
-                            auto closure = ctjs::CreateClosureOp::create(
-                                at, call.getLoc(), type,
-                                fn.getBody().front().getArgument(ctjs::arg_callee), undefined,
-                                at.getI32IntegerAttr(static_cast<std::int32_t>(*index)),
-                                mlir::ValueRange{}, mlir::DenseI32ArrayAttr{});
-                            auto through = ctjs::CallOp::create(at, call.getLoc(), type, closure,
-                                                                call.getReceiver(), call.getArgs());
-                            call.getResult().replaceAllUsesWith(through.getResult());
-                            call.erase();
-                            return;
-                        }
+                        if (!native && callThroughClosure(fn, call)) { return; }
                         edge(symbols.lookup(call.getCallee()),
                              "calls `" + call.getCallee() + "`, which is not native",
                              "called by `" + fn.getSymName() + "`, which is not native");
@@ -1020,6 +1092,12 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // After recovery's, which may hold the folded body.
         for (auto & [fn, original] : forOfOriginals) {
             if (!llvm::is_contained(accepted, fn)) { fn.getBody().takeBody(original->getBody()); }
+        }
+        // A body put back still calls a native callee by symbol where the body
+        // it replaced was given a call through a closure.
+        for (ctjs::FuncOp fn : functions) {
+            if (nativeSet.contains(fn.getOperation())) { continue; }
+            fn.getBody().walk([&](ctjs::CallDirectOp call) { callThroughClosure(fn, call); });
         }
         if (admittedDOM && llvm::is_contained(accepted, admittedDOM->entry())) {
             lower.censusDOM(*admittedDOM,

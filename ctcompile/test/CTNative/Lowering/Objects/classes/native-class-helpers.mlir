@@ -57,6 +57,22 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/new-target.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=NEWTARGET
+//
+// Bootstrap's defineJQueryPlugin, in small: the helper registers the class's
+// static jQueryInterface only when getjQuery() finds `window.jQuery`. The
+// module can write the globals table through the window (`ping`), so the
+// read stays for the VM, but no script writes jQuery and native code makes
+// no such write, so the native lowering folds it to undefined. getjQuery()
+// is then null, precomputation drops the registering branch before the
+// helper is copied for the class, and the class is proved: its
+// jQueryInterface is removed as unreachable. The same program writing
+// `window.jQuery` keeps the branch and is refused as before.
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/jquery-plugin.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=PLUGIN --implicit-check-not=ctnative.class_reason
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/jquery-plugin-written.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=PLUGIN-WRITTEN --implicit-check-not=ctnative.absent_globals
 
 // CHECK: emitc.class @A
 // CHECK: emitc.class @B
@@ -71,6 +87,9 @@
 // CAPTURES: emitc.class @A
 // CAPTURES-RUN: r=3
 // NEWTARGET: ctnative.class_reason = "it has static getter `NAME`; `A` is passed to `keep${{[0-9]+}}`, which reads new.target or its own closure in `run${{[0-9]+}}`"
+// PLUGIN: ctnative.absent_globals = ["jQuery"]
+// PLUGIN-SAME: {function = "jQueryInterface$9", reason = "removed: unreachable
+// PLUGIN-WRITTEN: ctnative.class_reason = "it has static method `jQueryInterface`; the binding of `Alert` starts with another value"
 
 //--- helper.js
 function run() {
@@ -132,3 +151,60 @@ function run() {
     return new Box(2).v + show(Box);
 }
 var r = run();
+
+//--- jquery-plugin.js
+function ping() { window.postMessage("ready", "*"); }
+var r = (function () {
+    const getjQuery = () =>
+        window.jQuery && !document.body.hasAttribute("data-bs-no-jquery") ? window.jQuery : null;
+    const definePlugin = plugin => {
+        const ready = () => {
+            const $ = getjQuery();
+            if ($) {
+                const name = plugin.NAME;
+                const previous = $.fn[name];
+                $.fn[name] = plugin.jQueryInterface;
+                $.fn[name].Constructor = plugin;
+                $.fn[name].noConflict = () => ($.fn[name] = previous, plugin.jQueryInterface);
+            }
+        };
+        ready();
+    };
+    class Alert {
+        constructor(v) { this.v = v; }
+        static get NAME() { return "alert"; }
+        static jQueryInterface(x) { return x; }
+        double() { return 2 * this.v; }
+    }
+    definePlugin(Alert);
+    return new Alert(4).double();
+})();
+
+//--- jquery-plugin-written.js
+window.jQuery = {fn: {}};
+function ping() { window.postMessage("ready", "*"); }
+var r = (function () {
+    const getjQuery = () =>
+        window.jQuery && !document.body.hasAttribute("data-bs-no-jquery") ? window.jQuery : null;
+    const definePlugin = plugin => {
+        const ready = () => {
+            const $ = getjQuery();
+            if ($) {
+                const name = plugin.NAME;
+                const previous = $.fn[name];
+                $.fn[name] = plugin.jQueryInterface;
+                $.fn[name].Constructor = plugin;
+                $.fn[name].noConflict = () => ($.fn[name] = previous, plugin.jQueryInterface);
+            }
+        };
+        ready();
+    };
+    class Alert {
+        constructor(v) { this.v = v; }
+        static get NAME() { return "alert"; }
+        static jQueryInterface(x) { return x; }
+        double() { return 2 * this.v; }
+    }
+    definePlugin(Alert);
+    return new Alert(4).double();
+})();
