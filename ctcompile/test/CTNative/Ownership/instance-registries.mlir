@@ -107,6 +107,13 @@
 // RUN:   | ctjs-opt "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ctnative-lower-to-emitc, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))" \
 // RUN:              --mlir-print-debuginfo -o %t/new-this-native.emitc.mlir
 // RUN: %compilation_unit --module %t/new-this-native.emitc.mlir --js %t/new-this-native.js --work %t/new-this-native --name new_this_native
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/data-only.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=DATA-ONLY --implicit-check-not=ctnative.not_native
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/data-only.js --mlir-print-debuginfo 2>/dev/null \
+// RUN:   | ctjs-opt "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ctnative-lower-to-emitc, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))" \
+// RUN:              --mlir-print-debuginfo -o %t/data-only.emitc.mlir
+// RUN: %compilation_unit --module %t/data-only.emitc.mlir --js %t/data-only.js --work %t/data-only --name data_only
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/new-this-stored.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
 // RUN:              --ctnative-test-instance-registries=lifted=true \
@@ -253,6 +260,16 @@
 // NEW-THIS-NATIVE: emitc.func @getOrCreateInstance_{{[0-9]+}}(
 // NEW-THIS-NATIVE-SAME: -> !emitc.opaque<"std::shared_ptr<Widget>">
 // NEW-THIS-NATIVE: call_opaque "std::make_shared<Widget>"
+
+// --- Bootstrap's Data store alone ---------------------------------------------
+// `elements` is a run-once static, so its one write is the Map the closure
+// builds, and every read of it in `set`, `get` and `remove` is that one
+// instance (Analysis/NativeMap/Presence.cpp's staticOrigins). A `has` on one
+// read then proves the `get` on the next, which the nested Map needs. The
+// %compilation_unit run checks the answer, 11175, against the interpreter.
+// DATA-ONLY: emitc.func @set_{{[0-9]+}}(
+// DATA-ONLY: emitc.func @get_{{[0-9]+}}(
+// DATA-ONLY: emitc.func @remove_{{[0-9]+}}(
 
 // --- A fresh instance stored into an object ----------------------------------
 // Only the instance `new this` makes is stored; the read is returned as it
@@ -1056,4 +1073,38 @@ var total = (function () {
     const b = Widget.getOrCreateInstance(1, 9).grow();
     const c = Widget.getOrCreateInstance(2, 7).grow();
     return a * 100 + b * 10 + c + registry.size;
+})();
+
+//--- data-only.js
+var total = (function () {
+    const elements = new Map();
+    const Data = {
+        set(element, key, value) {
+            if (!elements.has(element)) {
+                elements.set(element, new Map());
+            }
+            elements.get(element).set(key, value);
+        },
+        get(element, key) {
+            return (elements.has(element) && elements.get(element).get(key)) || 0;
+        },
+        remove(element, key) {
+            if (!elements.has(element)) {
+                return;
+            }
+            const instances = elements.get(element);
+            instances.delete(key);
+            if (instances.size === 0) {
+                elements.delete(element);
+            }
+        }
+    };
+    Data.set(1, "a", 5);
+    Data.set(1, "b", 7);
+    Data.set(2, "a", 11);
+    let t = Data.get(1, "a") + Data.get(1, "b") * 10 + Data.get(2, "a") * 100;
+    Data.remove(1, "a");
+    Data.remove(1, "b");
+    t = t + Data.get(1, "a") * 1000;
+    return t + elements.size * 10000;
 })();
