@@ -183,7 +183,161 @@ Fact Analysis::operation(mlir::Operation * op) {
         auto target = call.getTarget();
         return target ? returns.lookup(target) : Fact{};
     }
+    // A call through a closure that can only be a closure of one function
+    // returns what that function returns. The function's argument facts must
+    // not come from a set of direct callers that misses this call, so one with
+    // such a set (collectCallers) qualifies only when it takes no parameters.
+    if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
+        ctjs::FuncOp target = calleeOf(call.getCallee(), 0);
+        if (!target || (callers.contains(target.getOperation()) &&
+                        target.getBody().front().getNumArguments() != ctjs::implicit_arguments)) {
+            return {};
+        }
+        return returns.lookup(target);
+    }
+    // A cell read right after a write of the same cell, with only constants
+    // between them, reads the value just written: nothing in between can
+    // write the cell.
+    if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(op)) {
+        for (mlir::Operation * before = op->getPrevNode(); before; before = before->getPrevNode()) {
+            if (llvm::isa<ctjs::ConstantOp, mlir::arith::ConstantOp>(before)) { continue; }
+            auto write = llvm::dyn_cast<ctjs::CellSetOp>(before);
+            return write && write.getCell() == read.getCell() ? get(write.getValue()) : Fact{};
+        }
+        return {};
+    }
     return {};
+}
+
+namespace {
+/// How many closure, cell and upvalue hops a callee is followed through.
+constexpr unsigned kCalleeDepth = 8;
+
+/// The function a create_closure makes a closure of, from its index.
+ctjs::FuncOp closureTarget(ctjs::CreateClosureOp made,
+                           const llvm::DenseMap<unsigned, ctjs::FuncOp> & byIndex) {
+    const std::optional<unsigned> index = ctjs::closureFunction(made);
+    return index ? byIndex.lookup(*index) : ctjs::FuncOp{};
+}
+
+/// The upvalue of the creating function's own closure that fills slot
+/// `slot` of `made`, or none when the slot takes `made`'s operand.
+std::optional<unsigned> filledFrom(ctjs::CreateClosureOp made, unsigned slot) {
+    const mlir::DenseI32ArrayAttr from = made.getEnclosingIndicesAttr();
+    if (!from || slot >= static_cast<unsigned>(from.size()) || from[slot] < 0) {
+        return std::nullopt;
+    }
+    return static_cast<unsigned>(from[slot]);
+}
+
+/// Whether `value` is the closure argument of the function it is used in.
+bool ownClosure(mlir::Operation * user, mlir::Value value) {
+    auto fn = user->getParentOfType<ctjs::FuncOp>();
+    return fn && !fn.getBody().empty() &&
+           value == fn.getBody().front().getArgument(ctjs::arg_callee);
+}
+} // namespace
+
+ctjs::FuncOp Analysis::calleeOf(mlir::Value value, unsigned depth) const {
+    if (depth > kCalleeDepth || !budget.spend()) { return {}; }
+    if (auto made = value.getDefiningOp<ctjs::CreateClosureOp>()) {
+        return closureTarget(made, byIndex);
+    }
+    if (auto read = value.getDefiningOp<ctjs::CellGetOp>()) {
+        return cellHolds(read.getCell(), depth + 1);
+    }
+    auto read = value.getDefiningOp<ctjs::LoadUpvalueOp>();
+    if (!read || !ownClosure(read, read.getClosure())) { return {}; }
+    return slotHolds(read->getParentOfType<ctjs::FuncOp>(), read.getIndex(), depth + 1);
+}
+
+ctjs::FuncOp Analysis::cellHolds(mlir::Value cell, unsigned depth) const {
+    auto made = cell.getDefiningOp<ctjs::CreateCellOp>();
+    if (!made || depth > kCalleeDepth) { return {}; }
+    ctjs::FuncOp target;
+    const auto agree = [&](mlir::Value held) {
+        const ctjs::FuncOp found = calleeOf(held, depth + 1);
+        if (!found || (target && found != target)) { return false; }
+        target = found;
+        return true;
+    };
+    // An undefined start holds no function: a call through it throws, so it
+    // returns nothing.
+    if (!ctjs::isUndefinedConstant(made.getInitial()) && !agree(made.getInitial())) { return {}; }
+    llvm::SmallVector<std::pair<ctjs::CreateClosureOp, unsigned>> captures;
+    for (mlir::OpOperand & use : made.getResult().getUses()) {
+        mlir::Operation * user = use.getOwner();
+        if (llvm::isa<ctjs::CellGetOp, ctjs::RootOp>(user)) { continue; }
+        if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(user);
+            write && use.getOperandNumber() == 0) {
+            if (!agree(write.getValue())) { return {}; }
+            continue;
+        }
+        auto captured = llvm::dyn_cast<ctjs::CreateClosureOp>(user);
+        const unsigned first = captured ? captured.getUpvalues().getBeginOperandIndex() : 0;
+        if (!captured || use.getOperandNumber() < first) { return {}; }
+        captures.push_back({captured, use.getOperandNumber() - first});
+    }
+    if (!target) { return {}; }
+    // A closure that captures the cell may write it through its upvalue.
+    for (auto [captured, slot] : captures) {
+        const ctjs::FuncOp holder = closureTarget(captured, byIndex);
+        if (!holder || !slotWritesOnly(holder, slot, target, depth + 1)) { return {}; }
+    }
+    return target;
+}
+
+ctjs::FuncOp Analysis::slotHolds(ctjs::FuncOp fn, unsigned slot, unsigned depth) const {
+    const std::optional<unsigned> index = ctjs::functionIndex(fn);
+    const auto sites = index ? madeAt.find(*index) : madeAt.end();
+    if (sites == madeAt.end() || depth > kCalleeDepth) { return {}; }
+    ctjs::FuncOp target;
+    for (ctjs::CreateClosureOp made : sites->second) {
+        ctjs::FuncOp found;
+        if (const std::optional<unsigned> from = filledFrom(made, slot)) {
+            // Filled from the creating function's own upvalue, which shares
+            // that cell.
+            if (ownClosure(made, made.getEnclosingClosure())) {
+                found = slotHolds(made->getParentOfType<ctjs::FuncOp>(), *from, depth + 1);
+            }
+        } else if (slot < made.getUpvalues().size()) {
+            found = cellHolds(made.getUpvalues()[slot], depth + 1);
+        }
+        if (!found || (target && found != target)) { return {}; }
+        target = found;
+    }
+    return target;
+}
+
+bool Analysis::slotWritesOnly(ctjs::FuncOp fn, unsigned slot, ctjs::FuncOp target,
+                              unsigned depth) const {
+    if (depth > kCalleeDepth || fn.getBody().empty()) { return false; }
+    const mlir::Value self = fn.getBody().front().getArgument(ctjs::arg_callee);
+    const auto walked = fn.walk([&](mlir::Operation * op) {
+        if (auto write = llvm::dyn_cast<ctjs::StoreUpvalueOp>(op)) {
+            // A write through any closure but this function's own could reach
+            // the slot by a path this does not follow.
+            if (write.getClosure() != self) { return mlir::WalkResult::interrupt(); }
+            if (write.getIndex() == slot && calleeOf(write.getValue(), depth + 1) != target) {
+                return mlir::WalkResult::interrupt();
+            }
+            return mlir::WalkResult::advance();
+        }
+        auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(op);
+        if (!made) { return mlir::WalkResult::advance(); }
+        for (unsigned nested = 0; nested < made.getUpvalues().size(); ++nested) {
+            const std::optional<unsigned> from = filledFrom(made, nested);
+            if (!from) { continue; }
+            if (made.getEnclosingClosure() != self) { return mlir::WalkResult::interrupt(); }
+            if (*from != slot) { continue; }
+            const ctjs::FuncOp inner = closureTarget(made, byIndex);
+            if (!inner || !slotWritesOnly(inner, nested, target, depth + 1)) {
+                return mlir::WalkResult::interrupt();
+            }
+        }
+        return mlir::WalkResult::advance();
+    });
+    return !walked.wasInterrupted();
 }
 
 bool Analysis::region(mlir::Region & body) {
@@ -258,7 +412,15 @@ bool Analysis::collectCallers(llvm::ArrayRef<ctjs::FuncOp> functions) {
 
 void Analysis::run() {
     llvm::SmallVector<ctjs::FuncOp> functions;
-    module.walk([&](ctjs::FuncOp fn) { functions.push_back(fn); });
+    module.walk([&](ctjs::FuncOp fn) {
+        functions.push_back(fn);
+        if (const std::optional<unsigned> index = ctjs::functionIndex(fn)) { byIndex[*index] = fn; }
+    });
+    module.walk([&](ctjs::CreateClosureOp made) {
+        if (const std::optional<unsigned> index = ctjs::closureFunction(made)) {
+            madeAt[*index].push_back(made);
+        }
+    });
     if (!collectCallers(functions)) { return; }
     // Iterate argument and return summaries to a fixed point, starting from
     // unknown. A recursive dependency cannot invent a primitive result, while
