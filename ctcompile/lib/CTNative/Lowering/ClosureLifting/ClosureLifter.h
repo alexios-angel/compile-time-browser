@@ -1096,6 +1096,12 @@ struct closureLifter {
     /// Whether every object the receiver of `call` may name is known (after
     /// methodCensus).
     bool knowsEveryReceiver(ctjs::CallOp call);
+    /// The direct calls copyCallSitesForClosures made of copies that keep
+    /// their method call's receiver (operand 0, marked kNativeReceiver).
+    llvm::DenseSet<mlir::Operation *> receiverCopyCalls;
+    /// Whether `use` is the receiver of one of those calls whose copy uses
+    /// `this` only as a method's receiver may.
+    bool carriesReceiverToCopy(mlir::OpOperand & use);
     /// The calls a closure passed to `first` at parameter `at` is handed on
     /// through, with the position each passes it at, when copies of that chain
     /// would let the closure lift where the last one uses it.

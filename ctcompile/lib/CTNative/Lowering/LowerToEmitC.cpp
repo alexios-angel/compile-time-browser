@@ -858,10 +858,31 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             call.erase();
             return true;
         };
+        // A refused function that no function able to run creates or calls is
+        // removed after admission (removeUnreachableRefusals), so its calls
+        // never run and do not refuse their callees. The per-call-site copies
+        // leave such originals (ClosureLifting/CallSiteCopies.cpp), and one
+        // that shares a callee with its copies would otherwise refuse it.
+        // Asked once, before the fixpoint, under the same conditions as the
+        // removal: the fixpoint only refuses, which removes roots, so a
+        // function dead now is dead then too.
+        llvm::DenseSet<mlir::Operation *> removedLater;
+        if (!hostContract && optimize && pruneUnreachable) {
+            const auto proof =
+                reachability::analyze(module, reachabilityMaxSteps, reachability::roots::entries);
+            if (proof.reason.empty()) {
+                for (ctjs::FuncOp fn : proof.dead) {
+                    if (fn->hasAttr("ctnative.not_native")) {
+                        removedLater.insert(fn.getOperation());
+                    }
+                }
+            }
+        }
         const auto closeNativeSet = [&] {
             for (bool changed = true; changed;) {
                 changed = false;
                 for (ctjs::FuncOp fn : functions) {
+                    if (removedLater.contains(fn.getOperation())) { continue; }
                     const bool native = nativeSet.contains(fn.getOperation());
                     // A native end of an edge whose other end is not native stops
                     // being native; the reason names the other end.
