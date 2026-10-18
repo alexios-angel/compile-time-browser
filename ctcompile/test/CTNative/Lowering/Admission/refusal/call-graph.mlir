@@ -4,7 +4,10 @@
 // over the call graph, in both directions: a native caller needs a native
 // callee to emit an emitc.call to, and a native callee needs every caller
 // native too, because a refused caller keeps a ctjs.call_direct that has to
-// name a ctjs.func with a body, which a lowered function no longer is.
+// name a ctjs.func with a body, which a lowered function no longer is. The
+// exception is a callee that takes no parameters and reads neither new.target
+// nor its own closure: a refused caller calls it through a closure instead
+// (LEAF below), so it stays native.
 //
 // The fixpoint is the one place that overwrites a reason admission already
 // wrote. Everywhere else in the pass the first refusal wins and is kept
@@ -33,6 +36,10 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/absent-calledby.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=ABSENT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/leaf-calledby.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=LEAF --implicit-check-not=ctjs.call_direct \
+// RUN:       --implicit-check-not=ctnative.not_native
 
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed-calledby.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
@@ -79,6 +86,22 @@
 // CALLEDBY: ctjs.func {{.*}}@helper$1
 // CALLEDBY-SAME: ctnative.not_native = "called by `_script_$0`, which is not native"
 
+// --- Backwards, except through a closure ------------------------------------
+//
+// The CALLEDBY program with a `leaf` that takes no parameters and reads
+// neither new.target nor its own closure (a static getter that the class
+// statics rewrite turned into a direct call is the case this is for). The
+// refused top level calls it through a closure of it, which names its
+// function by index, not by symbol, so `leaf` keeps its native body. No
+// direct call is left, and the top level is the only function refused.
+//
+// LEAF: ctjs.func {{.*}}@_script_$0
+// LEAF-SAME: ctnative.not_native = "store to global `t` has inconsistent global observation types"
+// LEAF: ctjs.load_global "leaf"
+// LEAF: %[[CLOSURE:[0-9]+]] = ctjs.create_closure %arg2[1] this
+// LEAF-NEXT: ctjs.call %[[CLOSURE]](
+// LEAF: emitc.func @leaf_1()
+
 //--- calls.js
 function bad(x) { return this ? x * 2 : x * 4; }
 function good(x) { return bad(x) + 1; }
@@ -105,3 +128,9 @@ function helper(x) { return x * 2; }
 var t = "text";
 t = 1n;
 var r = helper(3);
+
+//--- leaf-calledby.js
+function leaf() { return 2; }
+var t = "text";
+t = 1n;
+var r = leaf();

@@ -132,16 +132,25 @@ cannot reach '{host}' — likely one of:
 or set DEVBOX_HOST=ubuntu@<ip>."""
 
 
-def connect(host):
-    """Open the connection the way `ssh -o ConnectTimeout=5 host` would."""
+def open_connection(host):
+    """Open the connection the way `ssh -o ConnectTimeout=5 host` would.
+
+    Raises OSError or SSHException when the box cannot be reached.
+    """
     conn = Connection(host, connect_timeout=5)
     # Paramiko finds the agent only through SSH_AUTH_SOCK; ssh's IdentityAgent
     # (~/.ssh/build-agent.sock for the build boxes) names it for ssh alone.
     agent = conn.ssh_config.get("identityagent")
     if agent and agent.lower() != "none":
         os.environ["SSH_AUTH_SOCK"] = os.path.expanduser(agent)
+    conn.open()
+    return conn
+
+
+def connect(host):
+    """open_connection, exiting with the likely causes when it fails."""
     try:
-        conn.open()
+        conn = open_connection(host)
     except (OSError, SSHException):
         print(UNREACHABLE.format(host=host), file=sys.stderr)
         sys.exit(1)
