@@ -268,6 +268,13 @@ void markStaticTables(mlir::ModuleOp module) {
     if (cells.empty()) { return; }
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CallDirectOp>> calls;
     module.walk([&](ctjs::CallDirectOp call) {
+        // A function with unstructured control flow is refused before
+        // admission reads it, so what it does with a returned table never
+        // reaches native code: its direct call of a native reader becomes a
+        // call through a closure (closeNativeSet in LowerToEmitC.cpp), or the
+        // reader is refused with it.
+        auto holder = call->getParentOfType<ctjs::FuncOp>();
+        if (holder && holder->hasAttr("ctjs.not_structured")) { return; }
         if (auto target = call.getTarget()) { calls[target].push_back(call); }
     });
 
