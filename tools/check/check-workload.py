@@ -219,6 +219,133 @@ def string_entries(script):
     return ",".join(script.get("string_entries", []))
 
 
+def skim(text):
+    """`text` with comments and string/template literals blanked to spaces,
+    keeping newlines, so structure scans (braces, declarations) see code only."""
+    out, i, n = list(text), 0, len(text)
+    while i < n:
+        c = text[i]
+        if c in "\"'`":
+            quote = c
+            out[i] = " "
+            i += 1
+            while i < n:
+                if text[i] == "\\":
+                    out[i] = out[i + 1] = " "
+                    i += 2
+                    continue
+                done = text[i] == quote
+                if text[i] != "\n":
+                    out[i] = " "
+                i += 1
+                if done:
+                    break
+        elif c == "/" and i + 1 < n and text[i + 1] == "/":
+            while i < n and text[i] != "\n":
+                out[i] = " "
+                i += 1
+        elif c == "/" and i + 1 < n and text[i + 1] == "*":
+            out[i] = out[i + 1] = " "
+            i += 2
+            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                if text[i] != "\n":
+                    out[i] = " "
+                i += 1
+            if i + 1 < n:
+                out[i] = out[i + 1] = " "
+                i += 2
+        else:
+            i += 1
+    return "".join(out)
+
+
+def directives(text):
+    """A script's directive prologue (such as {"use strict"}): the string
+    literals of its leading expression statements, comments skipped. Two
+    scripts joined into one keep only the first script's prologue, so a join
+    is safe only when the prologues match."""
+    found = set()
+    i, n = 0, len(text)
+    while True:
+        while i < n:
+            if text[i].isspace():
+                i += 1
+            elif text.startswith("//", i):
+                i = text.find("\n", i)
+                if i < 0:
+                    return found
+            elif text.startswith("/*", i):
+                end = text.find("*/", i + 2)
+                if end < 0:
+                    return found
+                i = end + 2
+            else:
+                break
+        if i >= n or text[i] not in "\"'":
+            return found
+        quote = text[i]
+        i += 1
+        start = i
+        value = []
+        while i < n and text[i] != quote:
+            if text[i] == "\\" and i + 1 < n:
+                i += 1
+            value.append(text[i])
+            i += 1
+        if i >= n:
+            return found
+        i += 1  # past the closing quote
+        found.add("".join(value))
+        while i < n and text[i] in " \t":
+            i += 1
+        if i < n and text[i] == ";":
+            i += 1
+
+
+def top_level_declarations(text):
+    """The names `text` declares at its top level: function declarations and
+    var/let/const bindings at brace depth 0. A declaration at depth 0 of a
+    later script hoists into a joined program, changing what an earlier script
+    sees; one inside a block or function body does not."""
+    code = skim(text)
+    names = set()
+    depth = 0
+    depth_at = []  # depth after each position, so a match can ask its own depth
+    for c in code:
+        depth_at.append(depth)
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth = max(0, depth - 1)
+    declaration = re.compile(
+        r"\bfunction\s+([A-Za-z_$][\w$]*)|\b(?:var|let|const)\s+([A-Za-z_$][\w$]*)"
+    )
+    for match in declaration.finditer(code):
+        if depth_at[match.start()] == 0:
+            names.add(next(group for group in match.groups() if group is not None))
+    return names
+
+
+def join_problem(library, probe):
+    """Why joining `library` and `probe` into one classic script would change
+    what they do as two scripts, or None when the join is safe. Two scripts run
+    as two programs: the first before the second's declarations exist, and each
+    with its own directive prologue."""
+    if directives(library) != directives(probe):
+        return (
+            "their directive prologues differ "
+            f"({sorted(directives(library))} vs {sorted(directives(probe))}), "
+            "and one joined script keeps only the first"
+        )
+    mentioned = {name for name in top_level_declarations(probe) if re.search(rf"\b{re.escape(name)}\b", skim(library))}
+    if mentioned:
+        return (
+            f"the probe declares {sorted(mentioned)} at its top level, which the "
+            "library mentions; joined, the declaration hoists above the library"
+        )
+    return None
+
+
 @stage(
     "discover",
     "every script, page and CTest the workload file declares exists",
@@ -659,7 +786,16 @@ def script_run(ctx, name):
         base.parent.mkdir(parents=True, exist_ok=True)
         source, module, cpp = (Path(f"{base}{suffix}") for suffix in (".js", ".emitc.mlir", ".cpp"))
         # One classic-script program: the library's statements, then the probe's.
-        source.write_text(ctx.scripts[item]["path"].read_text() + "\n;\n" + probe.read_text())
+        # The join is refused when it would change what the two do as two
+        # scripts (hoisting or strictness); a changed join must be two
+        # compilations, which build-native does not do yet.
+        library_text, probe_text = ctx.scripts[item]["path"].read_text(), probe.read_text()
+        problem = join_problem(library_text, probe_text)
+        if problem:
+            summary = f"the library and the probe cannot join into one script: {problem}"
+            ctx.add(name, item, "FAIL", summary)
+            return None
+        source.write_text(library_text + "\n;\n" + probe_text)
         command = ["cmake", f"-DTRANSLATE={translate}", f"-DOPT={opt}", f"-DSOURCE={source}"]
         command += [f"-DOUTPUT={module}", *(["-DALLOW_REFUSED=TRUE"] if allow else [])]
         pipeline = ctx.root / "ctcompile/test/CTNative/Checks/pipeline.cmake"
