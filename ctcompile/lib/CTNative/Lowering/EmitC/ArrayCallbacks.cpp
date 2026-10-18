@@ -6,8 +6,9 @@
 //   ctnative::Array.prototype.filter.call(a, std::bind_front(callback, e))
 //
 // The runtime (Runtime/Array.hpp) calls the callback with as many of
-// (element, index, array) as it declares; reduce passes its accumulator first.
-// A captured array is lent as a std::span, as a direct call lends one.
+// (element, index, array) as it declares; reduce passes its accumulator first,
+// and sort its comparator two elements. A captured array is lent as a
+// std::span, as a direct call lends one.
 //
 //===----------------------------------------------------------------------===//
 
@@ -65,8 +66,11 @@ bool replaceArrayCallback(lowering & lower, mlir::Operation * o) {
         operands.push_back(lower.convertScalar(b, where, call.getArgs().back(), result));
     }
     const std::string name = ("ctnative::Array.prototype." + method + ".call").str();
-    if (o->getResult(0).use_empty()) {
+    if (o->getResult(0).use_empty() || method == "sort") {
+        // An unused answer, or `a.sort(f)`, which sorts `a` in place and
+        // answers it.
         callWithConstValueOperands(b, where, mlir::TypeRange{}, b.getStringAttr(name), operands);
+        o->getResult(0).replaceAllUsesWith(operands[0]);
         lowering::eraseIfUnused(o);
         return true;
     }
