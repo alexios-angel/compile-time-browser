@@ -375,7 +375,9 @@ std::optional<std::string> closureLifter::whyConstructorSetupDoesNotLift(ctjs::C
             }
         }
         // The instance must have a closed shape under the same rule an object
-        // literal uses, because the rewrite turns it into one.
+        // literal uses, because the rewrite turns it into one. That rule
+        // accepts a return when every caller keeps the instance as its only
+        // reference (returnsAnInstance).
         // A `new this` in a static member may also return the instance: the
         // record rule (Analysis/Inference/Records.cpp) then returns it by
         // value as its class after the lift, and admission refuses the
@@ -386,8 +388,8 @@ std::optional<std::string> closureLifter::whyConstructorSetupDoesNotLift(ctjs::C
                 return llvm::isa<ctjs::ReturnOp>(use.getOwner()) || isConstantKeyAccess(use);
             });
         if (!returned && !usesCloseTheShape(made.getResult())) {
-            return "the instance `new` makes does not have a closed shape - every use of it "
-                   "has to be a constant-key read or write, or a receiver this lift carries";
+            return "the instance `new` makes does not have a closed shape - " +
+                   whyUsesOpenTheShape(made.getResult());
         }
         // Reading a key the constructor never writes is allowed: admission
         // already refuses the names Object.prototype answers (such as

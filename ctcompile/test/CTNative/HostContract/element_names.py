@@ -85,13 +85,13 @@ def interface_tags(source):
     return tags
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--reference", required=True)
     parser.add_argument("--monorepo", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--write", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     table = args.monorepo / "ctbrowser/lib/Shell/bindings/element/interfaces.cpp"
     data = (
         args.monorepo / "ctcompile/lib/CTNative/HostContract/ClassInitialization/ElementNames.inc"
@@ -118,6 +118,10 @@ def main():
             f"removed {sorted(old - set(names))}; regenerate with element_names.py --write"
         )
     print(f"element names: {len(tags)} interface tags, {len(names)} names")
+
+
+def test_element_names(lit):
+    main(lit.args("--reference %native_reference --monorepo %{monorepo} --work %t"))
 
 
 if __name__ == "__main__":

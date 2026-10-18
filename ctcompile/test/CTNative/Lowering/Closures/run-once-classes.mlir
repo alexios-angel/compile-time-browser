@@ -10,10 +10,19 @@
 // through a capture of a boxed binding. A binding the program assigns again,
 // or reads other than to construct, stays a capture.
 //
+// In two-sites.js Modal owns its Helper by value (a member of Modal), so
+// every `new Helper` lifts and the program is native; the binding is still
+// a static variable. In shared.js Modal stores its Helper into two fields, so
+// the instance is not owned, the `new` stays, and the function that reads the
+// static variable is refused.
+//
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/two-sites.js --mlir-print-debuginfo 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
-// RUN:   | FileCheck %s --check-prefix=STATIC
+// RUN:   | FileCheck %s --check-prefix=STATIC --implicit-check-not=ctnative.not_native
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/shared.js --mlir-print-debuginfo 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=SHARED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/reassigned.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=REASSIGNED
@@ -21,8 +30,9 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=VALUE
 
-// STATIC: static_cell = "static_Helper"
-// STATIC: not_native = "it reads `Helper`, a static variable of a function that runs once
+// STATIC: emitc.global static @static_Helper
+// SHARED: static_cell = "static_Helper"
+// SHARED: not_native = "it reads `Helper`, a static variable of a function that runs once
 // REASSIGNED-NOT: static_cell
 // VALUE-NOT: static_cell
 
@@ -35,6 +45,20 @@ var r = (function () {
     class Modal {
         constructor() { this.helper = new Helper(); }
         size() { return this.helper.grow(2); }
+    }
+    function show() { return new Helper().grow(5); }
+    return new Modal().size() * 100 + show();
+})();
+
+//--- shared.js
+var r = (function () {
+    class Helper {
+        constructor() { this.width = 3; }
+        grow(n) { return this.width * n; }
+    }
+    class Modal {
+        constructor() { const h = new Helper(); this.helper = h; this.spare = h; }
+        size() { return this.helper.grow(2) + this.spare.width; }
     }
     function show() { return new Helper().grow(5); }
     return new Modal().size() * 100 + show();

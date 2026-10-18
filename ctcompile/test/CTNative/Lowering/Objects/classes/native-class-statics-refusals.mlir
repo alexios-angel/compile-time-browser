@@ -19,8 +19,14 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=HOME
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/new-this.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
-// RUN:   | FileCheck %s --check-prefix=NEWTHIS
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/new-this.mlir
+// RUN: FileCheck %s --check-prefix=NEWTHIS --implicit-check-not=ctnative.not_native < %t/new-this.mlir
+// RUN: ctjs-opt %t/new-this.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/new-this.cpp
+// RUN: %gxx -O2 %t/new-this.cpp -o %t/new-this-gcc
+// RUN: %t/new-this-gcc | FileCheck %s --check-prefix=NEWTHIS-RUN
+// RUN: %clangxx -O2 %t/new-this.cpp -o %t/new-this-clang
+// RUN: %t/new-this-clang | FileCheck %s --check-prefix=NEWTHIS-RUN
+// RUN: %native_reference %t/new-this.js | FileCheck %s --check-prefix=NEWTHIS-RUN
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/relay.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=RELAY
@@ -58,10 +64,13 @@
 // HOME: ctnative.class_reason = "it has static getter `__home`; its static member `__home` is the engine's home-object key"
 //
 // `new this(v)` in a static member constructs Box (new-this.mlir has the
-// cases): the class is proved, and the instance make returns is refused as
-// an escape, since a class instance is not a returned record.
+// cases): the class is proved, and make returns the instance by value as Box
+// (Analysis/Inference/Records.cpp), so the program is native and prints the
+// interpreter's value. instances-by-value.mlir's twice.js keeps a returned
+// instance that is passed on refused.
 // NEWTHIS-NOT: ctnative.class_reason
-// NEWTHIS: ctjs.func private @make${{[0-9]+}}({{.*}}ctnative.not_native = "an object literal that escapes - it is returned"
+// NEWTHIS: emitc.func @make_{{[0-9]+}}
+// NEWTHIS-RUN: r=3
 //
 // A static member that is called and relays its capture of `base` to a
 // nested function through its own closure: the direct call passes no closure.

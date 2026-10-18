@@ -28,11 +28,12 @@
 //
 // The static members of a parent are copied onto each child too, so the
 // static-member rule sees an ordinary class. That rule is a separate slice;
-// here only the copies are checked. name_D lowers natively; make_D returns
-// the instance it builds, which is refused as an escape, so this program
-// cannot run natively. new-this.mlir's names.js runs the same name_D
-// natively with GCC and Clang against the interpreter and Node; here the
-// interpreter and Node pin the value the copies must keep.
+// here only the copies are checked. name_D lowers natively, and so does
+// make_D: its caller only calls a method on the instance it returns, so it
+// returns D by value (instances-by-value.mlir, whose twice.js keeps an
+// instance that is returned on refused). new-this.mlir's names.js runs the
+// same name_D natively with GCC and Clang against the interpreter and Node;
+// here the interpreter and Node pin the value the copies must keep.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/statics.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=STATICS
@@ -84,7 +85,7 @@
 // ARROW-NOT: ReferenceError
 // ARROW: ctjs.return
 // STATICS-NOT: ctnative.inheritance_reason
-// STATICS-DAG: ctjs.func private @make_D$
+// STATICS-DAG: emitc.func @make_D_
 // STATICS-DAG: emitc.func @name_D_
 // STATICS-RUN: r={{"?dp"?$}}
 

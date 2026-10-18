@@ -503,6 +503,21 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         eraseIfUnused(o);
         return;
     }
+    // A field that owns an instance by value: a read is the member itself,
+    // and the store copies the constructed instance into it.
+    if (o->hasAttr(kNativeOwnedInstance)) {
+        if (auto get = llvm::dyn_cast<GetPropertyOp>(o)) {
+            swap(memberAccess(b, where, get.getObject(), memberName(o), accessType.lookup(o)));
+            return;
+        }
+        auto set = llvm::cast<SetPropertyOp>(o);
+        const mlir::Type storage = accessType.lookup(o);
+        ec::AssignOp::create(b, where,
+                             memberAccess(b, where, set.getObject(), memberName(o), storage),
+                             ec::LoadOp::create(b, where, storage, set.getValue()));
+        eraseIfUnused(o);
+        return;
+    }
     if (auto get = llvm::dyn_cast<GetPropertyOp>(o)) {
         const mlir::Type type = get.getResult().getType();
         const mlir::Type storage = accessType.lookup(o);

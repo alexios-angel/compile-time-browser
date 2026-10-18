@@ -817,7 +817,7 @@ def controls(args, prepared):
         )
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--case",
@@ -825,7 +825,7 @@ def main():
         choices=[case.name for case in cases()],
         help="run a named source case without the cross-case controls",
     )
-    args = diagnostics.parse_args(parser)
+    args = diagnostics.parse_args(parser, argv)
     node, reference = args.node, args.reference
     evidence, prepared = {}, {}
     selected = [case for case in cases() if args.case is None or case.name in args.case]
@@ -855,6 +855,14 @@ def main():
         else "source cases, live identities, own fields and rollback controls"
     )
     print(f"host provider objects: {len(selected)} {mode} passed")
+
+
+def test_objects(lit):
+    main(
+        lit.args(
+            "--translate ctjs-translate --opt ctjs-opt --work %t --node %node --reference %native_reference"
+        )
+    )
 
 
 if __name__ == "__main__":
