@@ -174,4 +174,40 @@ def CTJSResolveGlobals : Pass<"ctjs-resolve-globals", "mlir::ModuleOp"> {
   ];
 }
 
+def CTJSFoldDynamicCode : Pass<"ctjs-fold-dynamic-code", "mlir::ModuleOp"> {
+  let summary = "Compile the constant strings of new Function, indirect eval and string timers ahead of time";
+  let description = [{
+    A `new Function('a', 'b', 'return a + b')`, a `Function(...)` call, an
+    indirect `eval('1 + 2')` and a `setTimeout('tick()', 100)` whose every
+    argument is a ctjs.constant string carry their program at build time.
+    This pass compiles that program with the script front end, imports it
+    into the module and splices the site: a construct or Function call
+    becomes a ctjs.create_closure of the anonymous function, an eval call
+    becomes a call of the compiled script's entry closure, and a string
+    timer argument becomes the entry closure itself (the host calls it as
+    the task, with no argument). A SyntaxError in the string becomes a
+    closure whose body throws it, called at the site for new Function and
+    eval, or handed to the timer, where the host reports it as the task's
+    own error. Nothing here is a build failure.
+
+    The pass runs before --ctjs-resolve-globals, whose clause 5 resolves no
+    global at all while a load of `Function` or `eval` remains: the program
+    such a load compiles can store any name. Splicing the constant cases
+    removes those loads; whatever is left (a non-constant string, a name
+    the program rebinds) stays for clause 5 to refuse.
+
+    A name is spliced only when the module never stores it and never
+    writes or deletes it as a constant property key, so no site the pass
+    rewrites can observe a rebind.
+  }];
+  let statistics = [
+    Statistic<"spliced", "spliced-sites",
+              "new Function, Function, eval and string-timer sites spliced">
+  ];
+  let options = [
+    Option<"report", "report", "bool", /*default=*/"false",
+           "Emit the spliced-site count as a remark (statistics are compiled out in a release build)">
+  ];
+}
+
 #endif // CTCOMPILE_CTJS_PASSES
