@@ -5,10 +5,9 @@ probe keys are DOM element inputs."""
 import hashlib
 import json
 import re
-import subprocess
 
 from CTNative.Browser.dom import dom
-from CTNative.harness import build_and_run, node_globals, run, threshold
+from CTNative.harness import build_and_run, node_globals, run, slotted_run, threshold
 from CTNative.HostContract import contract as host
 from CTNative.Ownership.global_maps.driver.umd import (
     observe_umd,
@@ -340,7 +339,7 @@ def main(argv=None):
                     "-o",
                     "/dev/null",
                 ]
-                return subprocess.run(command, text=True, capture_output=True).returncode == 0
+                return slotted_run(command, text=True, capture_output=True).returncode == 0
 
             high = threshold(lowers, high=1000000)
             refuse(subject, contract, "final-cutoff", budget=high - 1)

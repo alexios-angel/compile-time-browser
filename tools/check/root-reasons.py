@@ -36,7 +36,14 @@ import sys
 # The same IR patterns tools/check/named-callees.py matches.
 FUNC = re.compile(r"^  (emitc\.func|ctjs\.func) (?:private )?@([A-Za-z0-9_$]+)\(([^\n]*)")
 REASON = re.compile(r'ctnative\.not_native = "((?:[^"\\]|\\.)*)"')
-DIRECT = re.compile(r"\b(?:ctjs\.call_direct|emitc\.call) @([A-Za-z0-9_$]+)")
+# A call closure lifting specialised for its callback (String.prototype.replace,
+# an Array method, addEventListener or setTimeout) names the callback by
+# attribute; the callback's parameters are typed from that call, so the
+# function holding it is the callback's caller.
+DIRECT = re.compile(
+    r"\b(?:ctjs\.call_direct|emitc\.call|ctnative\.(?:string|array|host)_callback =) "
+    r"@([A-Za-z0-9_$]+)"
+)
 CLOSURE = re.compile(r"ctjs\.create_closure %arg2\[(\d+)\]")
 CLOSURE_REASON = re.compile(r'ctnative\.closure_reason = "((?:[^"\\]|\\.)*)"')
 CLASS_REASON = re.compile(r'ctnative\.class_reason = "((?:[^"\\]|\\.)*)"')
@@ -234,79 +241,12 @@ def print_rows(rows, refused, width):
         print(f"{nsolely:>6} {nblocks:>6} {nroots:>5}  {reason[:width]}")
 
 
-PLANTED = """\
-  ctjs.func @_script_$0(%arg0) -> !ctjs.value {
-    %1 = ctjs.create_closure %arg2[1] this %0 {ctnative.lifted}
-    %2 = ctjs.call_direct @a$1(%x)
-    %3 = ctjs.create_closure %arg2[5] this %0 {ctnative.closure_reason = "it is passed as an argument"}
-    %4 = ctjs.call_direct @f$6(%x)
-    %5 = ctjs.create_closure %arg2[9] this %0 {ctnative.closure_reason = "it is stored into an object or an array"}
-    %6 = ctjs.create_closure %arg2[10] this %0 {ctnative.class_reason = "it has static method `go`; static members are the next slice", ctnative.closure_reason = "it is the value of a local binding this tier cannot call directly"}
-    %7 = ctjs.constant #ctjs.string<"prototype"> {}
-    %8 = ctjs.create_object {}
-    ctjs.set_property %6[%7], %8
-    %9 = ctjs.create_closure %arg2[11] this %0 {ctnative.closure_reason = "it is stored into an object or an array"}
-    %10 = ctjs.constant #ctjs.string<"m"> {}
-    ctjs.set_property %8[%10], %9
-    %11 = ctjs.create_closure %arg2[12] this %0 {ctnative.closure_reason = "it is stored into an object or an array"}
-    ctjs.define_accessor "NAME" on %6 get %11 set %0
-  }
-  ctjs.func @a$1(%arg0) -> !ctjs.value attributes {ctnative.not_native = "a regular expression literal"} {
-    %1 = ctjs.call_direct @b$2(%x)
-    %2 = ctjs.call_direct @c$3(%x)
-  }
-  ctjs.func private @b$2(%arg0) -> !ctjs.value attributes {ctnative.not_native = "parameter 0 is !ctnative.boxed - no caller proves it (x)"} {
-    %1 = ctjs.call_direct @c$3(%x)
-  }
-  ctjs.func private @c$3(%arg0) -> !ctjs.value attributes {ctnative.not_native = "parameter 1 is !ctnative.boxed - no caller proves it (x)"} {
-    %1 = ctjs.call_direct @d$4(%x)
-  }
-  emitc.func @d_4(%arg0) {
-  }
-  ctjs.func @e$5(%arg0) -> !ctjs.value attributes {ctnative.not_native = "uses its own closure"} {
-    %1 = ctjs.create_closure %arg2[7] this %arg0 {ctnative.closure_reason = "capture 0 is filled from the enclosing closure, which did not lift: it is passed as an argument"}
-  }
-  ctjs.func @f$6(%arg0) -> !ctjs.value attributes {ctnative.not_native = "uses `this` - a closure used as a value: it is stored into an object or an array"} {
-    %1 = ctjs.create_closure %arg2[8] this %arg0 {ctnative.closure_reason = "it is stored into an object or an array"}
-    %2 = ctjs.call_direct @c$3(%x)
-  }
-  ctjs.func @g$7(%arg0) -> !ctjs.value attributes {ctnative.not_native = "parameter 0 is !ctnative.boxed - no caller proves it (x)"} {
-  }
-  ctjs.func @h$8(%arg0) -> !ctjs.value attributes {ctnative.not_native = "uses `this`"} {
-  }
-  ctjs.func @i$9(%arg0) -> !ctjs.value attributes {ctnative.not_native = "uses `this` - a closure used as a value: it is stored into an object or an array"} {
-  }
-  ctjs.func @k$10(%arg0) -> !ctjs.value attributes {ctnative.not_native = "uses `this` - a closure used as a value: it is the value of a local binding this tier cannot call directly"} {
-  }
-  ctjs.func @m$11(%arg0) -> !ctjs.value attributes {ctnative.not_native = "uses `this` - a closure used as a value: it is stored into an object or an array"} {
-  }
-  ctjs.func @n$12(%arg0) -> !ctjs.value attributes {ctnative.not_native = "uses `this` - a closure used as a value: it is stored into an object or an array"} {
-  }
-"""
-
-# Expected rows for PLANTED: (reason, roots, blocks, solely).
-#  - a$1 is a root (regex); b$2 is behind a$1 only; c$3 is behind a$1 (through
-#    a$1 and b$2) and f$6's closure, so it is blocked by both and solely by none.
-#  - The closure of e$5 is a root (passed as an argument); e$5 and g$7 (made by
-#    a closure filled from e$5's) are behind it. d$4 lowered and is no node.
-#  - f$6 and h$8 are behind the closure of h$8 (stored into an object), and
-#    i$9 behind its own closure, refused for the same reason: two roots.
-#  - k$10 is a refused class's constructor, m$11 a prototype method stored on
-#    it and n$12 a static getter: all three are behind the class, not behind
-#    their closures' own reasons.
-EXPECTED = [
-    ("it is stored into an object or an array", 2, 4, 3),
-    ("class: it has static method `X`; static members are the next slice", 1, 3, 3),
-    ("a regular expression literal", 1, 3, 2),
-    ("it is passed as an argument", 1, 2, 2),
-]
-
-
 def self_test():
-    rows = report(blame(*parse(PLANTED)))
-    if rows != EXPECTED:
-        sys.exit(f"root-reasons self-test FAILED\n  got      {rows}\n  expected {EXPECTED}")
-    print("root-reasons self-test passed")
+    """Run the checks in test_root_reasons.py; exit if any fails."""
+    import selftest
+
+    if selftest.run(__file__):
+        sys.exit("root-reasons self-test FAILED")
 
 
 def run(cmd, stdin=None):

@@ -148,8 +148,9 @@ def check_object_argument_calls(cpp, name, mode):
             raise RuntimeError(f"{name}/{mode}: changed live Map.{method} calls")
     if name == "parameter_object" and cpp.count("ctnative::map_size(") != 2:
         raise RuntimeError(f"{name}/{mode}: lost the historical setter/getter size reads")
-    if name == "object_argument_seeded" and (
-        "std::variant<double, std::shared_ptr<ctnative::identity_object>>" not in cpp
+    # The Number/Object key is an object_value in the key position.
+    if name == "object_argument_seeded" and not re.search(
+        r"ctnative::(?:map_storage<ctnative::object_value,|number_map<ctnative::object_value>)", cpp
     ):
         raise RuntimeError(f"{name}/{mode}: lost independent Number/Object key alternatives")
     row = object_argument_cases()[name]

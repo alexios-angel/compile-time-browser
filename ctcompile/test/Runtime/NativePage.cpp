@@ -2,7 +2,9 @@
 //
 // Tests the native runtime's page views (CTNative/Runtime/Page.hpp) and the
 // element members css-dump reads (Browser.hpp: tagName, id, className,
-// children) against a ctbrowser::page::static_page: the answers generated
+// children), the tree walks and attribute calls Bootstrap's SelectorEngine and
+// Manipulator make (parentElement, the element siblings, getAttribute,
+// setAttribute, removeAttribute) against a ctbrowser::page::static_page: the answers generated
 // code gets for getBoundingClientRect, getComputedStyle, clientWidth and
 // devicePixelRatio, and the refusals for what it may not ask.
 //
@@ -77,6 +79,82 @@ void test_element_members_match_the_vm() {
             CHECK_EQ(body[2].children().size(), std::size_t{1});
         }
     }
+    // The unbound view a dead loop slot holds names no element: it equals no
+    // bound view, and reading it throws rather than dereferencing.
+    const ctnative::js_element_t unbound = ctnative::js_element_t::unbound();
+    CHECK(!(unbound == *root));
+    bool threw = false;
+    try {
+        (void)unbound.value();
+    } catch (const std::exception &) { threw = true; }
+    CHECK(threw);
+}
+
+[[nodiscard]] std::string tag_of(const std::optional<ctnative::js_element_t> & element) {
+    return element ? text(element->tagName()) : std::string{"null"};
+}
+
+void test_tree_walks_match_the_vm() {
+    bound_page bound;
+    const ctnative::page_scope scope{bound.page};
+    const auto root = *ctnative::document.documentElement();
+    const auto box = *ctnative::document.querySelector(ctnative::js_string{"#box"});
+    const auto svg = *ctnative::document.querySelector(ctnative::js_string{"svg"});
+    const auto head = *ctnative::document.querySelector(ctnative::js_string{"head"});
+    // The document element's parent is the Document, which is no element.
+    CHECK_EQ(tag_of(root.parentElement()), std::string{"null"});
+    CHECK_EQ(tag_of(box.parentElement()), std::string{"BODY"});
+    CHECK_EQ(tag_of(box.parentElement()->parentElement()), std::string{"HTML"});
+    // Siblings skip text nodes: the <p> holds text, the body holds only elements.
+    CHECK_EQ(tag_of(box.previousElementSibling()), std::string{"null"});
+    CHECK_EQ(tag_of(box.nextElementSibling()), std::string{"P"});
+    CHECK_EQ(tag_of(box.nextElementSibling()->nextElementSibling()), std::string{"svg"});
+    CHECK_EQ(tag_of(svg.nextElementSibling()), std::string{"null"});
+    CHECK_EQ(tag_of(svg.previousElementSibling()), std::string{"P"});
+    CHECK_EQ(tag_of(head.previousElementSibling()), std::string{"null"});
+    CHECK_EQ(tag_of(head.nextElementSibling()), std::string{"BODY"});
+    CHECK_EQ(tag_of(root.nextElementSibling()), std::string{"null"});
+    // A member of null throws the VM's TypeError text.
+    CHECK_EQ(text(ctnative::present_element(box.nextElementSibling()).tagName()), std::string{"P"});
+    bool threw = false;
+    try {
+        (void)ctnative::present_element(box.previousElementSibling());
+    } catch (const std::invalid_argument & error) {
+        threw = std::string{error.what()} == "TypeError: Cannot read properties of null";
+    }
+    CHECK(threw);
+}
+
+void test_attributes_match_the_vm() {
+    bound_page bound;
+    const ctnative::page_scope scope{bound.page};
+    const auto box = *ctnative::document.querySelector(ctnative::js_string{"#box"});
+    using kind = ctnative::nullable_string::kind;
+    const auto read = [&](std::string_view name) {
+        return box.getAttribute(ctnative::js_string{std::string{name}});
+    };
+    CHECK_EQ(read("id").value, std::string{"box"});
+    CHECK(read("id").tag == kind::string);
+    // An absent attribute is null, not "".
+    CHECK(read("data-bs-toggle").tag == kind::null_value);
+    box.setAttribute(ctnative::js_string{"data-bs-toggle"}, ctnative::js_string{""});
+    CHECK(read("data-bs-toggle").tag == kind::string);
+    CHECK_EQ(read("data-bs-toggle").value, std::string{});
+    // An HTML element in an HTML document lowercases the name both ways.
+    box.setAttribute(ctnative::js_string{"DATA-BS-Target"}, ctnative::js_string{"#x"});
+    CHECK_EQ(read("data-bs-target").value, std::string{"#x"});
+    CHECK_EQ(read("DATA-bs-TARGET").value, std::string{"#x"});
+    box.removeAttribute(ctnative::js_string{"Data-Bs-Target"});
+    CHECK(read("data-bs-target").tag == kind::null_value);
+    // Removing what is not there is not an error.
+    box.removeAttribute(ctnative::js_string{"data-bs-target"});
+    // An invalid name throws before writing, as the VM's InvalidCharacterError.
+    bool threw = false;
+    try {
+        box.setAttribute(ctnative::js_string{"a b"}, ctnative::js_string{"x"});
+    } catch (const std::exception &) { threw = true; }
+    CHECK(threw);
+    CHECK(read("a b").tag == kind::null_value);
 }
 
 void test_document_element_is_required() {
@@ -84,21 +162,21 @@ void test_document_element_is_required() {
     {
         bound_page bound;
         const ctnative::page_scope scope{bound.page};
-        CHECK_EQ(text(ctnative::require_document_element().tagName()), std::string{"HTML"});
+        CHECK_EQ(text(ctnative::require_document_element("tagName").tagName()),
+                 std::string{"HTML"});
     }
-    // A document with no root element throws the VM's TypeError text, not
+    // A document with no root element throws the TypeError the VM throws at
+    // the first read of the null root, with its message, not
     // std::bad_optional_access.
     ctbrowser::atom_table atoms;
     ctbrowser::document empty{atoms};
     ctbrowser::style::engine styles{atoms};
     const ctnative::document_scope scope{empty, styles};
-    bool threw = false;
+    std::string message;
     try {
-        (void)ctnative::require_document_element();
-    } catch (const std::invalid_argument & error) {
-        threw = std::string{error.what()} == "TypeError: document.documentElement is null";
-    }
-    CHECK(threw);
+        (void)ctnative::require_document_element("children");
+    } catch (const ctnative::type_error & error) { message = error.what(); }
+    CHECK_EQ(message, std::string{"Cannot read properties of null (reading 'children')"});
 }
 
 void test_geometry_and_viewport() {
@@ -178,6 +256,8 @@ void test_what_may_not_be_asked() {
 
 int main() {
     test_element_members_match_the_vm();
+    test_tree_walks_match_the_vm();
+    test_attributes_match_the_vm();
     test_document_element_is_required();
     test_geometry_and_viewport();
     test_computed_style_is_live();

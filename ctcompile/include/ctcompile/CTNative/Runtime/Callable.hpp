@@ -5,8 +5,16 @@
 // callback to its captures in a local, `auto v = std::bind_front(callback,
 // captures...)`, and passes the callee a function_ref to that local. The
 // callee never stores the callback, so it borrows the caller's callable
-// instead of owning a copy: no allocation and no copy. Only programs with such
-// a parameter include this header.
+// instead of owning a copy: no allocation and no copy.
+//
+// Also ctnative::parameter_t, for a closure set: a value that is one of a
+// proved, finite set of lifted callables, each bound to its own captures.
+// ctcompile emits one struct per set (EmitC/ClosureSets.cpp), with a tag
+// naming the member and each member's captures as named fields; a capture
+// whose type only the lifted function's signature spells, such as the
+// pointer to an arrow's lexical `this`, is declared as parameter_t of that
+// function. Only programs with a borrowed parameter or a closure set include
+// this header.
 //
 //===----------------------------------------------------------------------===//
 
@@ -14,6 +22,7 @@
 
 #include <functional>
 #include <memory>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
@@ -50,5 +59,18 @@ private:
     void * object_;
     R (*call_)(void *, A...);
 };
+
+namespace detail {
+template <class Function> struct parameters_of;
+template <class R, class... P> struct parameters_of<R (*)(P...)> {
+    using type = std::tuple<std::decay_t<P>...>;
+};
+} // namespace detail
+
+/// The type of function `F`'s parameter `I`, without reference or cv: what a
+/// closure-set member's capture is declared as when only `F`'s signature
+/// spells its type.
+template <auto F, std::size_t I>
+using parameter_t = std::tuple_element_t<I, typename detail::parameters_of<decltype(F)>::type>;
 
 } // namespace ctnative

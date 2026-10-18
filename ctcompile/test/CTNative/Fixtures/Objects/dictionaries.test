@@ -1,0 +1,26 @@
+# Differential test of dictionaries.js: object literals used as string-keyed
+# tables lower to std::shared_ptr<ctnative::dictionary<V>> and the table
+# helpers of Runtime/Dictionary.hpp, and JSON.stringify of one serializes it
+# directly (Runtime/Json.hpp). The C++ is compiled against public Core,
+# checked for interpreter symbols with nm, run, and every global compared with
+# the interpreter's (compilation-unit.py). The negative changes the global
+# `presence` and requires the comparison to fail naming it. The unit is built
+# and compared with GCC and with Clang; compile-clean.py's Clang 18 cannot
+# build Runtime/Json.hpp's std::expected, so the DOM-capable Clang is used, as
+# json-records.test does.
+
+# RUN: python3 %S/string-arrays-calls.py --translate ctjs-translate --opt ctjs-opt --js %S/dictionaries.js --out %t/dictionaries.emitc.mlir
+# RUN: ctjs-translate --mlir-to-cpp %t/dictionaries.emitc.mlir | FileCheck %s
+# RUN: not %compilation_unit --module %t/dictionaries.emitc.mlir --js %S/dictionaries.js --work %t --name dictionaries_negative --core-build %build --mutate presence 2>&1 | FileCheck %s --check-prefix=NEGATIVE
+# RUN: %compilation_unit --cxx g++ --module %t/dictionaries.emitc.mlir --js %S/dictionaries.js --work %t --name dictionaries_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/dictionaries.emitc.mlir --js %S/dictionaries.js --work %t --name dictionaries_clang --core-build %build
+
+# CHECK-DAG: #include "ctcompile/CTNative/Runtime/Dictionary.hpp"
+# CHECK-DAG: ctnative::make_dictionary<ctnative::js_string>()
+# CHECK-DAG: ctnative::make_dictionary<ctnative::js_num>()
+# CHECK-DAG: ctnative::dictionary_set(
+# CHECK-DAG: ctnative::dictionary_get(
+# CHECK-DAG: ctnative::dictionary_has(
+# CHECK-DAG: ctnative::dictionary_delete(
+# CHECK-DAG: ctnative::JSON.stringify(
+# NEGATIVE: global 'presence' differs

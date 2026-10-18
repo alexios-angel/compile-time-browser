@@ -7,8 +7,10 @@
 //
 //===----------------------------------------------------------------------===//
 #include "../Admission/Admission.h"
+#include "Dictionaries.h"
 #include "Emitter.h"
 #include "Vectors.h"
+#include "ctcompile/CTNative/IR/CTNativeOps.h"
 #include "ctcompile/Support/CppLiterals.hpp"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 
@@ -18,6 +20,32 @@ namespace ctcompile::ctnative::lowering_detail {
 /// uses is a fatal error: in a release build it would be a silent
 /// use-after-free, which once showed up only as an intermittent crash at
 /// context teardown.
+namespace {
+constexpr llvm::StringLiteral kSharedCellPrefix = "std::shared_ptr<ctnative::cell<";
+} // namespace
+
+std::string sharedCellSpelling(llvm::StringRef value) {
+    return (kSharedCellPrefix + value + ">>").str();
+}
+
+std::string sharedCellValue(mlir::Type type) {
+    if (auto variable = llvm::dyn_cast_or_null<ec::LValueType>(type)) {
+        type = variable.getValueType();
+    }
+    auto opaque = llvm::dyn_cast_or_null<ec::OpaqueType>(type);
+    if (!opaque) { return {}; }
+    llvm::StringRef spelled = opaque.getValue();
+    if (!spelled.consume_front(kSharedCellPrefix) || !spelled.consume_back(">>")) { return {}; }
+    return spelled.str();
+}
+
+mlir::Value loadedHandle(mlir::OpBuilder & builder, mlir::Location where, mlir::Value handle) {
+    if (auto variable = llvm::dyn_cast<ec::LValueType>(handle.getType())) {
+        return ec::LoadOp::create(builder, where, variable.getValueType(), handle);
+    }
+    return handle;
+}
+
 void lowering::eraseIfUnused(mlir::Operation * o) {
     if (!o->use_empty()) {
         llvm::report_fatal_error(llvm::Twine("ctnative lowering: erasing `") +
@@ -32,6 +60,16 @@ void lowering::eraseIfUnused(mlir::Operation * o) {
 /// `emitc.dereference` turns that into an lvalue, so reads and writes are
 /// emitted the same way on both sides of the call.
 mlir::Value lowering::cellPlace(mlir::OpBuilder & b, mlir::Location where, mlir::Value cell) {
+    // A shared cell (rule 2b in ClosureLifter.h) is a handle, in this frame's
+    // variable or a parameter; ctnative::cell_place turns it into a pointer
+    // to the binding, and that pointer is dereferenced as below.
+    if (const std::string value = sharedCellValue(cell.getType()); !value.empty()) {
+        if (auto variable = llvm::dyn_cast<ec::LValueType>(cell.getType())) {
+            cell = ec::LoadOp::create(b, where, variable.getValueType(), cell);
+        }
+        const auto held = ec::OpaqueType::get(b.getContext(), value);
+        cell = callValue(b, where, ec::PointerType::get(held), "ctnative::cell_place", cell);
+    }
     if (auto pointer = llvm::dyn_cast<ec::PointerType>(cell.getType())) {
         return ec::DereferenceOp::create(b, where, ec::LValueType::get(pointer.getPointee()), cell);
     }
@@ -44,7 +82,10 @@ mlir::Value lowering::cellPlace(mlir::OpBuilder & b, mlir::Location where, mlir:
 /// copy with `emitc.member_of_ptr` (`self->x`).
 mlir::Value lowering::memberAccess(mlir::OpBuilder & b, mlir::Location where, mlir::Value object,
                                    llvm::StringRef member, mlir::Type type) {
-    if (!receiverArgs.contains(object) && !llvm::isa<ec::PointerType>(object.getType())) {
+    // An instance (EmitC/Instances.cpp) is a std::shared_ptr, read through
+    // `->` like a pointer.
+    if (!receiverArgs.contains(object) && !llvm::isa<ec::PointerType>(object.getType()) &&
+        !isInstanceValue(object)) {
         return ec::MemberOp::create(b, where, ec::LValueType::get(type), member, object);
     }
     // The receiver's local is created lazily, at the first field access, so a
@@ -135,9 +176,12 @@ void lowering::printObservations(mlir::OpBuilder & b, mlir::Location where) {
 }
 
 void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType) {
+    if (replaceStaticTable(o)) { return; }
+    if (replaceInstance(o)) { return; }
     if (replaceDOM(o)) { return; }
     if (replaceOwnedGlobal(o)) { return; }
     if (replaceException(o)) { return; }
+    if (replaceTypeError(o)) { return; }
     if (replaceMethodTable(o)) { return; }
     if (replaceEnvironment(o)) { return; }
     using namespace ctjs;
@@ -155,9 +199,24 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     };
 
     if (replaceMap(o)) { return; }
+    if (replaceDictionary(*this, o)) { return; }
     if (replaceIdentityField(o)) { return; }
+    if (replaceStringCallback(o)) { return; }
     if (replaceStringValue(o)) { return; }
     if (replaceStringArray(*this, o)) { return; }
+    if (auto refined = llvm::dyn_cast<RefineOp>(o)) {
+        // Admission allowed only the operand's own carrier or its String or
+        // Number alternative.
+        const mlir::Value value = refined.getValue();
+        const mlir::Type result = o->getResult(0).getType();
+        swap(value.getType() == result
+                 ? value
+                 : callValue(b, where, result,
+                             refined.getKind() == "number" ? "ctnative::as_number"
+                                                           : "ctnative::as_string",
+                             value));
+        return;
+    }
 
     // Frame bookkeeping lowers to nothing. frame_enter's result is used by
     // every frame_exit and root after it, and walk order visits it first, so
@@ -186,6 +245,7 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         // inert value per destination instead of giving every use NaN.
         mlir::Value emptyString, emptyNullableString, emptyNullable, emptyBoolean, emptyObjectValue,
             emptyIdentity;
+        llvm::DenseMap<mlir::Type, mlir::Value> emptyPairs;
         // Each inert value is built once, at its first use.
         const auto once = [](mlir::Value & slot, auto make) {
             if (!slot) { slot = make(); }
@@ -243,10 +303,28 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                 }));
             } else if (isNullableCarrier(expected)) {
                 use.set(once(emptyNullable, [&] { return absentConstant(b, where); }));
+            } else if (expected == carrierType(context, carrier::nullableElement)) {
+                use.set(opaque(carrier::nullableElement, "std::nullopt"));
+            } else if (expected == ec::OpaqueType::get(context, kPageElementType)) {
+                // An ordinary script's element, such as a folded for-of's
+                // element after the last one: the runtime's unbound view.
+                use.set(ec::ConstantOp::create(
+                            b, where, expected,
+                            ec::OpaqueAttr::get(context, "ctnative::js_element_t::unbound()"))
+                            .getResult());
             } else if (expected == i1 || isBooleanCarrier(expected)) {
                 use.set(convertScalar(
                     b, where, once(emptyBoolean, [&] { return boolConstant(b, where, false); }),
                     expected));
+            } else if (auto pair = llvm::dyn_cast_or_null<ec::OpaqueType>(expected);
+                       pair && pair.getValue().starts_with("std::pair<")) {
+                // A row of a pair vector, such as a folded for-of's element.
+                use.set(once(emptyPairs[expected], [&] {
+                    return ec::ConstantOp::create(
+                               b, where, expected,
+                               ec::OpaqueAttr::get(context, (pair.getValue() + "{}").str()))
+                        .getResult();
+                }));
             }
         }
         swap(numberConstant(b, where, std::numeric_limits<double>::quiet_NaN()));
@@ -276,6 +354,26 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     // load and assign it. A hoisted `var` starts as tagged undefined, so a read
     // on a path with no `cell_set` yields what the interpreter yields, and no
     // dominance proof is needed.
+    if (auto cell = llvm::dyn_cast<CreateCellOp>(o);
+        cell && admission::isCarriedCell(o) && o->hasAttr(kNativeSharedCell)) {
+        // A binding a kept callback captures: the frame's variable holds a
+        // handle to a cell made here, holding the initial unless a write
+        // reaches every read first.
+        const auto handle = llvm::cast<ec::LValueType>(cell.getResult().getType()).getValueType();
+        const std::string value = sharedCellValue(handle);
+        mlir::Value local = ec::VariableOp::create(b, where, cell.getResult().getType(),
+                                                   ec::OpaqueAttr::get(context, ""));
+        llvm::SmallVector<mlir::Value, 1> initial;
+        if (!cell->hasAttr(kAssignedBeforeRead)) {
+            initial.push_back(
+                convertScalar(b, where, cell.getInitial(), ec::OpaqueType::get(context, value)));
+        }
+        ec::AssignOp::create(b, where, local,
+                             callValue(b, where, handle,
+                                       "std::make_shared<ctnative::cell<" + value + ">>", initial));
+        swap(local);
+        return;
+    }
     if (auto cell = llvm::dyn_cast<CreateCellOp>(o); cell && admission::isCarriedCell(o)) {
         mlir::Value local = ec::VariableOp::create(b, where, cell.getResult().getType(),
                                                    ec::OpaqueAttr::get(context, ""));
@@ -405,6 +503,21 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         eraseIfUnused(o);
         return;
     }
+    // A field that owns an instance by value: a read is the member itself,
+    // and the store copies the constructed instance into it.
+    if (o->hasAttr(kNativeOwnedInstance)) {
+        if (auto get = llvm::dyn_cast<GetPropertyOp>(o)) {
+            swap(memberAccess(b, where, get.getObject(), memberName(o), accessType.lookup(o)));
+            return;
+        }
+        auto set = llvm::cast<SetPropertyOp>(o);
+        const mlir::Type storage = accessType.lookup(o);
+        ec::AssignOp::create(b, where,
+                             memberAccess(b, where, set.getObject(), memberName(o), storage),
+                             ec::LoadOp::create(b, where, storage, set.getValue()));
+        eraseIfUnused(o);
+        return;
+    }
     if (auto get = llvm::dyn_cast<GetPropertyOp>(o)) {
         const mlir::Type type = get.getResult().getType();
         const mlir::Type storage = accessType.lookup(o);
@@ -427,6 +540,13 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         return;
     }
     if (auto k = llvm::dyn_cast<ConstantOp>(o)) {
+        // A class tag: the empty struct, value-initialized.
+        if (auto tag = llvm::dyn_cast_or_null<ClassTagType>(typeOf(k.getResult()))) {
+            swap(
+                ec::ConstantOp::create(b, where, classTagCarrierType(tag),
+                                       ec::OpaqueAttr::get(context, classTagSpelling(tag) + "{}")));
+            return;
+        }
         if (auto n = llvm::dyn_cast<NumberAttr>(k.getValue())) {
             swap(numberConstant(b, where, n.getDouble()));
         } else if (auto bo = llvm::dyn_cast<BooleanAttr>(k.getValue())) {
@@ -593,15 +713,26 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                              v)
                              .getResult();
         };
-        if (o->hasAttr("ctnative.receiver")) { args.push_back(asPointer(call.getReceiver())); }
+        if (o->hasAttr("ctnative.receiver")) {
+            args.push_back(isInstanceValue(call.getReceiver()) ? receiverOperand(b, where, call)
+                                                               : asPointer(call.getReceiver()));
+        }
         // Object arguments and shared bindings (cells) are also passed by
         // pointer through asPointer, so all three cases take an address the same
         // way. A function that itself received a cell pointer forwards it
         // unchanged, which is how a binding several closures out reaches the
         // innermost one. Operands 0-2 are the implicit arguments dropped above.
         for (unsigned i = 3; i < operands.size(); ++i) {
+            // A shared cell's handle is passed by value (rule 2b in
+            // ClosureLifter.h): the callee holds the binding through it.
+            if (admission::isSharedCellArg(o, i)) {
+                args.push_back(loadedHandle(b, where, operands[i]));
+                continue;
+            }
             const bool byAddress = admission::isObjectArg(o, i) || admission::isCellArg(o, i);
-            args.push_back(byAddress ? asPointer(operands[i]) : operands[i]);
+            args.push_back(byAddress                      ? asPointer(operands[i])
+                           : isInstanceValue(operands[i]) ? instanceArgument(b, where, call, i)
+                                                          : operands[i]);
         }
         const auto named = names.find(call.getCallee());
         const std::string target =
@@ -624,6 +755,20 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     }
     if (auto ret = llvm::dyn_cast<ReturnOp>(o)) {
         if (isEntry) {
+            // The end of the script is a microtask checkpoint, so the promise
+            // jobs it queued run before its globals are observed, as the
+            // VM's context::run drains them.
+            bool promises = false;
+            module.walk([&](mlir::Operation * op) {
+                auto opaque = llvm::dyn_cast<ec::CallOpaqueOp>(op);
+                promises |= op->hasAttr(kNativePromiseCallback) ||
+                            (opaque && opaque.getCallee().starts_with("ctnative::Promise."));
+            });
+            if (promises) {
+                callWithConstValueOperands(
+                    b, where, mlir::TypeRange{},
+                    b.getStringAttr("ctnative::microtasks::program().checkpoint"), {});
+            }
             printObservations(b, where);
             mlir::Value zero = ec::ConstantOp::create(b, where, mlir::IntegerType::get(context, 32),
                                                       b.getI32IntegerAttr(0));

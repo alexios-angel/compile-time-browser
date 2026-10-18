@@ -8,11 +8,11 @@ lower completely and run natively with Node's result; fixtures in
 PREPARED_ONLY prepare but native lowering must still refuse them.
 """
 
-import sys
+import argparse
 
 from CTNative.Lowering.Objects.classes.initialization_inputs import *
 
-from CTNative.harness import native_args, without_intrinsic
+from CTNative.harness import native_args, run_parallel, selected_fixtures, without_intrinsic
 
 # OBSERVATIONS maps a fixture name to (Node result, reference-interpreter
 # result): the value each engine prints as `a=`, or None if that run must fail
@@ -130,7 +130,198 @@ UNTRUSTED_NATIVE = {
         ),
         (True,),
     ),
+    # Static members: when the class is never used as a value, every read of
+    # a static member becomes a direct call, `this` in a static member and
+    # `this.constructor` in a method name the class itself, and a static
+    # member nothing reads is left uncalled (ClosureLifting/ClassStatics.cpp).
+    **dict.fromkeys(
+        (
+            "class-map-mixed-method",
+            "method-captured-class-key",
+            "method-captured-class-name",
+            "receiver-default-dispatch",
+            "static-arguments",
+            "static-branch",
+            "static-call-arguments",
+            "static-call-capture",
+            "static-call-getter",
+            "static-call-this-getter-chain",
+            "static-call-this-method",
+            "static-caller",
+            "static-chain",
+            "static-constant",
+            "static-forward-chain",
+            "static-length",
+            "static-methods",
+            "static-name",
+            "static-order",
+            "static-repeated",
+        ),
+        (False, True),
+    ),
+    # The same, where a static member nothing reads is refused (a getter
+    # cycle, a throwing getter, an ambient call): optimization removes it as
+    # unreachable and records the removal, and without optimization it stays,
+    # refused, beside the native program (UNTRUSTED_PARTIAL).
+    **dict.fromkeys(
+        (
+            "static-call-ambient",
+            "static-call-unused",
+            "static-cycle",
+            "static-error-coercion",
+            "static-error-replaced",
+            "static-error-return",
+            "static-throw-ambient",
+            "static-throw-object",
+            "static-throw-unused",
+            "static-throw-unused-chain",
+            "static-unread-chain",
+            "static-unread-nested",
+            "static-unread-new-this",
+        ),
+        (True,),
+    ),
+    # Inside its own constructor a class's name is the constructor's own
+    # closure, so `Shape.SEED` there is a static read through that closure,
+    # which the rewrite resolves like any other name of the class.
+    **dict.fromkeys(("class-map-mixed-captures",), (False, True)),
+    # The same, once optimization folds the computed key `"NA" + "ME"` to a
+    # constant.
+    **dict.fromkeys(("static-dynamic",), (True,)),
 }
+
+# The unprepared lowering also completes these in both modes, each printing
+# Node's value: mutually recursive arrow helpers that a constructor calls,
+# and a holder whose arrow method is replaced, directly or through an alias,
+# before its one call. Preparation still refuses nested-helper-recursive
+# ("class local cell is observed before initialization").
+UNTRUSTED_NATIVE.update(
+    dict.fromkeys(
+        ("nested-helper-recursive", "local-holder-replaced", "local-holder-alias"),
+        (False, True),
+    )
+)
+
+# Inherited classes that ClosureLifting/ClassInheritance.cpp flattens per
+# concrete class now lower completely without preparation. Each prints Node's
+# value; override-ambient's uncalled Base.read goes with its class.
+UNTRUSTED_NATIVE.update(
+    dict.fromkeys(
+        (
+            "class-map-record-alias-method-inherited",
+            "inherited",
+            "inherited-base-instance",
+            "inherited-branch-helper",
+            "inherited-chain",
+            "inherited-dispatch",
+            "inherited-explicit",
+            "inherited-helper-chain",
+            "inherited-helper-constructor",
+            "inherited-helper-distinct",
+            "inherited-helper-method",
+            "inherited-helper-order-values",
+            "inherited-helper-siblings",
+            "inherited-method",
+            "inherited-method-chain",
+            "inherited-method-constructor",
+            "inherited-method-instances",
+            "inherited-method-leaf",
+            "inherited-method-override",
+            "inherited-nested-helper-distinct",
+            "inherited-number-return",
+            "inherited-order",
+            "inherited-post-super-chain",
+            "inherited-post-super-method",
+            "inherited-post-super-order",
+            "inherited-post-super-override",
+            "inherited-super-chain",
+            "inherited-super-helper",
+            "inherited-super-nearest",
+            "inherited-super-receiver",
+            "inherited-super-target-cfg",
+            "override-ambient",
+            "override-constructor",
+            "override-different-leaves",
+            "override-distinct",
+            "override-leaf",
+            "override-middle",
+            "override-unused-constructor",
+        ),
+        (False, True),
+    )
+)
+UNTRUSTED_NATIVE.update(
+    dict.fromkeys(
+        (
+            "inherited-helper-decided-leaf-built",
+            "inherited-helper-effect",
+            "inherited-helper-receiver",
+        ),
+        (True,),
+    )
+)
+# Unprepared modes that lower to a native program beside functions that stay
+# refused, because nothing removes unreachable code without optimization:
+# each refused function is a static member nothing reads.
+UNTRUSTED_PARTIAL = dict.fromkeys(
+    (
+        "static-call-ambient",
+        "static-call-unused",
+        "static-cycle",
+        "static-error-coercion",
+        "static-error-replaced",
+        "static-error-return",
+        "static-throw-ambient",
+        "static-throw-object",
+        "static-throw-unused",
+        "static-throw-unused-chain",
+        "static-unread-chain",
+        "static-unread-nested",
+        "static-unread-new-this",
+    ),
+    (False,),
+)
+
+# Inherited classes with static members: flattening copies the statics onto
+# each concrete class, and the static-member rewrite then resolves
+# `this.constructor.X` per class.
+UNTRUSTED_NATIVE.update(
+    dict.fromkeys(
+        (
+            "inherited-getter-constant",
+            "inherited-getter-constructor",
+            "inherited-getter-dependencies",
+            "inherited-getter-fresh-empty",
+            "inherited-getter-override",
+            "inherited-getter-override-dependency",
+            "inherited-getter-shared-receivers",
+            "inherited-getter-static-reads",
+            "inherited-getter-three-levels",
+            "inherited-method-getter",
+            "inherited-static-call",
+            "inherited-static-getters",
+            "inherited-static-getters-base-reads-leaf",
+            "inherited-static-getters-component",
+            "inherited-static-getters-component-method",
+            "inherited-static-getters-shadow",
+            "inherited-static-getters-shadow-both",
+            "inherited-static-getters-shadow-extended",
+            "inherited-static-getters-shadow-method",
+            "inherited-static-getters-shadow-method-both",
+            "inherited-static-getters-shadow-method-chain",
+            "receiver-default-inherited",
+        ),
+        (False, True),
+    )
+)
+UNTRUSTED_NATIVE.update(dict.fromkeys(("inherited-getter-unused-ambient",), (True,)))
+
+# Static-member fixtures the static-member rewrite completes in both modes;
+# each prints Node's value.
+UNTRUSTED_NATIVE.update(dict.fromkeys(("static-defaults", "static-default-fields"), (False, True)))
+# Without optimization, an inherited static getter nothing reads stays
+# refused beside the native program.
+UNTRUSTED_PARTIAL.update(dict.fromkeys(("inherited-getter-unused-ambient",), (False,)))
 
 # Key-conflict fixtures: the reference interpreter has no `console`, so these
 # fixtures report a conflict by throwing rather than by logging it.
@@ -595,7 +786,7 @@ def check_record_map_inputs(args, prepared):
                 )
 
 
-def untrusted_change(args, name, optimize, raw, native, functions, expected):
+def untrusted_change(args, name, optimize, raw, native, functions, expected, reference=None):
     """Lower the unprepared import of `name` and return None when it does what
     UNTRUSTED_NATIVE says (a complete native program printing Node's value, or
     else a named refusal boundary), else one line saying what changed: the
@@ -627,9 +818,11 @@ def untrusted_change(args, name, optimize, raw, native, functions, expected):
     refused = len(FUNCTION.findall(text))
     shape = f"{native_count}/{functions} native, {refused} refused"
     if refused or "emitc.func @main(" not in text:
+        if refused and "emitc.func @main(" in text and optimize in UNTRUSTED_PARTIAL.get(name, ()):
+            return None
         return f"CHANGED {label}: partial ({shape})"
     try:
-        check_executable(args, f"{name}.{optimize}.untrusted", native, expected)
+        check_executable(args, f"{name}.{optimize}.untrusted", native, expected, reference)
         return None if listed else f"CHANGED {label}: complete ({shape}), runs with a={expected}"
     except Exception as error:
         return f"CHANGED {label}: complete ({shape}), run failed: {str(error).splitlines()[0]}"
@@ -733,17 +926,32 @@ def main():
         declaration + "function probe() { class Shape { read(t) { return r(t); } } "
         "var instance = new Shape(); return instance.read(null) ? 9 : 7; } var a = probe();\n"
     )
-    helper_checked, helper_refused = check_helper_guards(args, declaration)
-    key_checked = key_refused = 0
-    refusals = 0
-    preparation_refusals = 0
-    checked = prepared_refusals = 0
-    cutoffs = {}
-    # Fixtures whose untrusted lowering no longer keeps the refusal boundary,
-    # or whose interpreter observation changed, collected across the whole run
-    # and reported together at the end.
-    untrusted_changes = []
-    for name, (node_expected, reference_expected) in OBSERVATIONS.items():
+    # CTCOMPILE_FIXTURES selects fixtures by name; the two checks outside the
+    # fixture loop are named "@helper-guards" and "@constructed-methods".
+    chosen = selected_fixtures([*OBSERVATIONS, "@helper-guards", "@constructed-methods"])
+    helper_checked, helper_refused = (
+        check_helper_guards(args, declaration) if "@helper-guards" in chosen else (0, 0)
+    )
+    # Each fixture runs in its own work directory, so the helpers' fixed file
+    # names cannot collide, and the fixtures run side by side (run_parallel).
+    # Its counts and changes are returned and summed in OBSERVATIONS order, so
+    # the summary does not depend on scheduling.
+    shared = args
+
+    def check_fixture(name):
+        node_expected, reference_expected = OBSERVATIONS[name]
+        args = argparse.Namespace(**dict(vars(shared), work=shared.work / name))
+        args.work.mkdir(parents=True, exist_ok=True)
+        refusals = preparation_refusals = checked = prepared_refusals = 0
+        cutoffs = {}
+        key_counts = None
+        # Whether this fixture's untrusted lowering no longer keeps the refusal
+        # boundary, or its interpreter observation changed; every fixture's are
+        # reported together at the end.
+        untrusted_changes = []
+        # The interpreter's whole output for this fixture, which its native
+        # programs are compared with.
+        vm_output = {}
         source = args.fixtures / f"{name}.js"
         node = run([args.node, "-e", NODE, str(source)], success=node_expected is not None)
         reference = run([args.reference, str(source)], success=reference_expected is not None)
@@ -756,6 +964,9 @@ def main():
             reference_output = "Error=9\n" + reference_output
         if name == "class-map-record-nested-conditional-dead-escape":
             reference_output += "retained=undefined\n"
+        # A native program prints every global the interpreter prints, so it
+        # is compared with the interpreter's whole output, not with `a=` alone.
+        vm_output[name] = reference.stdout if reference_expected is not None else None
         if reference_expected is not None and reference.stdout != reference_output:
             # Reported with the untrusted changes; the rest of this fixture's
             # checks assume the old observation.
@@ -763,9 +974,16 @@ def main():
                 f"CHANGED {name}: interpreter prints {reference.stdout.strip()!r},"
                 f" expected {reference_output.strip()!r}"
             )
-            print(change, file=sys.stderr, flush=True)
             untrusted_changes.append(change)
-            continue
+            return (
+                refusals,
+                preparation_refusals,
+                checked,
+                prepared_refusals,
+                cutoffs,
+                untrusted_changes,
+                key_counts,
+            )
         raw = args.work / f"{name}.raw.mlir"
         imported = run([args.translate, "--ctbrowser-js-to-ctjs", str(source), "-o", str(raw)])
         text = raw.read_text()
@@ -1270,7 +1488,7 @@ def main():
                 success=True,
             )
         if name == "bootstrap-r":
-            key_checked, key_refused = check_prototype_keys(args, prepared)
+            key_counts = check_prototype_keys(args, prepared)
         if name == "global-holder-chain":
             for label, request in (
                 ("root", {"roots": [{"binding": "H", "properties": ["read"]}]}),
@@ -1513,9 +1731,10 @@ def main():
             preparation_refusals += 2
         for optimize in (False, True):
             native = args.work / f"{name}.{optimize}.untrusted.mlir"
-            change = untrusted_change(args, name, optimize, raw, native, functions, node_expected)
+            change = untrusted_change(
+                args, name, optimize, raw, native, functions, node_expected, vm_output.get(name)
+            )
             if change:
-                print(change, file=sys.stderr, flush=True)
                 untrusted_changes.append(change)
                 continue
             if name == "helper-global-alias":
@@ -1559,14 +1778,9 @@ def main():
                     if (
                         name.startswith("class-map-")
                         and not name.startswith("class-map-record-")
-                        and name != "class-map-inherited-base-string"
                         and f"!ctnative.map<{key_type}" not in native_text
                     ):
                         raise RuntimeError("class Map lost its key representation refusal")
-                    if name == "class-map-inherited-base-string" and (
-                        "string field requires definite string reads and writes" not in native_text
-                    ):
-                        raise RuntimeError("base publication lost its String field refusal")
                     if name == "inherited-helper-order" and (
                         "an object literal passed to a direct call as an argument"
                         not in native_text
@@ -1587,15 +1801,36 @@ def main():
                         raise RuntimeError(f"{name}: native refusal changed the source throw exits")
                     prepared_refusals += 1
                 else:
-                    checked += check_executable(args, f"{name}.{optimize}", native, node_expected)
+                    checked += check_executable(
+                        args, f"{name}.{optimize}", native, node_expected, vm_output.get(name)
+                    )
+        return (
+            refusals,
+            preparation_refusals,
+            checked,
+            prepared_refusals,
+            cutoffs,
+            untrusted_changes,
+            key_counts,
+        )
+
+    results = run_parallel([name for name in chosen if name in OBSERVATIONS], check_fixture)
+    refusals, preparation_refusals, checked, prepared_refusals = (
+        sum(result[index] for result in results) for index in range(4)
+    )
+    cutoffs = {name: cutoff for result in results for name, cutoff in result[4].items()}
+    untrusted_changes = [change for result in results for change in result[5]]
+    key_checked, key_refused = next((result[6] for result in results if result[6]), (0, 0))
     if untrusted_changes:
         raise RuntimeError(
             f"{len(untrusted_changes)} class fixture result(s) changed:\n"
             + "\n".join(untrusted_changes)
         )
-    plain_checked, plain_refused = check_constructed_methods(args)
+    plain_checked, plain_refused = (
+        check_constructed_methods(args) if "@constructed-methods" in chosen else (0, 0)
+    )
     print(
-        f"class initialization controls: {len(OBSERVATIONS)} source observations, "
+        f"class initialization controls: {len(results)} source observations, "
         f"{checked} native executions, {refusals} unprepared refusals, "
         f"{preparation_refusals} preparation refusals, first complete budgets {cutoffs}"
     )

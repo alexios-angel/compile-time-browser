@@ -80,6 +80,22 @@ def CTJSLiftToSCF : Pass<"ctjs-lift-to-scf", "mlir::ModuleOp"> {
     value, and a closed-shape object literal threaded through a loop that way
     reads as open and is refused by the native tier. Part 24 Phase 56B's
     obligation O-3: one stack slot, however many SSA values reach it.
+
+    One thing runs after the lift: object spread of a literal whose keys are
+    known. `{...a}` imports as ctjs.copy_props, which copies whatever keys
+    `a` has at run time and so leaves the target's shape open. When `a` is a
+    literal made in the same block and only read or written through constant
+    keys before the copy, the copy is rewritten as one read and one own
+    definition per key, in property order, and a null or undefined source is
+    dropped (lib/CTJS/Lowering/Spreads.h).
+
+    And one fold runs before it: a for-of over `Object.keys`, `Object.values`
+    or `Object.entries` of an object literal, with `[k, v]` destructuring of
+    the entries, needs none of the iteration protocol the importer emits (an
+    array takes the index path, and closing its iterator does nothing). The
+    protocol calls, the branches that chose between the paths, and a handler
+    that only guarded the close are removed, so a loop whose body throws can
+    be structured (lib/CTJS/Lowering/ArrayIteration.h).
   }];
   let dependentDialects = ["::mlir::scf::SCFDialect", "::mlir::ub::UBDialect",
                            "::mlir::arith::ArithDialect",

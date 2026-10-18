@@ -150,6 +150,11 @@ static Type finishUnion(MLIRContext * context, Alternatives & parts) {
     // associativity sweep in ctcompile/test/Analysis/Types/Lattice.cpp catches
     // its removal; the hand-written meet table does not.
     sortAndUnique(parts.members);
+    // A merge can answer `boxed` (two callable sets past their cap), which
+    // absorbs the union like a `boxed` operand would have.
+    if (llvm::any_of(parts.members, [](Type t) { return llvm::isa<BoxedType>(t); })) {
+        return BoxedType::get(context);
+    }
 
     Type result;
     if (parts.members.empty()) {
@@ -212,6 +217,30 @@ static Type mergeSameFamily(Type a, Type b) {
         return StrViewType::get(context, wider);
     }
 
+    // Two callables are one of their targets: the sorted, distinct union of
+    // both target lists, and `boxed` once it is larger than the cap. The
+    // size of a union does not depend on the order it was formed in, so the
+    // cap cannot break associativity.
+    const auto targetsOf = [](Type type, llvm::SmallVectorImpl<mlir::StringAttr> & into) {
+        if (auto closure = llvm::dyn_cast<ClosureType>(type)) {
+            into.push_back(mlir::StringAttr::get(type.getContext(), closure.getTarget()));
+        } else {
+            llvm::append_range(into, llvm::cast<ClosureSetType>(type).getTargets());
+        }
+    };
+    if (llvm::isa<ClosureType, ClosureSetType>(a)) {
+        if (!llvm::isa<ClosureType, ClosureSetType>(b)) { return Type(); }
+        llvm::SmallVector<mlir::StringAttr, 8> targets;
+        targetsOf(a, targets);
+        targetsOf(b, targets);
+        llvm::sort(targets, [](mlir::StringAttr x, mlir::StringAttr y) {
+            return x.getValue() < y.getValue();
+        });
+        targets.erase(std::unique(targets.begin(), targets.end()), targets.end());
+        if (targets.size() > kMaxClosureSetTargets) { return BoxedType::get(context); }
+        return ClosureSetType::get(context, targets);
+    }
+
     if (llvm::isa<VecType>(a)) { return mergeElements<VecType>(a, b); }
     // Tuples of one arity meet position by position; another arity is a
     // different record, so the two become alternatives of a union.
@@ -227,6 +256,11 @@ static Type mergeSameFamily(Type a, Type b) {
         return TupleType::get(context, elements);
     }
     if (llvm::isa<SetType>(a)) { return mergeElements<SetType>(a, b); }
+    if (llvm::isa<DictType>(a)) { return mergeElements<DictType>(a, b); }
+    // Promises and their resolve functions meet by value type
+    // (CTNativeTypes.td).
+    if (llvm::isa<PromiseType>(a)) { return mergeElements<PromiseType>(a, b); }
+    if (llvm::isa<PromiseResolveType>(a)) { return mergeElements<PromiseResolveType>(a, b); }
     if (auto mapA = llvm::dyn_cast<MapType>(a)) {
         auto mapB = llvm::dyn_cast<MapType>(b);
         if (!mapB) { return Type(); }
@@ -273,6 +307,10 @@ Type meet(Type a, Type b) {
     if (llvm::isa<BottomType>(a)) { return b; }
     if (llvm::isa<BottomType>(b)) { return a; }
     if (llvm::isa<BoxedType>(a) || llvm::isa<BoxedType>(b)) { return BoxedType::get(context); }
+    // A class tag never merges with a value, nor with another class.
+    if (llvm::isa<ClassTagType>(a) || llvm::isa<ClassTagType>(b)) {
+        return a == b ? a : BoxedType::get(context);
+    }
     if (llvm::isa<JsonType>(a) || llvm::isa<JsonType>(b)) { return JsonType::get(context); }
 
     if (Type merged = mergeSameFamily(a, b)) { return merged; }

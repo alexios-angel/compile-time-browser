@@ -1,0 +1,16 @@
+# Handlers an ordinary script schedules with setTimeout run natively when the
+# host moves its clock, as they run on the interpreter, with no VM linked into
+# the native builds (clang and GCC).
+# RUN: %{obj}/ctcompile-test-timers %S/timers.html %S/timers.js > %t.vm
+# RUN: env CTBROWSER_TEST_ENGINE=native %{obj}/ctcompile-test-timers-native %S/timers.html %S/timers.js > %t.native
+# RUN: diff %t.vm %t.native
+# RUN: env CTBROWSER_TEST_ENGINE=native %{obj}/ctcompile-test-timers-native-gcc %S/timers.html %S/timers.js > %t.gcc
+# RUN: diff %t.vm %t.gcc
+# RUN: FileCheck %s --input-file %t.native
+# RUN: %nm -C %{obj}/ctcompile-test-timers-native | not grep -E "ctbrowser::script::"
+# RUN: %nm -C %{obj}/ctcompile-test-timers-native-gcc | not grep -E "ctbrowser::script::"
+# CHECK: log= cleared=t armed=SN{{$}}
+# CHECK-NEXT: +0: log=znt11 cleared=td armed=SN{{$}}
+# CHECK-NEXT: +5: log=znt11mt12 cleared=tdi armed=SN{{$}}
+# CHECK-NEXT: +0: log=znt11mt12m2 cleared=tdi armed=SN{{$}}
+# CHECK-NEXT: +5: log=znt11mt12m2a cleared=tdiix armed=SN{{$}}

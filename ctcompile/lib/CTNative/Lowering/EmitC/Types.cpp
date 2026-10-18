@@ -8,6 +8,8 @@
 #include "../Admission/Admission.h"
 #include "Emitter.h"
 #include "Vectors.h"
+#include "ctcompile/CTNative/Analysis/Instances.h"
+#include "ctcompile/CTNative/Analysis/StaticTables.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -75,13 +77,25 @@ void lowering::retype(ctjs::FuncOp fn) {
         }
     });
     const auto retypeValue = [&](mlir::Value v) {
+        if (retypeClosureSet(v)) { return; } // ClosureSets.cpp
         if (retypeBorrowed(v)) { return; }
+        // A listener's own identity, which its removals of itself name.
+        if (isListenerSelfParameter(v)) {
+            v.setType(ec::OpaqueType::get(context, "ctnative::callable_identity"));
+            return;
+        }
         if (v.getDefiningOp<ctjs::CreateObjectOp>() && carrierOf(typeOf(v)) == carrier::json) {
             v.setType(ec::LValueType::get(carrierType(context, carrier::json)));
             return;
         }
         if (domStringResults.contains(v)) {
             v.setType(carrierType(context, carrier::string));
+            return;
+        }
+        // A table's intrinsic is replaced by a placeholder and erased with
+        // its call (EmitC/Dictionaries.cpp).
+        if (nativeDictionaryAction(v.getDefiningOp()) == "plumbing") {
+            v.setType(mlir::Float64Type::get(context));
             return;
         }
         if (domReads.contains(v.getDefiningOp()) || domUnusedPayloads.contains(v)) {
@@ -143,15 +157,37 @@ void lowering::retype(ctjs::FuncOp fn) {
         // `ctn_x * self` receiver. Both checks must run before the scalar case
         // below, because the lattice type of either value describes what the
         // cell holds, not the cell itself.
+        // A shared cell (rule 2b in ClosureLifter.h) is a handle instead: the
+        // frame's variable holds it and a lifted callee takes it by value.
+        const auto handle = [&] {
+            return ec::OpaqueType::get(
+                context, sharedCellSpelling(spelled(carrierType(context, carrierOf(typeOf(v))))));
+        };
+        if (admission::isCarriedCell(v.getDefiningOp()) &&
+            v.getDefiningOp()->hasAttr(kNativeSharedCell)) {
+            v.setType(ec::LValueType::get(handle()));
+            return;
+        }
+        if (admission::isSharedCellParameter(v)) {
+            v.setType(handle());
+            return;
+        }
         if (admission::isCarriedCell(v.getDefiningOp())) {
-            v.setType(ec::LValueType::get(carrierType(context, carrierOf(typeOf(v)))));
+            v.setType(ec::LValueType::get(valueCarrierType(context, typeOf(v))));
             return;
         }
         if (admission::isCellParameter(v)) {
-            v.setType(ec::PointerType::get(carrierType(context, carrierOf(typeOf(v)))));
+            v.setType(ec::PointerType::get(valueCarrierType(context, typeOf(v))));
             return;
         }
         const carrier c = carrierOf(typeOf(v));
+        if (c == carrier::instance) {
+            v.setType(borrowsInstance(v)
+                          ? ec::PointerType::get(ec::OpaqueType::get(
+                                context, instanceClassSpelling(instanceClassName(typeOf(v)))))
+                          : instanceType(typeOf(v)));
+            return;
+        }
         if (c == carrier::objectIdentity) {
             needsObjectIdentity = true;
             v.setType(carrierType(context, c));
@@ -163,6 +199,20 @@ void lowering::retype(ctjs::FuncOp fn) {
         }
         if (c == carrier::closure) {
             v.setType(closureCarrierType(llvm::cast<ClosureType>(typeOf(v))));
+            return;
+        }
+        if (c == carrier::dictionary) {
+            v.setType(ec::OpaqueType::get(context, dictionarySpelling(typeOf(v))));
+            return;
+        }
+        if (c == carrier::classTag) {
+            const auto tag = llvm::cast<ClassTagType>(typeOf(v));
+            classTags.insert(classTagSpelling(tag));
+            v.setType(classTagCarrierType(tag));
+            return;
+        }
+        if (c == carrier::promise || c == carrier::promiseResolve) {
+            v.setType(ec::OpaqueType::get(context, promiseSpelling(typeOf(v))));
             return;
         }
         if (c == carrier::map) {
@@ -182,8 +232,20 @@ void lowering::retype(ctjs::FuncOp fn) {
             // ponytail: one alias query per value; cache the groups per
             // function if large functions make this slow.
             const auto members = TypeInference::elementVectorAliases(v);
-            // A parameter is a read-only borrow of the caller's array, held
-            // by value as a span, so scf carries the span itself.
+            // A parameter the function writes borrows the caller's array by
+            // address (markWrittenArrays), and scf carries that address.
+            const bool written = llvm::any_of(members, [&](mlir::Value member) {
+                auto argument = llvm::dyn_cast<mlir::BlockArgument>(member);
+                return argument && argument.getOwner() == &fn.getBody().front() &&
+                       isWrittenArray(fn, argument.getArgNumber());
+            });
+            if (written) {
+                v.setType(ec::PointerType::get(
+                    ec::OpaqueType::get(context, elementArraySpelling(typeOf(v)))));
+                return;
+            }
+            // Any other parameter is a read-only borrow of the caller's array,
+            // held by value as a span, so scf carries the span itself.
             if (TypeInference::elementVectorParameter(members)) {
                 v.setType(ec::OpaqueType::get(context, elementSpanSpelling(typeOf(v))));
                 return;
@@ -284,15 +346,33 @@ void lowering::retype(ctjs::FuncOp fn) {
     fn.getBody().walk([&](ctjs::CreateObjectOp object) {
         if (carrierOf(typeOf(object.getResult())) == carrier::json) { return; }
         if (!methodTableName(object).empty() || object->hasAttr(kNativeObjectIdentity)) { return; }
+        // A static table's literal is its address (EmitC/StaticTables.cpp).
+        if (object->hasAttr(kNativeStaticTable)) { return; }
+        // A table is a dictionary, not a struct (EmitC/Dictionaries.cpp).
+        if (isNativeDictionarySite(object)) { return; }
         if (ownedObjectTypes.contains(object.getResult())) { return; }
+        // A `new` of an identity class is its owner (EmitC/Instances.cpp).
+        if (carrierOf(typeOf(object.getResult())) == carrier::instance) {
+            mlir::Value(object.getResult()).setType(instanceType(typeOf(object.getResult())));
+            return;
+        }
         mlir::Value(object.getResult()).setType(classType(shapeAt(object.getResult())));
+    });
+    // A read of a field owning an instance by value names the member itself.
+    fn.getBody().walk([&](ctjs::GetPropertyOp get) {
+        if (get->hasAttr(kNativeOwnedInstance)) {
+            mlir::Value(get.getResult()).setType(classType(shapeAt(get.getResult())));
+        }
     });
     // The receiver of a lifted method has the same shape, behind a pointer.
     // It is retyped here because retypeValue leaves closed objects alone until
     // their shape is known, and `%arg0` of a lifted method is one.
     if (fn->hasAttr("ctnative.receiver")) {
         mlir::Value self = fn.getBody().front().getArgument(0);
-        self.setType(receiverType(shapeAt(self)));
+        // An identity class's constructor takes the owner, which it hands to
+        // the Map (EmitC/Instances.cpp).
+        self.setType(isIdentityClass(fn) ? instanceType(typeOf(self))
+                                         : receiverType(shapeAt(self)));
     }
     // Object parameters are passed the same way as the receiver: a pointer to
     // their shape's class.

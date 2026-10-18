@@ -4,6 +4,11 @@
 // borrow.py also runs alias.js from shrink.mlir, pinned by SHA-256 so it cannot
 // change. Different array lengths show which arm was selected; writes and reads
 // through the borrowed alias must still reach the two owning vectors.
+//
+// mixed.js calls both arms, so `alias` joins a Number array and a String array
+// under both optimize modes and must stay refused. Called with `true` alone,
+// precomputation folds the flag and no join remains: borrow.py checks that
+// program (mixed-folded) natively instead.
 
 //--- unequal.js
 function selected(flag) {
@@ -122,7 +127,7 @@ function blocked(flag) {
   alias.length = 0;
   return a.length + b.length;
 }
-var observed = blocked(true);
+var observed = blocked(true) * 10 + blocked(false);
 
 //--- growth.js
 function blocked(flag) {

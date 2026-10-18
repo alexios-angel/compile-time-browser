@@ -1,0 +1,14 @@
+# Native differential test of spread.js, in the same form as struct.test: the
+# modules come from ctcompile_add_native_pipeline in Native.cmake, which writes
+# no module while any function carries `ctnative.not_native`, so a spread
+# --ctjs-lift-to-scf left in place fails the build of this test's input.
+# compilation-unit.py compiles a module standalone with GCC and Clang, checks
+# with nm that it calls no interpreter, runs it, and compares every global with
+# the interpreter's.
+
+# RUN: %compilation_unit --module %{obj}/spreads.pipeline.emitc.mlir --js %S/spread.js --work %t --name spreads
+# RUN: not %compilation_unit --module %{obj}/spreads.pipeline.emitc.mlir --js %S/spread.js --work %t --name spreads_off_by_one --mutate ordered_answer 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE
+# OFF-BY-ONE: global 'ordered_answer' differs
+# RUN: %compilation_unit --module %{obj}/spreads.pipeline.deduced.emitc.mlir --js %S/spread.js --work %t --name spreads_deduced
+# RUN: %compile_clean --module %{obj}/spreads.pipeline.emitc.mlir --work %t --name spreads
+# RUN: %print_deduced --plain %{obj}/spreads.pipeline.emitc.mlir --deduced %{obj}/spreads.pipeline.deduced.emitc.mlir --mutated %{obj}/spreads.pipeline.mutated.emitc.mlir --work %t --name spreads

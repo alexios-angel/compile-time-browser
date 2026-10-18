@@ -18,12 +18,22 @@
 //     definitions, each key defined once: no later write can change a field.
 //  3. Every read of the binding is used only as the receiver of a call through
 //     a constant-key field of it, and each field called that way holds a
-//     closure with no captures whose function uses neither `this`, new.target
-//     nor its own closure.
+//     closure with no captures whose function reads no new.target, uses its
+//     own closure only to create nested closures, and uses `this` only as a
+//     read is used (`this.find(...)` in another method of the table), which
+//     needs the literal to be the only holder of that method.
 //  4. Every read runs after the write: its function is started only after
 //     the write, in the owner's body - called through a closure or by symbol,
 //     or reachable by anyone a closure of it was handed to. A read that could
 //     run first would find `undefined`, and a direct call would hide the error.
+//
+// markStaticClassReads applies the same ordering to a static variable that
+// holds a class: the variable is written only with one closure made in its
+// owner (the importer writes a class declaration's closure twice), and every
+// read is the callee and new.target of a `new` that runs after the last
+// write, the class definition's. Each read and write is then marked
+// kNativeStaticClass with the constructor's name, and the constructor lift
+// (Constructors.cpp) builds the instance at that `new`.
 //
 //===----------------------------------------------------------------------===//
 
@@ -43,7 +53,172 @@ mlir::Operation * enclosingIn(mlir::Operation * op, mlir::Block * block) {
     return op;
 }
 
+/// Whether `target`, held in `closure`, can be called with `undefined` for
+/// its implicit arguments once its calls through `literal` are direct: it
+/// reads no new.target, uses its own closure only to create nested closures,
+/// and uses its receiver only when `closure` is held by `literal` alone, so
+/// that every call of it has the literal as its receiver. Condition 3 checks
+/// what the receiver is used for.
+bool readsOnlyItsTable(ctjs::FuncOp target, ctjs::CreateClosureOp closure, mlir::Value literal) {
+    if (target.getBody().empty()) { return false; }
+    mlir::Block & entry = target.getBody().front();
+    if (!entry.getArgument(ctjs::arg_new_target).use_empty()) { return false; }
+    for (mlir::OpOperand & use : entry.getArgument(ctjs::arg_callee).getUses()) {
+        if (!llvm::isa<ctjs::CreateClosureOp>(use.getOwner()) || use.getOperandNumber() != 0) {
+            return false;
+        }
+    }
+    return entry.getArgument(ctjs::arg_receiver).use_empty() ||
+           llvm::all_of(closure->getUsers(), [&](mlir::Operation * user) {
+               auto field = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+               return llvm::isa<ctjs::RootOp>(user) || (field && field.getObject() == literal);
+           });
+}
+
 } // namespace
+
+/// What can start each function: each call of a closure of it, each call
+/// through a static variable it is stored in when that variable is only
+/// ever called, each call through a global written once with it when the
+/// global is only ever called, the closure's creation when it is used any
+/// other way
+/// (whoever receives it may call it from then on), and each call of the
+/// function by symbol. Fills `starters` and `closuresOf`; a rewrite that
+/// erases calls rebuilds them.
+void closureLifter::indexStarters() {
+    starters.clear();
+    closuresOf.clear();
+    const auto onlyCallee = [](mlir::OpOperand & use) {
+        auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+        auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+        return (call && use.getOperandNumber() == 0 && call.getReceiver() != use.get() &&
+                !llvm::is_contained(call.getArgs(), use.get())) ||
+               (direct && use.get() == direct.getCalleeValue() &&
+                direct.getReceiver() != use.get() &&
+                !llvm::is_contained(direct.getArgs(), use.get()));
+    };
+    llvm::DenseMap<mlir::Attribute, std::optional<llvm::SmallVector<mlir::Operation *>>> through;
+    module.walk([&](ctjs::CellGetOp read) {
+        auto cell = read.getCell().getDefiningOp<ctjs::CreateCellOp>();
+        auto symbol = cell ? cell->getAttr(kNativeStaticCell) : mlir::Attribute{};
+        if (!symbol) { return; }
+        auto & calls =
+            through.try_emplace(symbol, llvm::SmallVector<mlir::Operation *>{}).first->second;
+        for (mlir::OpOperand & use : read.getResult().getUses()) {
+            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            if (calls && onlyCallee(use)) {
+                calls->push_back(use.getOwner());
+            } else {
+                calls.reset();
+            }
+        }
+    });
+    // The same for a global a function declaration is stored in: when the
+    // global is written once and every read of it is only called, those
+    // calls are what can start the function.
+    llvm::StringMap<std::optional<llvm::SmallVector<mlir::Operation *>>> globalCalls;
+    llvm::StringMap<unsigned> globalWrites;
+    module.walk([&](mlir::Operation * op) {
+        if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(op)) {
+            ++globalWrites[store.getName()];
+            return;
+        }
+        auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
+        if (!load) { return; }
+        auto & calls =
+            globalCalls.try_emplace(load.getName(), llvm::SmallVector<mlir::Operation *>{})
+                .first->second;
+        for (mlir::OpOperand & use : load.getResult().getUses()) {
+            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            if (calls && onlyCallee(use)) {
+                calls->push_back(use.getOwner());
+            } else {
+                calls.reset();
+            }
+        }
+    });
+    module.walk([&](ctjs::CreateClosureOp made) {
+        ctjs::FuncOp target = targetOf(made);
+        if (!target) { return; }
+        ++closuresOf[target.getOperation()];
+        auto & into = starters[target.getOperation()];
+        for (mlir::OpOperand & use : made.getResult().getUses()) {
+            mlir::Operation * user = use.getOwner();
+            if (llvm::isa<ctjs::RootOp>(user)) { continue; }
+            if (onlyCallee(use)) {
+                into.push_back(user);
+                continue;
+            }
+            if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(user);
+                store && globalWrites.lookup(store.getName()) == 1) {
+                // ponytail: an embedder that calls the global by name does so
+                // after the script's top level returns, so it is not listed;
+                // a top level that throws first would need it listed.
+                const auto calls = globalCalls.find(store.getName());
+                if (calls != globalCalls.end() && calls->second) {
+                    llvm::append_range(into, *calls->second);
+                    continue;
+                }
+            }
+            mlir::Operation * box = llvm::isa<ctjs::CreateCellOp>(user) ? user : nullptr;
+            if (auto set = llvm::dyn_cast<ctjs::CellSetOp>(user);
+                set && use.getOperandNumber() == 1) {
+                box = set.getCell().getDefiningOp();
+            }
+            const auto calls = box && box->getAttr(kNativeStaticCell)
+                                   ? through.find(box->getAttr(kNativeStaticCell))
+                                   : through.end();
+            if (calls != through.end() && calls->second) {
+                llvm::append_range(into, *calls->second);
+            } else {
+                into.push_back(made.getOperation());
+            }
+        }
+    });
+    if (auto uses = mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())) {
+        for (const mlir::SymbolTable::SymbolUse & use : *uses) {
+            if (auto * named = mlir::SymbolTable::lookupNearestSymbolFrom(module.getOperation(),
+                                                                          use.getSymbolRef())) {
+                starters[named].push_back(use.getUser());
+            }
+        }
+    }
+}
+
+/// Whether `op` can run only after `write`, which sits in the body of the
+/// function that owns it. Climbs from `op` to that body through what starts
+/// each function on the way (`starters`); a function `startedBy` lists is
+/// started only by the operations it lists there, which are climbed instead.
+bool closureLifter::runsAfter(
+    mlir::Operation * op, mlir::Operation * write,
+    const llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> & startedBy) {
+    auto function = write->getParentOfType<ctjs::FuncOp>();
+    mlir::Block * body = write->getBlock();
+    llvm::SmallVector<mlir::Operation *> pending{op};
+    llvm::DenseSet<mlir::Operation *> seen;
+    while (!pending.empty()) {
+        mlir::Operation * at = pending.pop_back_val();
+        if (!seen.insert(at).second) { continue; }
+        if (seen.size() > 256) { return false; }
+        auto holder = at->getParentOfType<ctjs::FuncOp>();
+        if (!holder) { return false; }
+        if (holder == function) {
+            mlir::Operation * level = enclosingIn(at, body);
+            if (!level || level == write || !write->isBeforeInBlock(level)) { return false; }
+            continue;
+        }
+        if (const auto field = startedBy.find(holder.getOperation()); field != startedBy.end()) {
+            pending.append(field->second.begin(), field->second.end());
+            continue;
+        }
+        // Nothing known starts it: the script entry, or a function the host
+        // may call.
+        const auto found = starters.find(holder.getOperation());
+        if (found == starters.end()) { return false; }
+        pending.append(found->second.begin(), found->second.end());
+    }
+    return true;
+}
 
 bool closureLifter::bindSingletonMethods(liftReport & out) {
     llvm::MapVector<mlir::StringAttr, llvm::SmallVector<ctjs::CreateCellOp>> bySymbol;
@@ -54,79 +229,7 @@ bool closureLifter::bindSingletonMethods(liftReport & out) {
     });
     if (bySymbol.empty()) { return false; }
 
-    // What can start each function: each call of a closure of it, each call
-    // through a static variable it is stored in when that variable is only
-    // ever called, the closure's creation when it is used any other way
-    // (whoever receives it may call it from then on), and each call of the
-    // function by symbol. Rebuilt after every rewrite, which erases calls.
-    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> starters;
-    llvm::DenseMap<mlir::Operation *, unsigned> closuresOf;
-    const auto index = [&] {
-        starters.clear();
-        closuresOf.clear();
-        const auto onlyCallee = [](mlir::OpOperand & use) {
-            auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-            auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
-            return (call && use.getOperandNumber() == 0 && call.getReceiver() != use.get() &&
-                    !llvm::is_contained(call.getArgs(), use.get())) ||
-                   (direct && use.get() == direct.getCalleeValue() &&
-                    direct.getReceiver() != use.get() &&
-                    !llvm::is_contained(direct.getArgs(), use.get()));
-        };
-        llvm::DenseMap<mlir::Attribute, std::optional<llvm::SmallVector<mlir::Operation *>>>
-            through;
-        module.walk([&](ctjs::CellGetOp read) {
-            auto cell = read.getCell().getDefiningOp<ctjs::CreateCellOp>();
-            auto symbol = cell ? cell->getAttr(kNativeStaticCell) : mlir::Attribute{};
-            if (!symbol) { return; }
-            auto & calls =
-                through.try_emplace(symbol, llvm::SmallVector<mlir::Operation *>{}).first->second;
-            for (mlir::OpOperand & use : read.getResult().getUses()) {
-                if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
-                if (calls && onlyCallee(use)) {
-                    calls->push_back(use.getOwner());
-                } else {
-                    calls.reset();
-                }
-            }
-        });
-        module.walk([&](ctjs::CreateClosureOp made) {
-            ctjs::FuncOp target = targetOf(made);
-            if (!target) { return; }
-            ++closuresOf[target.getOperation()];
-            auto & into = starters[target.getOperation()];
-            for (mlir::OpOperand & use : made.getResult().getUses()) {
-                mlir::Operation * user = use.getOwner();
-                if (llvm::isa<ctjs::RootOp>(user)) { continue; }
-                if (onlyCallee(use)) {
-                    into.push_back(user);
-                    continue;
-                }
-                mlir::Operation * box = llvm::isa<ctjs::CreateCellOp>(user) ? user : nullptr;
-                if (auto set = llvm::dyn_cast<ctjs::CellSetOp>(user);
-                    set && use.getOperandNumber() == 1) {
-                    box = set.getCell().getDefiningOp();
-                }
-                const auto calls = box && box->getAttr(kNativeStaticCell)
-                                       ? through.find(box->getAttr(kNativeStaticCell))
-                                       : through.end();
-                if (calls != through.end() && calls->second) {
-                    llvm::append_range(into, *calls->second);
-                } else {
-                    into.push_back(made.getOperation());
-                }
-            }
-        });
-        if (auto uses = mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())) {
-            for (const mlir::SymbolTable::SymbolUse & use : *uses) {
-                if (auto * named = mlir::SymbolTable::lookupNearestSymbolFrom(module.getOperation(),
-                                                                              use.getSymbolRef())) {
-                    starters[named].push_back(use.getUser());
-                }
-            }
-        }
-    };
-    index();
+    indexStarters();
 
     bool changed = false;
     for (auto & [symbol, cells] : bySymbol) {
@@ -191,7 +294,15 @@ bool closureLifter::bindSingletonMethods(liftReport & out) {
         if (!usable) { continue; }
 
         // Condition 3: every read is the receiver of calls through fields
-        // that hold a capture-free closure of a function needing no receiver.
+        // that hold a capture-free closure. The called function reads no
+        // new.target, uses its own closure only to create nested closures (it
+        // has no captures for them to find through it), and uses its receiver
+        // only as a read is used: as the receiver of calls through the
+        // literal's fields (`this.find(...)`), or as the lexical `this` of an
+        // arrow that never reads it. Such a receiver is the literal
+        // only when every call of the method goes through it, so the method's
+        // closure must be held by the literal alone; its receiver is then
+        // checked like a read, and its calls become direct too.
         struct methodCall {
             ctjs::CallOp call;
             ctjs::GetPropertyOp load;
@@ -200,8 +311,14 @@ bool closureLifter::bindSingletonMethods(liftReport & out) {
         };
         llvm::SmallVector<methodCall> calls;
         llvm::SmallPtrSet<mlir::Operation *, 8> receiving;
-        for (ctjs::CellGetOp read : reads) {
-            for (mlir::OpOperand & use : read.getResult().getUses()) {
+        // Each value naming the literal: the reads, then the receivers of
+        // methods that use theirs, with the key of that method.
+        llvm::SmallVector<std::pair<mlir::Value, llvm::StringRef>> tables;
+        for (ctjs::CellGetOp read : reads) { tables.push_back({read.getResult(), {}}); }
+        llvm::DenseSet<mlir::Operation *> checked;
+        for (std::size_t next = 0; next < tables.size() && usable; ++next) {
+            auto [table, method] = tables[next];
+            for (mlir::OpOperand & use : table.getUses()) {
                 mlir::Operation * user = use.getOwner();
                 if (llvm::isa<ctjs::RootOp>(user)) { continue; }
                 if (llvm::isa<ctjs::CallOp>(user) && use.getOperandNumber() == 1) {
@@ -209,6 +326,17 @@ bool closureLifter::bindSingletonMethods(liftReport & out) {
                     // method calls found through a load.
                     receiving.insert(user);
                     continue;
+                }
+                // Every arrow a method creates captures the method's receiver
+                // as its lexical `this`; one that never reads it does not
+                // read the literal.
+                if (auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(user);
+                    made && !method.empty() && use.getOperandNumber() == 1) {
+                    ctjs::FuncOp inner = targetOf(made);
+                    if (inner && !inner.getBody().empty() &&
+                        inner.getBody().front().getArgument(ctjs::arg_receiver).use_empty()) {
+                        continue;
+                    }
                 }
                 auto load = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
                 const llvm::StringRef key =
@@ -219,19 +347,21 @@ bool closureLifter::bindSingletonMethods(liftReport & out) {
                                    : ctjs::CreateClosureOp{};
                 ctjs::FuncOp target = closure ? targetOf(closure) : ctjs::FuncOp{};
                 const auto where =
-                    (" in `" + read->getParentOfType<ctjs::FuncOp>().getSymName() + "`").str();
-                if (!load || load.getObject() != read.getResult()) {
+                    (" in `" +
+                     table.getParentRegion()->getParentOfType<ctjs::FuncOp>().getSymName() + "`")
+                        .str();
+                // A method's receiver used other than to call the literal's
+                // methods is read some other way.
+                if (!method.empty() && (!load || load.getObject() != table || !target)) {
+                    refuse("the method `" + method +
+                           "` reads its receiver, new.target or its own closure");
+                } else if (!load || load.getObject() != table) {
                     refuse("a read reaches `" + user->getName().getStringRef() + "`" + where);
                 } else if (!target) {
                     refuse("a read loads `" + key + "`, which is not a function field" + where);
                 } else if (!closure.getUpvalues().empty()) {
                     refuse("the method `" + key + "` still captures a binding");
-                } else if (target.getBody().empty() ||
-                           llvm::any_of(target.getBody().front().getArguments().take_front(
-                                            ctjs::implicit_arguments),
-                                        [](mlir::BlockArgument argument) {
-                                            return !argument.use_empty();
-                                        })) {
+                } else if (!readsOnlyItsTable(target, closure, stored)) {
                     refuse("the method `" + key +
                            "` reads its receiver, new.target or its own closure");
                 }
@@ -239,11 +369,15 @@ bool closureLifter::bindSingletonMethods(liftReport & out) {
                     usable = false;
                     break;
                 }
+                if (checked.insert(target.getOperation()).second) {
+                    const mlir::Value self =
+                        target.getBody().front().getArgument(ctjs::arg_receiver);
+                    if (!self.use_empty()) { tables.push_back({self, key}); }
+                }
                 for (mlir::OpOperand & loaded : load.getResult().getUses()) {
                     auto call = llvm::dyn_cast<ctjs::CallOp>(loaded.getOwner());
                     if (llvm::isa<ctjs::RootOp>(loaded.getOwner())) { continue; }
-                    if (!call || loaded.getOperandNumber() != 0 ||
-                        call.getReceiver() != read.getResult()) {
+                    if (!call || loaded.getOperandNumber() != 0 || call.getReceiver() != table) {
                         refuse("the method `" + key + "` is read as a value" + where);
                         usable = false;
                         break;
@@ -257,7 +391,6 @@ bool closureLifter::bindSingletonMethods(liftReport & out) {
                 }
                 if (!usable) { break; }
             }
-            if (!usable) { break; }
         }
         if (!usable) { continue; }
         if (!llvm::all_of(receiving, [&](mlir::Operation * call) {
@@ -283,38 +416,8 @@ bool closureLifter::bindSingletonMethods(liftReport & out) {
                 fieldCalls[m.target.getOperation()].push_back(m.call);
             }
         }
-        mlir::Block * body = write->getBlock();
-        const auto after = [&](mlir::Operation * op) {
-            llvm::SmallVector<mlir::Operation *> pending{op};
-            llvm::DenseSet<mlir::Operation *> seen;
-            while (!pending.empty()) {
-                mlir::Operation * at = pending.pop_back_val();
-                if (!seen.insert(at).second) { continue; }
-                if (seen.size() > 256) { return false; }
-                auto holder = at->getParentOfType<ctjs::FuncOp>();
-                if (!holder) { return false; }
-                if (holder == function) {
-                    mlir::Operation * level = enclosingIn(at, body);
-                    if (!level || level == write || !write->isBeforeInBlock(level)) {
-                        return false;
-                    }
-                    continue;
-                }
-                if (const auto field = fieldCalls.find(holder.getOperation());
-                    field != fieldCalls.end()) {
-                    pending.append(field->second.begin(), field->second.end());
-                    continue;
-                }
-                // Nothing known starts it: the script entry, or a function
-                // the host may call.
-                const auto found = starters.find(holder.getOperation());
-                if (found == starters.end()) { return false; }
-                pending.append(found->second.begin(), found->second.end());
-            }
-            return true;
-        };
-        if (const auto early =
-                llvm::find_if(reads, [&](ctjs::CellGetOp read) { return !after(read); });
+        if (const auto early = llvm::find_if(
+                reads, [&](ctjs::CellGetOp read) { return !runsAfter(read, write, fieldCalls); });
             early != reads.end()) {
             refuse("a read in `" +
                    early->getOperation()->getParentOfType<ctjs::FuncOp>().getSymName() +
@@ -322,8 +425,10 @@ bool closureLifter::bindSingletonMethods(liftReport & out) {
             continue;
         }
 
-        // The rewrite. No target reads its receiver, so each call passes
-        // `undefined` for it; then nothing reads the binding any more, and the
+        // The rewrite. A target's receiver is only ever the receiver of calls
+        // rewritten here, so each call passes `undefined` for it, and for the
+        // callee, which only creates nested closures that capture nothing
+        // through it; then nothing reads the binding any more, and the
         // literal, its write and the closures only it held are erased.
         for (methodCall & m : calls) {
             mlir::OpBuilder at(m.call);
@@ -368,9 +473,94 @@ bool closureLifter::bindSingletonMethods(liftReport & out) {
             }
         }
         changed = true;
-        index();
+        indexStarters();
     }
     return changed;
+}
+
+void closureLifter::markStaticClassReads() {
+    llvm::MapVector<mlir::StringAttr, llvm::SmallVector<ctjs::CreateCellOp>> bySymbol;
+    module.walk([&](ctjs::CreateCellOp cell) {
+        if (auto symbol = cell->getAttrOfType<mlir::StringAttr>(kNativeStaticCell)) {
+            bySymbol[symbol].push_back(cell);
+        }
+    });
+    if (bySymbol.empty()) { return; }
+    indexStarters();
+    const llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> noFields;
+    for (auto & [symbol, cells] : bySymbol) {
+        // One owning box, as for a method table.
+        ctjs::CreateCellOp owner;
+        for (ctjs::CreateCellOp cell : cells) {
+            if (cell->hasAttr(kNativeStaticReference)) { continue; }
+            if (owner) {
+                owner = {};
+                break;
+            }
+            owner = cell;
+        }
+        if (!owner || !ctjs::constantAttr<ctjs::UndefinedAttr>(owner.getInitial())) { continue; }
+        auto function = owner->getParentOfType<ctjs::FuncOp>();
+        llvm::SmallVector<ctjs::CellSetOp> writes;
+        llvm::SmallVector<ctjs::CellGetOp> reads;
+        bool usable = true;
+        for (ctjs::CreateCellOp cell : cells) {
+            for (mlir::OpOperand & use : cell.getResult().getUses()) {
+                switch (classify(use)) {
+                case cellUse::read:
+                    reads.push_back(llvm::cast<ctjs::CellGetOp>(use.getOwner()));
+                    break;
+                case cellUse::write:
+                    writes.push_back(llvm::cast<ctjs::CellSetOp>(use.getOwner()));
+                    break;
+                default: usable = usable && llvm::isa<ctjs::RootOp>(use.getOwner()); break;
+                }
+            }
+        }
+        if (!usable || writes.empty() || reads.empty()) { continue; }
+        auto closure = writes.front().getValue().getDefiningOp<ctjs::CreateClosureOp>();
+        ctjs::FuncOp target = closure ? targetOf(closure) : ctjs::FuncOp{};
+        if (!target || closure->getParentOfType<ctjs::FuncOp>() != function) { continue; }
+        // Only a binding read as the class a `new` constructs.
+        const bool constructedOnly = llvm::all_of(reads, [](ctjs::CellGetOp read) {
+            return llvm::all_of(read.getResult().getUses(), [&](mlir::OpOperand & use) {
+                auto made = llvm::dyn_cast<ctjs::ConstructOp>(use.getOwner());
+                return llvm::isa<ctjs::RootOp>(use.getOwner()) ||
+                       (made && made.getCallee() == read.getResult() &&
+                        made.getNewTarget() == read.getResult());
+            });
+        });
+        if (!constructedOnly) { continue; }
+        const auto refuse = [&](const llvm::Twine & why) {
+            owner->setAttr(kNativeStaticClassReason, mlir::StringAttr::get(context, why));
+        };
+        const auto where = [](mlir::Operation * op) {
+            return ("`" + op->getParentOfType<ctjs::FuncOp>().getSymName() + "`").str();
+        };
+        // Every write stores that one closure, in one block of the owner
+        // (RunOnce.cpp keeps a binding written with anything else a capture).
+        // The last write is the class definition's, after the prototype is
+        // built.
+        mlir::Operation * last = writes.front();
+        for (ctjs::CellSetOp write : writes) {
+            usable = usable && write.getValue() == closure.getResult() &&
+                     write->getBlock() == last->getBlock();
+            if (usable && last->isBeforeInBlock(write)) { last = write; }
+        }
+        if (!usable) { continue; }
+        // A read that could run before the last write could find
+        // `undefined`, or a class whose prototype is not built yet.
+        if (const auto early = llvm::find_if(
+                reads, [&](ctjs::CellGetOp read) { return !runsAfter(read, last, noFields); });
+            early != reads.end()) {
+            refuse("a read in " + where(early->getOperation()) +
+                   " can run before the class is written");
+            continue;
+        }
+        const mlir::StringAttr name = target.getSymNameAttr();
+        for (ctjs::CellGetOp read : reads) { read->setAttr(kNativeStaticClass, name); }
+        for (ctjs::CellSetOp write : writes) { write->setAttr(kNativeStaticClass, name); }
+    }
 }
 
 } // namespace ctcompile::ctnative::lowering_detail

@@ -92,54 +92,68 @@ def main(argv=None):
         raise RuntimeError("Bootstrap R.find source pin changed")
     compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
-    refusals = 0
-    for kind in ("direct", "explicit", "omitted", "undefined"):
+
+    def prepare(kind):
         ir, contract = dom.prepare(args, kind, source(kind), 2, entry_name="findElements")
         contract.update(current_document_parameter=0, initial_intrinsics=INTRINSICS)
-        for owned, optimize, manifest in dom.variants(contract):
-            name = f"element-iteration-{kind}-{owned}-{optimize}"
-            native = dom.lower(args, ir, manifest, name, optimize=optimize)
-            text = dom.run([args.translate, "--mlir-to-cpp", str(native)]).stdout
-            if "std::vector<ctnative::js_element_t>" not in text or any(
-                helper in text for helper in INTRINSICS[4:]
-            ):
-                raise RuntimeError(f"{name}: iterator protocol survived typed snapshot lowering")
-            client = (
-                CURRENT_DOCUMENT_CHECKS
-                + indexed.CHECKS
-                + INPUT_CHECKS
-                + (indexed.OWNED_CHECKS if owned else "")
-            )
-            client = client.replace(
-                "@DEFAULT@", "true" if kind in ("omitted", "undefined") else "false"
-            )
-            dom.standalone(args, native, name, client, compilers, includes, libraries)
+        return [
+            (f"element-iteration-{kind}-{owned}-{optimize}", kind, ir, owned, optimize, manifest)
+            for owned, optimize, manifest in dom.variants(contract)
+        ]
+
+    def check_variant(variant):
+        """One provider/policy variant: its native run and refusal controls."""
+        name, kind, ir, owned, optimize, manifest = variant
+        native = dom.lower(args, ir, manifest, name, optimize=optimize)
+        text = dom.run([args.translate, "--mlir-to-cpp", str(native)]).stdout
+        if "std::vector<ctnative::js_element_t>" not in text or any(
+            helper in text for helper in INTRINSICS[4:]
+        ):
+            raise RuntimeError(f"{name}: iterator protocol survived typed snapshot lowering")
+        client = (
+            CURRENT_DOCUMENT_CHECKS
+            + indexed.CHECKS
+            + INPUT_CHECKS
+            + (indexed.OWNED_CHECKS if owned else "")
+        )
+        client = client.replace(
+            "@DEFAULT@", "true" if kind in ("omitted", "undefined") else "false"
+        )
+        dom.standalone(args, native, name, client, compilers, includes, libraries)
+        dom.lower(
+            args,
+            ir,
+            manifest,
+            name + "-budget",
+            max_steps=0,
+            optimize=optimize,
+            success=False,
+        )
+        for intrinsic in INTRINSICS[4:] + ["Array", "Element"]:
             dom.lower(
                 args,
                 ir,
-                manifest,
-                name + "-budget",
-                max_steps=0,
+                without_intrinsic(manifest, intrinsic),
+                name + "-missing-" + intrinsic,
                 optimize=optimize,
                 success=False,
             )
-            refusals += 1
-            for intrinsic in INTRINSICS[4:] + ["Array", "Element"]:
-                dom.lower(
-                    args,
-                    ir,
-                    without_intrinsic(manifest, intrinsic),
-                    name + "-missing-" + intrinsic,
-                    optimize=optimize,
-                    success=False,
-                )
-                refusals += 1
-    for name, body in REFUSALS.items():
+        return 1 + len(INTRINSICS[4:]) + 2
+
+    def refuse(row):
+        name, body = row
         text = f"function bad(anchor, expected) {{ const R={{{indexed.FIND}}}; {body} }}\n"
         ir, manifest = dom.prepare(args, name, text, 2, entry_name="bad")
         manifest.update(current_document_parameter=0, initial_intrinsics=INTRINSICS)
         dom.refuse(args, ir, manifest, f"refused-{name}")
-        refusals += 2  # dom.refuse lowers with and without optimization.
+        return 2  # dom.refuse lowers with and without optimization.
+
+    # Every kind, variant and refusal writes only files named after itself, so
+    # they run side by side (dom.parallel).
+    kinds = [(kind,) for kind in ("direct", "explicit", "omitted", "undefined")]
+    variants = [row for rows in dom.parallel(lambda k: prepare(k[0]), kinds) for row in rows]
+    refusals = sum(dom.parallel(check_variant, variants))
+    refusals += sum(dom.parallel(refuse, REFUSALS.items()))
     indexed.unguarded_default(args, UNGUARDED_DEFAULT, INTRINSICS, compilers, includes, libraries)
     print(f"Element for-of: 72 native executions, {refusals} refusals; DOM/Core/Style only")
 

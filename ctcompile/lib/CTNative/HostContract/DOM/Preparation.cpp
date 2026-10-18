@@ -325,6 +325,7 @@ llvm::Error liftDOMClasses(mlir::ModuleOp module, unsigned maxSteps) {
     });
     if (counted.wasInterrupted()) { return refuse("DOM class lifting work budget exhausted"); }
     lowering_detail::closureLifter lifter{module};
+    lifter.specialiseCallbacks = false;
     lifter.discardNativeSourceFacts();
     lifter.run();
     for (mlir::Operation * operation : lifter.lifted) {

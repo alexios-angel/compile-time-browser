@@ -1,0 +1,26 @@
+# A transitionend listener that removes itself, with the timer that dispatches
+# the end when no transition ended, runs natively as it runs on the
+# interpreter, with no VM linked into the native builds (clang and GCC).
+# RUN: %{obj}/ctcompile-test-transitions %S/transitions.html %S/transitions.js > %t.vm
+# RUN: env CTBROWSER_TEST_ENGINE=native %{obj}/ctcompile-test-transitions-native %S/transitions.html %S/transitions.js > %t.native
+# RUN: diff %t.vm %t.native
+# RUN: env CTBROWSER_TEST_ENGINE=native %{obj}/ctcompile-test-transitions-native-gcc %S/transitions.html %S/transitions.js > %t.gcc
+# RUN: diff %t.vm %t.gcc
+# RUN: FileCheck %s --input-file %t.native
+# RUN: FileCheck %s --check-prefix=SPELLING --input-file %{obj}/transitions.generated.cpp
+# RUN: %nm -C %{obj}/ctcompile-test-transitions-native | not grep -E "ctbrowser::script::"
+# RUN: %nm -C %{obj}/ctcompile-test-transitions-native-gcc | not grep -E "ctbrowser::script::"
+# CHECK: {{^}}log= ends=0{{$}}
+# CHECK-NEXT: {{^}}+5: log=skip:a;skip:c;end:b; ends=1{{$}}
+# CHECK-NEXT: {{^}}+5: log=skip:a;skip:c;end:b;end:a;end:c; ends=1{{$}}
+# CHECK-NEXT: {{^}}+10: log=skip:a;skip:c;end:b;end:a;end:c; ends=1{{$}}
+# CHECK-NEXT: {{^}}+10: log=skip:a;skip:c;end:b;end:a;end:c; ends=1{{$}}
+# CHECK-NEXT: {{^}}+10: log=skip:a;skip:c;end:b;end:a;end:c; ends=2{{$}}
+# The listener is registered under a fresh identity, which it also receives
+# among its captures and removes itself by; the element it compares with the
+# event's target is a copy, though the listener writes `called`.
+# SPELLING: (ctnative::js_element_t v1, {{.*}}, ctnative::callable_identity [[SELF:v[0-9]+]], ctnative::js_event v{{[0-9]+}});
+# SPELLING: ctnative::callable_identity [[ID:v[0-9]+]] = ctnative::new_callable_identity();
+# SPELLING: auto [[BOUND:v[0-9]+]] = std::bind_front(fn_{{[0-9]+}}, {{.*}}, [[ID]]);
+# SPELLING-NEXT: ctnative::identified_listener([[ID]], [[BOUND]]);
+# SPELLING: ctnative::EventTarget.prototype.removeEventListener.call(v1, v{{[0-9]+}}, [[SELF]]);

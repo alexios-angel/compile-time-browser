@@ -119,6 +119,14 @@ struct to_lower_case_method {
     }
 };
 
+/// String.prototype.toUpperCase (ECMA-262 22.1.3.30): Unicode's default full
+/// uppercase (ß becomes SS), from the same core tables the VM uses.
+struct to_upper_case_method {
+    js_string call(const js_string & self) const {
+        return js_string{ctbrowser::unicode_case(self.value(), true)};
+    }
+};
+
 /// String.prototype.trim (ECMA-262 22.1.3.32): TrimString with both ends, over
 /// WhiteSpace and LineTerminator (the StrWhiteSpaceChar set).
 struct trim_method {
@@ -192,13 +200,35 @@ struct split_method {
     }
 };
 
+class reg_exp;
+
+/// String.prototype.replace with a RegExp and a function replacement, defined
+/// in RegExp.hpp, which only the programs that call it include.
+struct replace_method {
+    template <class Callback>
+    js_string call(const js_string & self, const reg_exp & pattern, Callback callback) const;
+    js_string call(const js_string & self, const reg_exp & pattern,
+                   const js_string & replacement) const;
+};
+
 /// The String.prototype methods native code calls, as stateless method
 /// objects: generated code reads `ctnative::String.prototype.trim.call(s)`,
 /// the JavaScript spelling. Only the methods the compiler lowers are here.
+class match_result;
+
+/// String.prototype.match with a RegExp without `g`, defined in RegExp.hpp,
+/// which only the programs that call it include.
+struct match_method {
+    match_result call(const js_string & self, const reg_exp & pattern) const;
+};
+
 struct string_prototype {
     to_lower_case_method toLowerCase;
+    to_upper_case_method toUpperCase;
     trim_method trim;
     split_method split;
+    replace_method replace;
+    match_method match;
 };
 /// The String constructor's members. `String(x)` conversion is not lowered,
 /// so it has no call operator.

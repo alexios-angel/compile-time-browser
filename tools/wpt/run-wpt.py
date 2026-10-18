@@ -708,61 +708,13 @@ def pinned_commit():
     return found.group(1) if found else None
 
 
-# --- the negative proofs ----------------------------------------------------
-#
-# THE INSTRUMENT IS NOT EVIDENCE UNTIL IT HAS BEEN SEEN TO FAIL. Every fixture
-# in tools/wpt/selftest/ has one required outcome, asserted here rather than
-# read off a table by eye. A run of these that passes is what makes a run of the
-# real corpus mean anything - and each of the four failure modes below has, at
-# some point in this file's life, been reported as a pass by something.
-SELFTESTS = [
-    ("selftest/must-pass.html", Outcome.PASS, 2, {"PASS": 2}),
-    ("selftest/must-fail.html", Outcome.FAIL, 2, {"PASS": 1, "FAIL": 1}),
-    ("selftest/never-done.html", Outcome.TIMEOUT, None, None),
-    ("selftest/throws-on-load.html", Outcome.HARNESS_ERROR, None, None),
-    ("selftest/no-harness.html", Outcome.HARNESS_ERROR, 0, {}),
-    ("selftest/testdriver.html", Outcome.PASS, 2, {"PASS": 2}),
-]
-
-
 def selftest(driver: Path, wpt: Path, memory_mb: int) -> int:
+    """Run the negative proofs in test_run_wpt.py; return 1 if any outcome is wrong."""
+    sys.path.insert(0, str(HERE.parent / "check"))
+    import selftest as runner
+
     print("SELF-TEST: does this harness report a failure as a failure?\n")
-    print(f"{'fixture':<34}{'want':>15}{'got':>15}   subtests")
-    print("-" * 86)
-    bad = 0
-    for rel, want, want_subs, want_status in SELFTESTS:
-        page = SELFTEST_DIR / Path(rel).name
-        plan = Plan(rel, page=page, timeout=TIMEOUT_NORMAL)
-        got = run_one(plan, driver, wpt, memory_mb)
-        seen = {}
-        for one in got.subtests:
-            seen[one.get("status")] = seen.get(one.get("status"), 0) + 1
-        ok = got.status == want
-        if want_subs is not None and len(got.subtests) != want_subs:
-            ok = False
-        if want_status is not None and seen != want_status:
-            ok = False
-        print(
-            f"{Path(rel).name:<34}{want:>15}{got.status:>15}   "
-            f"{len(got.subtests)} {seen or ''}  {'ok' if ok else 'WRONG'}"
-        )
-        if not ok:
-            bad += 1
-            print(f"    message: {got.message[:200]}")
-            print(f"    driver log: {got.log.strip()[-400:]}")
-    print("-" * 86)
-    if bad:
-        print(
-            f"\n{bad} of {len(SELFTESTS)} self-tests reported the wrong outcome. "
-            "The harness is NOT load-bearing until they all pass."
-        )
-        return 1
-    print(
-        f"\nall {len(SELFTESTS)} self-tests reported the outcome they must: a failing "
-        "test fails, a page that never finishes times out, and neither a page that "
-        "threw during load nor one with no harness at all is called a pass."
-    )
-    return 0
+    return runner.run(__file__, driver, wpt, memory_mb)
 
 
 def main():

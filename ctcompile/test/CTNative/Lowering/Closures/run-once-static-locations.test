@@ -1,0 +1,74 @@
+# Lowering a program must not depend on whether its locations were printed.
+#
+# Without --mlir-print-debuginfo a run-once static variable has no JavaScript
+# name to borrow, so every one is named `static_binding_N`; with it, each takes
+# its binding's name. Two run-once functions here each own a table, a data
+# binding and a box holding a function, so both naming rounds of
+# makeRunOnceCellsStatic name variables in both owners. Each way, every owner
+# cell must have its own name, and the same functions must be refused.
+# The names once collided only without locations, which made the table calls
+# indirect there and changed the refused set.
+#
+# RUN: split-file %s %t
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/two.js 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/plain.mlir
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/two.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/located.mlir
+#
+# Owner cells (not the per-function references) named twice: none, each way.
+# RUN: grep ctnative.static_cell %t/plain.mlir | grep -v static_reference \
+# RUN:   | grep -o 'static_cell = "[^"]*"' | sort | uniq -d > %t/plain.dup
+# RUN: not grep . %t/plain.dup
+# RUN: grep ctnative.static_cell %t/located.mlir | grep -v static_reference \
+# RUN:   | grep -o 'static_cell = "[^"]*"' | sort | uniq -d > %t/located.dup
+# RUN: not grep . %t/located.dup
+# Six owner cells each way, so the comparison above saw the statics.
+# RUN: grep ctnative.static_cell %t/plain.mlir | grep -v static_reference | grep -c . \
+# RUN:   | FileCheck %s --check-prefix=SIX
+# RUN: grep ctnative.static_cell %t/located.mlir | grep -v static_reference | grep -c . \
+# RUN:   | FileCheck %s --check-prefix=SIX
+# SIX: {{^}}6{{$}}
+#
+# The same refused functions both ways, and the table methods called directly.
+# RUN: grep ctnative.not_native %t/plain.mlir | grep -o 'ctjs.func [a-z ]*@[^(]*' | sort > %t/plain.refused
+# RUN: grep ctnative.not_native %t/located.mlir | grep -o 'ctjs.func [a-z ]*@[^(]*' | sort > %t/located.refused
+# RUN: diff %t/plain.refused %t/located.refused
+# RUN: FileCheck %s --check-prefix=DIRECT < %t/plain.mlir
+# RUN: FileCheck %s --check-prefix=DIRECT < %t/located.mlir
+# DIRECT-DAG: ctjs.call_direct @fn$2(
+# DIRECT-DAG: ctjs.call_direct @fn$7(
+
+#--- two.js
+var first = (function () {
+    const Data = {
+        twice(n) {
+            return n * 2;
+        }
+    };
+    let count = 0;
+    let step = function (n) { return n + count; };
+    return {
+        run(n) {
+            count = count + 1;
+            step = function (m) { return m - count; };
+            return Data.twice(step(n));
+        }
+    };
+})();
+var second = (function () {
+    const Table = {
+        half(n) {
+            return n / 2;
+        }
+    };
+    let total = 10;
+    let pick = function (n) { return n * total; };
+    return {
+        run(n) {
+            total = total - 1;
+            pick = function (m) { return m + total; };
+            return Table.half(pick(n));
+        }
+    };
+})();
+var r = first.run(5) + second.run(4);

@@ -1,0 +1,57 @@
+# JSON.stringify of an object literal, as css-dump.js writes its header line:
+# the literal stays a closed-shape struct and the call serializes its fields
+# with ctnative::JSON.stringify(ctnative::json_record("v", ..., ...)), keys in
+# the order the literal defined them, Numbers as ToString (NaN and the
+# infinities as null, -0 as 0) and Strings quoted. The answers match the
+# interpreter's under GCC and Clang, and a mutation of `head` must be caught.
+# A literal with an array-index key, a field written after the call, and an
+# undefined field stay refused.
+# RUN: split-file %s %t
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
+# RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/runtime.mlir
+# RUN: %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name json_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/runtime.mlir --js %t/values.js --work %t --name json_clang --core-build %build
+# RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name json_mutation --mutate head --mutate-as string --core-build %build 2>&1 | FileCheck %s --check-prefix=MUTATION
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/refused.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+
+# NATIVE-DAG: ctnative::json_record
+# NATIVE-DAG: ctnative::JSON.stringify
+# MUTATION: global 'head' differs
+# An array-index key is not a constant-key field, so the literal is not a
+# closed shape at all.
+# REFUSED: ctjs.func private @indexed$1
+# REFUSED-SAME: ctnative.not_native = "an object literal
+# REFUSED: ctjs.func private @late$2
+# REFUSED-SAME: ctnative.not_native = "JSON.stringify of an object literal: its field `late` is not written in its own block before the call"
+# REFUSED: ctjs.func private @absent$3
+# REFUSED-SAME: ctnative.not_native = "JSON.stringify of an object literal whose field `u` is {{.*}}, not a Number, String or Boolean"
+
+#--- values.js
+function header(version, rows, label) {
+    return JSON.stringify({
+        v: version,
+        n: rows,
+        s: label,
+        ok: rows > 2,
+        neg: -0 * version,
+        inf: version / 0,
+        v2: version + 1
+    });
+}
+var head = header(3, 5, 'a"b\n') + header(0, 1, '');
+
+#--- refused.js
+function indexed(x) {
+    return JSON.stringify({a: x, 1: x});
+}
+function late(x) {
+    var o = {a: x, late: 0};
+    var s = JSON.stringify(o);
+    o.late = x;
+    return s + o.late;
+}
+function absent(x) {
+    return JSON.stringify({a: x, u: undefined});
+}
+var refused = indexed(1) + late(2) + absent(3);

@@ -24,6 +24,9 @@
 // LOOSE: ctnative.not_native = "loose object equality may invoke object-to-primitive conversion"
 // REFUSED: ctnative.not_native =
 // SNAPSHOT: ctnative.not_native = "native Map snapshot requires confined numeric or string elements"
+// Each hand-written module's one function is index 0, the script entry, so
+// reachability keeps it as a root instead of removing a refused function
+// nothing calls (forged.mlir, and every split of poison.mlir).
 // FORGED: ctnative.not_native =
 // FORGED: identity-only Map value has an unsupported use through `ctjs.set_property`
 
@@ -59,7 +62,7 @@ probe();
 
 //--- forged.mlir
 module {
-  ctjs.func @field$1(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+  ctjs.func @field$0(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %object = ctjs.create_object {ctnative.object_identity}
     %field = ctjs.constant #ctjs.string<"__proto__">
     %one = ctjs.constant #ctjs.number<1>
@@ -75,11 +78,11 @@ module {
 
 //--- poison.mlir
 // The loop exits at once carrying the else arm's `ub.poison`, and that exit value is compared.
-// POISON-LABEL: ctjs.func @exit_observed$1
+// POISON-LABEL: ctjs.func @exit_observed$0
 // POISON-SAME: ctnative.not_native
 // POISON: non-object producer `ub.poison`
 module {
-  ctjs.func @exit_observed$1(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+  ctjs.func @exit_observed$0(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %poison = ub.poison : !ctjs.value
     %yes = arith.constant true
     %no = arith.constant false
@@ -109,11 +112,11 @@ module {
 }
 
 // -----
-// POISON-LABEL: ctjs.func @next_observed$1
+// POISON-LABEL: ctjs.func @next_observed$0
 // POISON-SAME: ctnative.not_native
 // POISON: non-object producer `ub.poison`
 module {
-  ctjs.func @next_observed$1(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+  ctjs.func @next_observed$0(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %poison = ub.poison : !ctjs.value
     %yes = arith.constant true
     %no = arith.constant false
@@ -143,11 +146,11 @@ module {
 }
 
 // -----
-// POISON-LABEL: ctjs.func @unrelated_flag$1
+// POISON-LABEL: ctjs.func @unrelated_flag$0
 // POISON-SAME: ctnative.not_native
 // POISON: non-object producer `ub.poison`
 module {
-  ctjs.func @unrelated_flag$1(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+  ctjs.func @unrelated_flag$0(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %poison = ub.poison : !ctjs.value
     %yes = arith.constant true
     %no = arith.constant false
