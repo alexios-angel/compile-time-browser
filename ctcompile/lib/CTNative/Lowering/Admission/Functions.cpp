@@ -136,6 +136,9 @@ bool admission::function(ctjs::FuncOp fn) {
         // A borrowed callback parameter is a ctnative::function_ref; the calls
         // through it are admitted one by one (BorrowedCallbacks.cpp).
         if (isBorrowedParameter(entry.getArgument(i))) { continue; }
+        // A listener's own identity is a ctnative::callable_identity, which
+        // only its removals of itself read (ClosureLifting/HostCallbacks.cpp).
+        if (isListenerSelfParameter(entry.getArgument(i))) { continue; }
         // Object parameters get the receiver's check. Their carrier is the
         // generated class one indirection away, so `carrierOf` has no row for
         // them and the check below would refuse every one; what has to hold is
@@ -201,9 +204,12 @@ bool admission::function(ctjs::FuncOp fn) {
         if (nativeDictionaryAction(o) == "plumbing") { return; }
         if (domEntry && domBookkeeping(*domEntry, o)) { return; }
         if (o->getNumResults() == 1 && lowersToNothing(o->getResult(0))) { return; }
-        // An object literal, or a record its callee returned, is its class.
+        // An object literal, a record its callee returned, or a read of a
+        // field that owns an instance by value, is its class.
         if (llvm::isa<ctjs::CreateObjectOp>(o) ||
-            (o->getNumResults() == 1 && TypeInference::isRecordCall(o->getResult(0)))) {
+            (o->getNumResults() == 1 && TypeInference::isRecordCall(o->getResult(0))) ||
+            (llvm::isa<ctjs::GetPropertyOp>(o) && o->hasAttr(kNativeOwnedInstance) &&
+             TypeInference::hasClosedShape(o->getResult(0)))) {
             return;
         }
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o);

@@ -3,7 +3,7 @@
 // A closed-shape field whose writes and reads join to an optional String, or
 // to a union of String with Boolean or Number, is stored as that union's
 // carrier (nullable_string, boolean_string, nullable_number_string, ...): one
-// std::variant-like member that keeps the JavaScript type of each value.
+// member whose tag keeps the JavaScript type of each value.
 // A component's options are such fields: `pause` is a String or a Boolean.
 // So is an element that may be null (`parent: null`, later an element), whose
 // carrier is the optional element view (nullable_element).

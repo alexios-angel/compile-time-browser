@@ -39,6 +39,7 @@ liftReport closureLifter::run() {
         op->removeAttr(kNativeHostIdentity);
         op->removeAttr(kNativeHostIdentified);
         op->removeAttr(kNativeHostRemove);
+        op->removeAttr(kNativeListenerSelf);
     });
     // Bind local functions directly (specializeCallbacks, bindLocalFunctions)
     // before any census. These rewrites erase boxes, stores, reads and calls,
@@ -47,6 +48,9 @@ liftReport closureLifter::run() {
     // indexAndNewTargets() supplies the two census walks they need.
     indexAndNewTargets();
     captureLexicalThis(); // ArrowThis.cpp: an arrow's `this` becomes a capture.
+    // A callback handed to Bootstrap's execute helper is called directly
+    // (ExecuteCalls.cpp), before the binding rules below read the calls.
+    callExecutedFunctions();
     // Bindings of functions that run once, which a closure the lift would
     // refuse captures, become static variables first (RunOnce.cpp), so those
     // closures no longer capture them. Boxes holding a function wait for a
@@ -90,6 +94,9 @@ liftReport closureLifter::run() {
         }
     }
     bindLocalFunctions(out);
+    // A listener that removes itself through its own binding names itself
+    // directly (HostCallbacks.cpp), before the censuses read the binding.
+    bindSelfRemovingListeners();
     // A static variable holding a table of methods is called through
     // directly (Singletons.cpp). After the binding rule, which removes the
     // methods' captures of the functions it binds.
@@ -97,6 +104,9 @@ liftReport closureLifter::run() {
     // Static members of a class are called directly (ClassStatics.cpp), so
     // that the class census below can prove the class.
     bindClassStatics(out);
+    // A closure handed down a chain of functions to where it is stored is
+    // made there instead, in a copy of the chain per call (CallSiteCopies.cpp).
+    copyCallSitesForClosures();
     // A class held in a static variable is constructed by name where it is
     // read (Singletons.cpp), for the constructor census below.
     markStaticClassReads();
@@ -565,6 +575,17 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             // `produced.is_object_like() ? produced : self`, and
             // whyConstructorReturnsAnObject proved `produced` is never
             // object-like, so the answer is always `self`.
+            // A field of `this` that owns the instance by value, and its reads.
+            if (built.getResult().hasOneUse()) {
+                mlir::Operation * set = *built.getResult().getUsers().begin();
+                if (const auto owned = ownedStores.find(set); owned != ownedStores.end()) {
+                    const auto mark = mlir::UnitAttr::get(context);
+                    set->setAttr(kNativeOwnedInstance, mark);
+                    for (ctjs::GetPropertyOp read : owned->second) {
+                        read->setAttr(kNativeOwnedInstance, mark);
+                    }
+                }
+            }
             built.getResult().replaceAllUsesWith(instance.getResult());
             built.erase();
             if (staticRead) {

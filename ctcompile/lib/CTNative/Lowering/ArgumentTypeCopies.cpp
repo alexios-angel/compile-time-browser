@@ -3,8 +3,8 @@
 // A function called directly with values of different types, such as
 // Bootstrap's toType called with a Number at one site and a String at
 // another, has a parameter whose type is their union. A union of a String with
-// another kind has only a std::variant carrier, or none, and std::visit hides
-// the dispatch from the C++ compiler. When every call site passes a value of
+// another kind has only a String-union carrier, which tests its tag at every
+// use, or none. When every call site passes a value of
 // one exact type, the function is copied once per exact type instead: each
 // call goes to the copy for its argument's type, so each copy's parameter has
 // one type and the ordinary per-type helpers apply. The calls of the first
@@ -35,7 +35,7 @@ namespace ctcompile::ctnative::lowering_detail {
 
 namespace {
 
-/// Whether a value of `type` needs a std::variant carrier, or has no carrier:
+/// Whether a value of `type` needs a String-union carrier, or has no carrier:
 /// the parameter types a copy per argument type replaces.
 bool needsUnion(mlir::Type type) {
     const carrier held = carrierOf(type);

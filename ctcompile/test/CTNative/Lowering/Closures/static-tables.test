@@ -71,6 +71,9 @@
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/guarded.js --mlir-print-debuginfo 2>/dev/null \
 # RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 # RUN:   | FileCheck %s --check-prefix=GUARDED --implicit-check-not="holding an object literal"
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/passed.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+# RUN:   | FileCheck %s --check-prefix=PASSED
 
 # TABLE: emitc.include <"ctcompile/CTNative/Runtime/StaticTable.hpp">
 # TABLE: emitc.global static @static_config : !emitc.opaque<"ctnative::static_table_ptr">
@@ -94,15 +97,26 @@
 
 # A function with unstructured control flow (a try/catch the lift cannot
 # structure) is not a reader the proof checks: it is refused before
-# admission, and its direct call of `get` becomes a call through a closure,
-# so what it does with the table never reaches native code. `get` lowers and
-# returns the table, and the refusals name `guarded` and its caller. A
-# structured function's use is still checked (stored.js, argument.js).
-# GUARDED: ctjs.func private @fn$1
-# GUARDED-SAME: ctnative.not_native = "calls `guarded$3`, which is not native"
-# GUARDED: emitc.func @get_2() -> !emitc.opaque<"ctnative::static_table_ptr">
-# GUARDED: ctjs.func private @guarded$3
+# admission, and the direct call of the static getter that the class statics
+# rewrite made there becomes a call through a closure, so what it does with
+# the table never reaches native code. The getter lowers and returns the
+# table, and `guarded` is refused for its control flow. A structured
+# function's use is still checked (stored.js, argument.js).
+# GUARDED: emitc.func @fn_3() -> !emitc.opaque<"ctnative::static_table_ptr">
+# GUARDED: ctjs.func @guarded$5
 # GUARDED-SAME: ctnative.not_native = "unstructured control flow"
+
+# A function that returns the table (here a static getter) keeps it when one
+# of its callers uses the returned table in a way the proof does not take:
+# that caller is refused, with the reason the table would have had, at the
+# call (kNativeStaticTableUseRefusal), and the getter lowers. The function
+# the table is passed to reads a table its proof did not check, so it is
+# refused too.
+# PASSED: ctjs.func private @use$2
+# PASSED-SAME: ctnative.not_native = "a read of a run-once static's constant table that its proof did not check"
+# PASSED: emitc.func @fn_4() -> !emitc.opaque<"ctnative::static_table_ptr">
+# PASSED: ctjs.func private @passed$6
+# PASSED-SAME: ctnative.not_native = "it reads `config`, a static variable of a function that runs once, holding an object literal that is passed as an argument"
 
 # A spread of the table writes out one read per field. The first spread runs
 # before the run-once function stores the table, so it copies nothing and the
@@ -302,11 +316,30 @@ var r = (function () {
 #--- guarded.js
 var r = (function () {
     var config = {interval: 5000, pause: "hover"};
-    function get() { return config; }
-    function guarded() {
-        var o;
-        try { o = get(); } catch (e) { o = null; }
-        return o === null ? 0 : 1;
+    class Box {
+        constructor(v) { this.v = v; }
+        static get Default() { return config; }
+        size() { return this.v + this.constructor.Default.interval; }
+        guarded() {
+            var o = this.constructor.Default;
+            try { o = o.interval > 0 ? o : null; } catch (e) { o = null; }
+            return o === null ? 0 : 1;
+        }
     }
-    return get().interval + guarded();
+    const box = new Box(1);
+    return box.size() + box.guarded();
+})();
+
+#--- passed.js
+var r = (function () {
+    var config = {interval: 5000, pause: "hover"};
+    function use(o) { return o.interval; }
+    class Box {
+        constructor(v) { this.v = v; }
+        static get Default() { return config; }
+        size() { return this.v + this.constructor.Default.interval; }
+        passed() { return use(this.constructor.Default); }
+    }
+    const box = new Box(1);
+    return box.size() + box.passed();
 })();

@@ -6,6 +6,22 @@
 // RUN: ctjs-opt %t/unknown.mlir --ctnative-precompute | FileCheck %s --check-prefix=UNKNOWN
 // RUN: ctjs-opt %t/literals.mlir '--ctnative-precompute=max-steps=0' | FileCheck %s --check-prefix=BUDGET
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../Fixtures/Optimization/symbolic.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-precompute | FileCheck %s --check-prefix=SOURCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/bound.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-precompute | FileCheck %s --check-prefix=BOUND
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/rebound.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-precompute | FileCheck %s --check-prefix=REBOUND
+// A call through a binding that only ever holds one function's closure
+// returns what that function returns, and a cell read right after its write
+// reads the value written. So `if (found)` folds, and its branch goes with the
+// closure it makes; the call stays.
+// BOUND-LABEL: ctjs.func @check$2
+// BOUND: ctjs.call %{{[0-9]+}}(
+// BOUND-NOT: scf.if
+// BOUND-NOT: ctjs.create_closure
+// BOUND: ctjs.return
+// A binding that another function writes may hold either closure, so the
+// branch stays.
+// REBOUND-LABEL: ctjs.func @check$4
+// REBOUND: scf.if
+// REBOUND: ctjs.create_closure
 // The SOURCE checks read Fixtures/Optimization/symbolic.js, also checked end to end by its own
 // native-vs-reference test. Here, calls must remain even when every consumer of their
 // literal or boolean result folds.
@@ -246,3 +262,31 @@ module {
     ctjs.return %one
   }
 }
+
+//--- bound.js
+var r = (function () {
+    const probe = () => null;
+    function check() {
+        const found = probe();
+        if (found) {
+            return () => found;
+        }
+        return 1;
+    }
+    return check();
+})();
+
+//--- rebound.js
+var r = (function () {
+    let probe = () => null;
+    function swap() { probe = () => 1; }
+    function check() {
+        const found = probe();
+        if (found) {
+            return () => found;
+        }
+        return 1;
+    }
+    swap();
+    return check();
+})();

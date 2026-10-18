@@ -8,6 +8,7 @@
 #include "../Admission/Admission.h"
 #include "Emitter.h"
 #include "Runtime.h"
+#include "llvm/ADT/BitVector.h"
 
 #include <array>
 #include <string>
@@ -49,7 +50,26 @@ void lowering::finish() {
         // type becomes a class template: the varying fields' types are template
         // parameters listed in `ctnative.template_params`, an attribute only
         // ctcompile's patched C++ emitter reads.
-        for (const family & f : families) {
+        // A class whose field holds another class by value (an instance a
+        // field owns) needs that class defined first: a depth-first order
+        // over those fields, otherwise the census order.
+        llvm::StringMap<unsigned> byName;
+        for (unsigned i = 0; i < families.size(); ++i) { byName[families[i].name] = i; }
+        llvm::SmallVector<unsigned> order;
+        llvm::BitVector placed(static_cast<unsigned>(families.size()));
+        const auto place = [&](auto && self, unsigned i) -> void {
+            if (placed.test(i)) { return; }
+            placed.set(i);
+            for (mlir::Type type : families[i].types) {
+                auto opaque = llvm::dyn_cast_or_null<ec::OpaqueType>(type);
+                const auto member = opaque ? byName.find(opaque.getValue()) : byName.end();
+                if (member != byName.end()) { self(self, member->second); }
+            }
+            order.push_back(i);
+        };
+        for (unsigned i = 0; i < families.size(); ++i) { place(place, i); }
+        for (unsigned index : order) {
+            const family & f = families[index];
             auto cls = ec::ClassOp::create(b, module.getLoc(), f.name);
             cls->setAttr("ctnative.provenance", b.getStringAttr(provenanceOf(f)));
             if (f.varies.any()) {
@@ -87,6 +107,9 @@ void lowering::finish() {
             ec::DeclareFuncOp::create(b, f.getLoc(),
                                       mlir::FlatSymbolRefAttr::get(context, f.getSymName()));
         }
+        // A closure set whose member binds a receiver names that member's
+        // function, which only the prototypes above declare.
+        defineReceiverClosureSets(b); // ClosureSets.cpp
         if (!domSessionDefinition.empty()) { verbatim(b, domSessionDefinition); }
         for (const std::string & builder : callableBuilders) { verbatim(b, builder); }
     }

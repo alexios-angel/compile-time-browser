@@ -41,7 +41,10 @@ template <class K> bool check_zero_keys(K negative) {
         if constexpr (std::is_same_v<K, js_num>) {
             if (std::signbit(found->first)) { return false; }
         } else {
-            if (std::signbit(std::get<js_num>(found->first))) { return false; }
+            if (found->first.tag != ctnative::boolean_or_number::kind::number ||
+                std::signbit(found->first.value)) {
+                return false;
+            }
         }
         if (step == 0) { ctnative::map_set(map, positive, js_num{-0.0}); }
         if (step == 1) {
@@ -54,7 +57,7 @@ template <class K> bool check_zero_keys(K negative) {
 int main() {
     if (ctnative_test_entry() != 0) { return 90; }
     if (!check_zero_keys(js_num{-0.0})) { return 91; }
-    if (!check_zero_keys(std::variant<ctnative::js_boolean_t, js_num>{-0.0})) { return 92; }
+    if (!check_zero_keys(ctnative::boolean_or_number{-0.0})) { return 92; }
     return 0;
 }
 """
@@ -156,10 +159,7 @@ def main():
                 # spells its owning carrier, not the helper's definition.
                 assert "ctnative::nullable_string" in cpp
             if fixture == "mixed-values":
-                assert (
-                    "ctnative::make_map<double, std::variant<ctnative::js_boolean_t, std::string>>()"
-                    in cpp
-                )
+                assert "ctnative::make_map<double, ctnative::boolean_or_string>()" in cpp
                 assert len(re.findall(r"\bctnative::map_set\(", cpp)) == 2
                 assert "ctnative::map_size(" in cpp
             if fixture == "string-values":

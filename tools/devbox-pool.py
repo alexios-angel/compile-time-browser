@@ -34,7 +34,8 @@ validator's tree. Stopped boxes are skipped, not started.
 
 `status` shows each box's power state and free slots and, for a running box,
 its CPU (sampled over one second), memory and disk use, read with psutil
-on the box over Fabric.
+on the box over Fabric. A box that does not answer is looked up through its
+cloud's SDK (boto3, google-cloud-compute, ibm-vpc) with the ids in its terraform state.
 
 Run it from any worktree by its absolute path: it finds its settings beside
 itself, and COMMAND runs in the caller's working directory.
@@ -122,6 +123,17 @@ def acquire(settings, args):
         time.sleep(settings.get("poll_seconds", 10))
 
 
+def knows_build_load():
+    """Whether the calling worktree's remote-build passes CT_BUILD_LOAD on."""
+    try:
+        root = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"], check=True, capture_output=True, text=True
+        ).stdout.strip()
+        return "CT_BUILD_LOAD" in (Path(root) / "tools" / "remote_build.py").read_text()
+    except (OSError, subprocess.CalledProcessError):
+        return False
+
+
 def run(settings, args):
     if not args.command:
         sys.exit("devbox-pool: run needs a command after --")
@@ -139,7 +151,14 @@ def run(settings, args):
         env = dict(os.environ, DEVBOX_HOST=box["name"])
         # A box shared by several slots gives each job's build a share of the
         # cores (tools/remote-build.sh's -j); an explicit CT_BUILD_JOBS wins.
-        if "build_jobs" in box:
+        # With `build_load`, a remote-build.sh that knows CT_BUILD_LOAD lets
+        # every build use the whole box and has Ninja hold back new jobs
+        # while the load average is above it; an older one keeps build_jobs,
+        # since uncapped builds side by side can run the box out of memory.
+        if "build_load" in box and knows_build_load():
+            env.setdefault("CT_BUILD_JOBS", str(box["build_load"]))
+            env.setdefault("CT_BUILD_LOAD", str(box["build_load"]))
+        elif "build_jobs" in box:
             env.setdefault("CT_BUILD_JOBS", str(box["build_jobs"]))
         return subprocess.run(command, check=False, env=env).returncode
     finally:
@@ -211,10 +230,74 @@ def usage(box):
         return None
     gib = 1 << 30
     return (
-        f"CPU {u['cpu']:3.0f}% of {u['cores']} cores, "
+        f"CPU {u['cpu']:3.0f}% of {u['cores']} CPUs, "
         f"memory {u['mem_used'] / gib:.1f}/{u['mem_total'] / gib:.1f} GiB, "
         f"disk {u['disk_used'] / gib:.0f}/{u['disk_total'] / gib:.0f} GiB used"
     )
+
+
+def ibm_authenticator():
+    """IBMCLOUD_API_KEY when set, else the token of the `ibmcloud login` session."""
+    from ibm_cloud_sdk_core.authenticators import BearerTokenAuthenticator, IAMAuthenticator
+
+    if key := os.environ.get("IBMCLOUD_API_KEY"):
+        return IAMAuthenticator(key)
+    out = subprocess.run(
+        ["ibmcloud", "iam", "oauth-tokens", "--output", "json"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    return BearerTokenAuthenticator(json.loads(out)["iam_token"].removeprefix("Bearer "))
+
+
+def cloud_state(box):
+    """The box's power state, lowercased, from its cloud's API.
+
+    The instance comes from the terraform state beside the box's server.sh:
+    a `cloud` output of "ibm" means IBM Cloud, an `instance_id` output AWS,
+    a `project_id` output GCP.
+    """
+    from botocore.exceptions import BotoCoreError, ClientError
+    from google.api_core.exceptions import GoogleAPIError
+    from google.auth.exceptions import GoogleAuthError
+    from ibm_cloud_sdk_core import ApiException
+
+    state = Path(box["server"]).with_name("terraform.tfstate")
+    try:
+        out = {k: v["value"] for k, v in json.loads(state.read_text())["outputs"].items()}
+        if out.get("cloud") == "ibm":
+            from ibm_vpc import VpcV1
+
+            vpc = VpcV1(authenticator=ibm_authenticator())
+            vpc.set_service_url(f"https://{out['region']}.iaas.cloud.ibm.com/v1")
+            return vpc.get_instance(out["vsi_id"]).get_result()["status"]
+        if "instance_id" in out:
+            import boto3
+
+            ec2 = boto3.client("ec2", region_name=out["region"])
+            found = ec2.describe_instances(InstanceIds=[out["instance_id"]])
+            return found["Reservations"][0]["Instances"][0]["State"]["Name"]
+        from google.api_core.client_options import ClientOptions
+        from google.cloud import compute_v1
+
+        # Bill the call to the box's project, as pick-machine.py does, so
+        # end-user credentials need no quota project of their own.
+        options = ClientOptions(quota_project_id=out["project_id"])
+        instances = compute_v1.InstancesClient(client_options=options)
+        found = instances.get(project=out["project_id"], zone=out["zone"], instance=out["name"])
+        return found.status.lower()
+    except (
+        OSError,
+        KeyError,
+        ValueError,
+        BotoCoreError,
+        ClientError,
+        GoogleAPIError,
+        GoogleAuthError,
+        ApiException,
+    ) as e:
+        return f"unknown ({type(e).__name__})"
 
 
 def box_status(box):
@@ -226,13 +309,13 @@ def box_status(box):
             os.close(lock)
     round_ = ", round" if os.path.exists(box["round_marker"]) else ""
     slots = f"{free}/{len(slot_locks(box))} slots free{round_}"
-    # A box that answers is running, so the slow cloud status (16 s for AWS's
-    # server.sh) is asked only of a box that does not.
+    # A box that answers is running, so its cloud is asked only about a box
+    # that does not.
     if (load := usage(box)) is not None:
         return f"{box['name']:12s} running  {slots}; {load}"
-    if is_running(box):
-        return f"{box['name']:12s} running  {slots}; not answering over ssh"
-    return f"{box['name']:12s} stopped  {slots}"
+    state = cloud_state(box)
+    note = "; not answering over ssh" if state == "running" else ""
+    return f"{box['name']:12s} {state:8s} {slots}{note}"
 
 
 def status(settings):
