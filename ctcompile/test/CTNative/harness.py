@@ -117,15 +117,16 @@ def without_intrinsic(manifest, name):
     return dict(manifest, initial_intrinsics=kept)
 
 
-def native_args(description, *paths, parser=None):
+def native_args(description, *paths, parser=None, argv=None):
     """The usual driver command line, every option required: the four tools,
-    then --work (created) and `paths` as Paths; `parser` may bring more options."""
+    then --work (created) and `paths` as Paths; `parser` may bring more options.
+    `argv` is the command line, sys.argv by default."""
     parser = parser or argparse.ArgumentParser(description=description)
     for name in ("translate", "opt", "node", "reference"):
         parser.add_argument("--" + name, required=True)
     for name in ("work", *paths):
         parser.add_argument("--" + name, type=Path, required=True)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     args.work.mkdir(parents=True, exist_ok=True)
     return args
 

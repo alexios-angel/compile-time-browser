@@ -622,8 +622,8 @@ var result0 = observe(false), result1 = observe(true);
 """
 
 
-def main():
-    args = dom.parse_args(__doc__, oracles=True)
+def main(argv=None):
+    args = dom.parse_args(__doc__, oracles=True, argv=argv)
     compilers = args.compilers
     includes, libraries = dom.link_options(args)
 
@@ -1829,6 +1829,10 @@ var outcome0 = observe(false), outcome1 = observe(true);
                 )
 
     dom.parallel(check_source, (OUTER_SOURCES | RAW_HELPER_SOURCES).items())
+
+
+def test_caught_node(lit):
+    main(lit.args("%dom_driver --node %node --reference %native_reference"))
 
 
 if __name__ == "__main__":
