@@ -7,6 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "ctcompile/CTNative/Analysis/EscapeAnalysis.h"
+#include "ctcompile/CTNative/Analysis/Instances.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
@@ -154,6 +155,21 @@ bool storesOwnedInstance(mlir::OpOperand & use) {
            use.getOwner()->hasAttr(kNativeOwnedInstance);
 }
 
+/// True when `use` binds a registry instance's `this` into the host callback its
+/// ctjs.call registers. The callback captured it through an arrow's lexical
+/// `this`, which the registry proof let through only for arrows that read
+/// fields and call methods (Analysis/Instances.h kNativeHeldThis), and the
+/// host keeps the instance by its std::shared_ptr owner, so the shape stays
+/// the class's.
+bool bindsHeldThis(mlir::OpOperand & use) {
+    auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+    auto self = llvm::dyn_cast<mlir::BlockArgument>(use.get());
+    auto fn = self ? llvm::dyn_cast<ctjs::FuncOp>(self.getOwner()->getParentOp()) : ctjs::FuncOp{};
+    return call && call->hasAttr(kNativeHostCallback) && use.getOperandNumber() >= 2 && fn &&
+           self.getArgNumber() == ctjs::arg_receiver && self.getOwner()->isEntryBlock() &&
+           (fn->hasAttr(kNativeInstanceMethod) || fn->hasAttr(kNativeInstanceClass));
+}
+
 /// True when \p use passes the object as a lifted method's `this` or as a listed
 /// object argument. Such a use keeps the shape closed: closure lifting proved
 /// the callee reaches the object only through constant keys, and it marked the
@@ -202,7 +218,7 @@ bool TypeInference::hasClosedShape(mlir::Value object) {
                 return false;
             }
         } else if (!passesAReceiver(use) && !isNativeMapRecordStore(use) && !returnsRecord(user) &&
-                   !passesARecord(use)) {
+                   !passesARecord(use) && !bindsHeldThis(use)) {
             return false;
         }
     }

@@ -102,6 +102,15 @@ struct lowering {
     /// replaced is still known to be an instance by its C++ type.
     mlir::Type instanceType(mlir::Type type);
     llvm::StringSet<> instanceSpellings;
+    /// The owner of `borrowed`, a method's `C *` to an instance a registry
+    /// owns: `borrowed->shared_from_this()`. Its class is remembered in
+    /// sharedFromThis, whose structs derive std::enable_shared_from_this.
+    mlir::Value ownerOf(mlir::OpBuilder & b, mlir::Location where, mlir::Value borrowed,
+                        mlir::Type type);
+    /// The function `call` runs: its ctjs.func, or the emitc.func lowered from
+    /// it once that one is an emptied shell.
+    [[nodiscard]] mlir::Operation * calleeOf(ctjs::CallDirectOp call) const;
+    llvm::StringSet<> sharedFromThis;
     /// Adds every value of an identity class to the alias group of its
     /// struct, so the shape census records the member of each field access
     /// on a value read back from the Map (`groups` then points at

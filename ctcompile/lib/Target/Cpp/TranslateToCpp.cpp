@@ -40,6 +40,7 @@
 // came from in the JavaScript.
 // Unmarked modules retain upstream output; vendored tests remain unchanged.
 
+#include "Const/Bases.h"
 #include "Const/Bindings.h"
 #include "Callables/Body.h"
 #include "ReadableFloat.h"
@@ -1354,6 +1355,8 @@ static LogicalResult printOperation(CppEmitter &emitter, ClassOp classOp) {
   os << "class " << classOp.getSymName();
   if (classOp.getFinalSpecifier())
     os << " final";
+  // ctcompile: public base classes from `ctnative.bases` (Const/Bases.h).
+  if (failed(ctcompile::cpp::printClassBases(classOp, os))) return failure();
   os << " {\n public:\n";
   os.indent();
 

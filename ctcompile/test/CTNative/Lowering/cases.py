@@ -155,6 +155,11 @@ CASES = {
         'ctjs-translate --ctbrowser-js-to-ctjs %t/reassigned-function.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REASSIGNED',
         "python3 %t/rollback.py ctjs-opt ctjs-translate %dom_clang %build %t %S/../../../Support/aot-entry-table.cmake",
     ],
+    "Emission/class-bases": [
+        "split-file %s %t",
+        "ctjs-translate --mlir-to-cpp %t/one.mlir | FileCheck %s --check-prefix=ONE",
+        "not ctjs-translate --mlir-to-cpp %t/empty.mlir 2>&1 | FileCheck %s --check-prefix=EMPTY",
+    ],
     "Exceptions/exceptions": [
         "split-file %s %t",
         "python3 %S/exceptions.py --translate ctjs-translate --opt ctjs-opt --fixtures %t --work %t.executables --node %node --reference %native_reference --build %build",
@@ -257,6 +262,19 @@ CASES = {
     "Objects/array/borrow": [
         "split-file %s %t",
         "python3 %S/borrow.py --translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --original %S/shrink.mlir --fixtures %t --work %t.executables",
+    ],
+    "Objects/classes/held-this": [
+        "split-file %s %t",
+        "for name in timer constructor owned by-value writes passes stored constructor-stored promise; do    ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/$name.mlir; done",
+        'FileCheck %s --check-prefix=TIMER --implicit-check-not="this rewrite cannot make direct" --implicit-check-not="does not carry a receiver through" < %t/timer.mlir',
+        'FileCheck %s --check-prefix=CONSTRUCTOR --implicit-check-not="this rewrite cannot make direct" --implicit-check-not="does not carry a receiver through" < %t/constructor.mlir',
+        'FileCheck %s --check-prefix=OWNED --implicit-check-not="does not own it by value" < %t/owned.mlir',
+        "FileCheck %s --check-prefix=BY-VALUE --implicit-check-not=ctnative.held_this --implicit-check-not=ctnative.instance_class < %t/by-value.mlir",
+        "FileCheck %s --check-prefix=BY-VALUE --implicit-check-not=ctnative.held_this --implicit-check-not=ctnative.instance_class < %t/writes.mlir",
+        "FileCheck %s --check-prefix=BY-VALUE --implicit-check-not=ctnative.held_this --implicit-check-not=ctnative.instance_class < %t/passes.mlir",
+        "FileCheck %s --check-prefix=STORED < %t/stored.mlir",
+        "FileCheck %s --check-prefix=CONSTRUCTOR-STORED < %t/constructor-stored.mlir",
+        "FileCheck %s --check-prefix=PROMISE < %t/promise.mlir",
     ],
     "Objects/constructor-refusals": [
         "split-file %s %t",

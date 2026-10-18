@@ -34,9 +34,28 @@ mlir::Type lowering::instanceType(mlir::Type type) {
     return spelled;
 }
 
+mlir::Value lowering::ownerOf(mlir::OpBuilder & b, mlir::Location where, mlir::Value borrowed,
+                              mlir::Type type) {
+    sharedFromThis.insert(instanceClassSpelling(instanceClassName(type)));
+    return memberCall(b, where, instanceType(type), borrowed, "shared_from_this");
+}
+
 bool lowering::isInstanceValue(mlir::Value v) const {
     return madeInstances.contains(v) || instanceSpellings.contains(opaqueSpelling(v.getType())) ||
            carrierOf(typeOf(v)) == carrier::instance;
+}
+
+mlir::Operation * lowering::calleeOf(ctjs::CallDirectOp call) const {
+    mlir::Operation * callee =
+        mlir::SymbolTable::lookupNearestSymbolFrom(call, call.getCalleeAttr());
+    // A callee lowered already is an emptied shell (`shells`) until finish();
+    // its emitc.func goes by the name `names` gave it.
+    auto shell = llvm::dyn_cast_or_null<ctjs::FuncOp>(callee);
+    if (!shell || !shell.getBody().empty()) { return callee; }
+    const auto named = names.find(shell.getSymName());
+    if (named == names.end()) { return nullptr; }
+    return mlir::SymbolTable::lookupNearestSymbolFrom(
+        call, mlir::StringAttr::get(call.getContext(), named->second));
 }
 
 mlir::Value lowering::receiverOperand(mlir::OpBuilder & b, mlir::Location where,
@@ -47,8 +66,7 @@ mlir::Value lowering::receiverOperand(mlir::OpBuilder & b, mlir::Location where,
     // The callee is still a ctjs.func, or already the emitc.func lowered
     // from it (its symbol then names that), depending on which was visited
     // first.
-    mlir::Operation * callee =
-        mlir::SymbolTable::lookupNearestSymbolFrom(call, call.getCalleeAttr());
+    mlir::Operation * callee = calleeOf(call);
     mlir::Type parameter;
     if (auto lowered = llvm::dyn_cast_or_null<ec::FuncOp>(callee)) {
         parameter = lowered.getArgumentTypes().front();
@@ -143,6 +161,10 @@ bool lowering::borrowsInstance(mlir::Value parameter) const {
         carrierOf(typeOf(parameter)) != carrier::instance) {
         return false;
     }
+    // A host callback is called by the host, through the callable it bound
+    // to the captures' owners (EmitC/HostCallbacks.cpp): no caller lends it
+    // a pointer.
+    if (argument.getOwner()->getParentOp()->hasAttr(kNativeHostCallback)) { return false; }
     return llvm::all_of(parameter.getUses(), [](mlir::OpOperand & use) {
         mlir::Operation * user = use.getOwner();
         if (llvm::isa<ctjs::GetPropertyOp, ctjs::SetPropertyOp>(user)) {
@@ -161,8 +183,7 @@ mlir::Value lowering::instanceArgument(mlir::OpBuilder & b, mlir::Location where
     const mlir::Value owner = call->getOperand(index);
     if (llvm::isa<ec::PointerType>(owner.getType())) { return owner; }
     // As for the receiver: the callee is a ctjs.func still, or its emitc.func.
-    mlir::Operation * callee =
-        mlir::SymbolTable::lookupNearestSymbolFrom(call, call.getCalleeAttr());
+    mlir::Operation * callee = calleeOf(call);
     mlir::Type parameter;
     if (auto fn = llvm::dyn_cast_or_null<ctjs::FuncOp>(callee)) {
         const mlir::Value declared = fn.getBody().front().getArgument(index);
