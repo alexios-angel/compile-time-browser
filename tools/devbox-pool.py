@@ -33,7 +33,8 @@ shared default directory from an author's worktree would replace the
 validator's tree. Stopped boxes are skipped, not started.
 
 `status` shows each box's power state and free slots and, for a running box,
-its CPU (sampled over one second), memory and disk use, read over ssh.
+its CPU (sampled over one second), memory and disk use, read with psutil
+on the box over Fabric.
 
 Run it from any worktree by its absolute path: it finds its settings beside
 itself, and COMMAND runs in the caller's working directory.
@@ -44,6 +45,7 @@ import fcntl
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -174,13 +176,23 @@ def sync(settings, args):
     return 1 if failed else 0
 
 
-# Two samples of the cpu line a second apart, the core count, total and
-# available memory, and the size and use of the filesystem holding the project
-# trees.
-USAGE_PROBE = (
-    "head -1 /proc/stat; sleep 1; head -1 /proc/stat; nproc; "
-    "free -b | awk '/^Mem:/ {print $2, $7}'; df -B1 --output=size,used ~ | tail -1"
-)
+# Run on the box by uv with psutil (cached by uv after the first run): CPU use
+# over one second, core count, memory, and the filesystem holding the project
+# trees, as JSON.
+USAGE_PROBE = """
+import json, os, psutil
+mem, disk = psutil.virtual_memory(), psutil.disk_usage(os.path.expanduser("~"))
+print(json.dumps({
+    "cpu": psutil.cpu_percent(interval=1), "cores": psutil.cpu_count(),
+    "mem_used": mem.total - mem.available, "mem_total": mem.total,
+    "disk_used": disk.used, "disk_total": disk.total,
+}))
+"""
+
+
+# Where the boxes' cloud-init installs uv (brew); a non-interactive ssh has no
+# brew on PATH.
+BOX_UV = "/home/linuxbrew/.linuxbrew/bin/uv"
 
 
 def usage(box):
@@ -189,23 +201,19 @@ def usage(box):
     from paramiko import SSHException
     from remote_build import open_connection
 
+    command = (
+        f"{BOX_UV} run --quiet --no-project --with psutil python -c {shlex.quote(USAGE_PROBE)}"
+    )
     try:
         with open_connection(box["name"]) as conn:
-            out = conn.run(USAGE_PROBE, hide=True, timeout=30).stdout.split("\n")
-        first, second = ([int(n) for n in line.split()[1:]] for line in out[:2])
-        cores = int(out[2])
-        mem_total, mem_free = map(int, out[3].split())
-        disk_total, disk_used = map(int, out[4].split())
-    except (OSError, SSHException, UnexpectedExit, CommandTimedOut, ValueError, IndexError) as e:
+            u = json.loads(conn.run(command, hide=True, timeout=60).stdout)
+    except (OSError, SSHException, UnexpectedExit, CommandTimedOut, ValueError) as e:
         return f"usage unavailable ({type(e).__name__})"
-    # /proc/stat: idle and iowait are the 4th and 5th counters.
-    delta = [b - a for a, b in zip(first, second)]
-    busy = 1 - (delta[3] + delta[4]) / max(sum(delta), 1)
     gib = 1 << 30
     return (
-        f"CPU {busy:4.0%} of {cores} cores, "
-        f"memory {(mem_total - mem_free) / gib:.1f}/{mem_total / gib:.1f} GiB, "
-        f"disk {disk_used / gib:.0f}/{disk_total / gib:.0f} GiB used"
+        f"CPU {u['cpu']:3.0f}% of {u['cores']} cores, "
+        f"memory {u['mem_used'] / gib:.1f}/{u['mem_total'] / gib:.1f} GiB, "
+        f"disk {u['disk_used'] / gib:.0f}/{u['disk_total'] / gib:.0f} GiB used"
     )
 
 
