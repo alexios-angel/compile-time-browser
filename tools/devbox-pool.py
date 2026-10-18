@@ -32,6 +32,9 @@ sources under a build in progress there. DEVBOX_DIR must be set: syncing to the
 shared default directory from an author's worktree would replace the
 validator's tree. Stopped boxes are skipped, not started.
 
+`status` shows each box's power state and free slots and, for a running box,
+its CPU (sampled over one second), memory and disk use, read over ssh.
+
 Run it from any worktree by its absolute path: it finds its settings beside
 itself, and COMMAND runs in the caller's working directory.
 """
@@ -44,6 +47,7 @@ import re
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -161,25 +165,89 @@ def sync(settings, args):
             print(f"devbox-pool: {box['name']} is not running; skipped", file=sys.stderr)
             continue
         job = argparse.Namespace(
-            box=box["name"], round=False, wait=True,
+            box=box["name"],
+            round=False,
+            wait=True,
             command=[str(script), "sync"],
         )
         failed |= run(settings, job) != 0
     return 1 if failed else 0
 
 
+# Two samples of the cpu line a second apart, the core count, total and
+# available memory, and the size and use of the filesystem holding the project
+# trees.
+USAGE_PROBE = (
+    "head -1 /proc/stat; sleep 1; head -1 /proc/stat; nproc; "
+    "free -b | awk '/^Mem:/ {print $2, $7}'; df -B1 --output=size,used ~ | tail -1"
+)
+
+
+def usage(box):
+    """CPU, memory and disk use of a running box, as one line of text."""
+    from invoke.exceptions import CommandTimedOut, UnexpectedExit
+    from paramiko import SSHException
+    from remote_build import open_connection
+
+    try:
+        with open_connection(box["name"]) as conn:
+            out = conn.run(USAGE_PROBE, hide=True, timeout=30).stdout.split("\n")
+        first, second = ([int(n) for n in line.split()[1:]] for line in out[:2])
+        cores = int(out[2])
+        mem_total, mem_free = map(int, out[3].split())
+        disk_total, disk_used = map(int, out[4].split())
+    except (OSError, SSHException, UnexpectedExit, CommandTimedOut, ValueError, IndexError) as e:
+        return f"usage unavailable ({type(e).__name__})"
+    # /proc/stat: idle and iowait are the 4th and 5th counters.
+    delta = [b - a for a, b in zip(first, second)]
+    busy = 1 - (delta[3] + delta[4]) / max(sum(delta), 1)
+    gib = 1 << 30
+    return (
+        f"CPU {busy:4.0%} of {cores} cores, "
+        f"memory {(mem_total - mem_free) / gib:.1f}/{mem_total / gib:.1f} GiB, "
+        f"disk {disk_used / gib:.0f}/{disk_total / gib:.0f} GiB used"
+    )
+
+
+def box_status(box):
+    free = 0
+    for path in slot_locks(box):
+        lock = try_lock(path)
+        if lock is not None:
+            free += 1
+            os.close(lock)
+    round_ = ", round" if os.path.exists(box["round_marker"]) else ""
+    slots = f"{free}/{len(slot_locks(box))} slots free{round_}"
+    if not is_running(box):
+        return f"{box['name']:12s} stopped  {slots}"
+    return f"{box['name']:12s} running  {slots}; {usage(box)}"
+
+
 def status(settings):
-    for box in settings["boxes"]:
-        busy = 0
-        for path in slot_locks(box):
-            lock = try_lock(path)
-            if lock is None:
-                busy += 1
-            else:
-                os.close(lock)
-        round_ = " round" if os.path.exists(box["round_marker"]) else ""
-        power = "running" if is_running(box) else "stopped"
-        print(f"{box['name']:12s} {power:8s} {busy}/{len(slot_locks(box))} slots busy{round_}")
+    # usage() reaches the boxes through Fabric, which lives in the repository's
+    # uv `tools` group, not in the python3 that usually runs this file. Rerun
+    # there once; the marker keeps a uv environment without Fabric from looping.
+    try:
+        import fabric  # noqa: F401
+    except ImportError:
+        if os.environ.get("DEVBOX_POOL_IN_UV"):
+            sys.exit("devbox-pool: no Fabric in the uv tools group; run `uv sync --group tools`")
+        os.environ["DEVBOX_POOL_IN_UV"] = "1"
+        uv = [
+            "uv",
+            "run",
+            "--quiet",
+            "--frozen",
+            "--only-group",
+            "tools",
+            "--project",
+            str(HERE.parent),
+        ]
+        os.execvp("uv", [*uv, "python", str(Path(__file__).resolve()), "status"])
+    # Each box's cloud status and ssh probe take seconds, so ask them all at once.
+    with ThreadPoolExecutor() as pool:
+        for line in pool.map(box_status, settings["boxes"]):
+            print(line)
     return 0
 
 
@@ -193,7 +261,7 @@ def main():
     run_p.add_argument("command", nargs=argparse.REMAINDER)
     sync_p = sub.add_parser("sync", help="copy this worktree to $DEVBOX_DIR on every running box")
     sync_p.add_argument("--box")
-    sub.add_parser("status", help="show each box's power, lock and round state")
+    sub.add_parser("status", help="show each box's power, free slots, and CPU, memory and disk use")
     args = parser.parse_args()
     settings = load_settings()
     if args.action == "status":
