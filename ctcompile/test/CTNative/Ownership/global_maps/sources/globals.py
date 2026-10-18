@@ -347,10 +347,6 @@ def scalar_global_output(name, value):
             return '"' + quote(str(result), safe="-._~") + '"'
         if isinstance(result, bool):
             return str(result).lower()
-        if result == "NaN":
-            return "nan"
-        if result == "-Infinity":
-            return "-inf"
         return str(result)
 
     return "".join(f"{binding}={printed(result)}\n" for binding, result in sorted(globals_.items()))

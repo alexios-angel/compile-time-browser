@@ -42,6 +42,7 @@
 #include "ctcompile/CTNative/Runtime/Error.hpp"
 #include "ctcompile/CTNative/Runtime/Math.hpp"
 #include "ctcompile/CTNative/Runtime/Number.hpp"
+#include "ctcompile/CTNative/Runtime/Output.hpp"
 #include "ctcompile/CTNative/Runtime/String.hpp"
 #include "ctcompile/CTNative/Runtime/Symbol.hpp"
 
@@ -51,7 +52,6 @@
 #include <compare>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <exception>
 #include <functional>
 #include <iterator>
@@ -200,14 +200,37 @@ inline js_boolean_t global_boolean(nullable_scalar value) {
     if (value.tag != nullable_scalar::kind::boolean) { std::terminate(); }
     return js_boolean_t{value.value != 0.0};
 }
+// --- printed globals ----------------------------------------------------------
+//
+// A test entry ends by printing each global it observes, one `name=value`
+// line, which ctcompile-test-native-reference prints the same way for the
+// interpreter and CTNative/Checks/compilation-unit.py compares. Every line
+// goes through print_line (Output.hpp).
+
+/// A Number as a printed global spells it: Number::toString (ECMA-262
+/// 6.1.6.1.20), except that -0 keeps its sign, as JavaScript's console
+/// prints it. The globals are compared as values, and -0 is not +0.
+inline std::string printed_number(double value) {
+    if (value == 0.0 && std::signbit(value)) { return "-0"; }
+    return ctbrowser::number_to_string(value);
+}
+inline void print_number(const char * name, js_num value) {
+    print_line(std::string{name} + '=' + printed_number(value.value()));
+}
+/// The bool overload is the one compilation-unit.py's boolean mutation
+/// (`!value`) calls.
+inline void print_boolean(const char * name, bool value) {
+    print_line(std::string{name} + (value ? "=true" : "=false"));
+}
+inline void print_boolean(const char * name, js_boolean_t value) {
+    print_boolean(name, static_cast<bool>(value));
+}
 inline void print_scalar(const char * name, nullable_scalar value) {
     switch (value.tag) {
-    case nullable_scalar::kind::undefined: std::printf("%s=undefined\n", name); return;
-    case nullable_scalar::kind::null: std::printf("%s=null\n", name); return;
-    case nullable_scalar::kind::number: std::printf("%s=%.17g\n", name, value.value); return;
-    case nullable_scalar::kind::boolean:
-        std::printf("%s=%s\n", name, value.value != 0.0 ? "true" : "false");
-        return;
+    case nullable_scalar::kind::undefined: print_line(std::string{name} + "=undefined"); return;
+    case nullable_scalar::kind::null: print_line(std::string{name} + "=null"); return;
+    case nullable_scalar::kind::number: print_number(name, js_num{value.value}); return;
+    case nullable_scalar::kind::boolean: print_boolean(name, value.value != 0.0); return;
     }
     std::terminate();
 }
@@ -320,26 +343,29 @@ inline std::string global_string(const nullable_string & value) {
     if (value.tag != nullable_string::kind::string) { std::terminate(); }
     return value.value;
 }
+/// `name="<text>"`, every byte outside RFC 3986's unreserved set written as
+/// `%` and two uppercase hex digits, so any String prints as one line.
 inline void print_string(const char * name, const std::string & value) {
-    std::printf("%s=\"", name);
     static constexpr char hex[] = "0123456789ABCDEF";
+    std::string line = std::string{name} + "=\"";
     for (const char raw : value) {
         const auto c = static_cast<unsigned char>(raw);
         if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
             std::string_view("-._~").contains(raw)) {
-            std::putchar(c);
+            line += raw;
         } else {
-            std::putchar('%');
-            std::putchar(hex[c >> 4]);
-            std::putchar(hex[c & 15]);
+            line += '%';
+            line += hex[c >> 4];
+            line += hex[c & 15];
         }
     }
-    std::printf("\"\n");
+    line += '"';
+    print_line(line);
 }
 inline void print_scalar(const char * name, const nullable_string & value) {
     switch (value.tag) {
-    case nullable_string::kind::undefined: std::printf("%s=undefined\n", name); return;
-    case nullable_string::kind::null_value: std::printf("%s=null\n", name); return;
+    case nullable_string::kind::undefined: print_line(std::string{name} + "=undefined"); return;
+    case nullable_string::kind::null_value: print_line(std::string{name} + "=null"); return;
     case nullable_string::kind::string: print_string(name, value.value); return;
     }
     std::terminate();

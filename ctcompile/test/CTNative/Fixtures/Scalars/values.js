@@ -1,5 +1,5 @@
 // Exercises every value kind the native differential test prints, in one
-// comparison: numbers (`name=%.17g`), booleans, quoted strings, null and
+// comparison: numbers (Number::toString), booleans, quoted strings, null and
 // undefined. The convention is defined in
 // test/CTNative/Checks/compilation-unit.py.
 //

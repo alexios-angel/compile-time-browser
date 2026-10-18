@@ -63,10 +63,10 @@ function scale(x) { return x * 2; }
 // CHECK: call_opaque "std::isfinite"
 // CHECK: call_opaque "std::pow"
 // CHECK: conditional
-// Global reads produce the Number class, then explicitly unwrap for C varargs.
+// Global reads produce the Number class, which ctnative::print_number prints
+// as Number::toString does.
 // CHECK: call_opaque "ctnative::global_number"{{.*}} -> !emitc.opaque<"ctnative::js_num">
-// CHECK: member_call_opaque {{.*}} "value"() : !emitc.opaque<"ctnative::js_num">, () -> f64
-// CHECK: call_opaque "printf"({{.*}}) {ctnative.const_operands = array<i32: 0, 1>} : (!emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
+// CHECK: call_opaque "ctnative::print_number"({{.*}}) {ctnative.const_operands = array<i32: 0, 1>} : (!emitc.ptr<!emitc.opaque<"const char">>, !emitc.opaque<"ctnative::js_num">) -> ()
 // CHECK: return %{{.*}} : i32
 
 // --- A function no caller proves is refused, by name ----------------------

@@ -175,8 +175,7 @@ for (const name of JSON.parse(process.argv[2])) {
     const value = vm.runInContext(name, context);
     let text;
     if (typeof value === 'number') {
-        text = Number.isNaN(value) ? 'nan' : Object.is(value, -0) ? '-0' :
-            value === -Infinity ? '-inf' : String(value);
+        text = Object.is(value, -0) ? '-0' : String(value);
     } else if (typeof value === 'string') {
         text = '"' + encodeURIComponent(value).replace(/[!'()*]/g,
             c => '%' + c.charCodeAt(0).toString(16).toUpperCase()) + '"';

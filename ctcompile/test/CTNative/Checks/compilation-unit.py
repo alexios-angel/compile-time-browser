@@ -35,7 +35,7 @@ The output convention, which both sides print and this script checks: one line
 per global the program created or changed, ascending bytewise by name,
 `<name>=<value>`, the value one of five pairwise-disjoint forms:
 
-    Number      printf("%.17g", d)          1   -0   2.5   inf   -inf   nan
+    Number      Number::toString, -0 kept   1   -0   2.5   Infinity   NaN
     Boolean     true | false
     undefined   undefined
     null        null
@@ -44,8 +44,11 @@ per global the program created or changed, ascending bytewise by name,
 Strings are bytes (a lone surrogate is WTF-8, NUL is legal), so every byte
 outside RFC 3986's unreserved set is `%` and two uppercase hex digits: total,
 injective, printable ASCII with no whitespace and no `=`, so the first `=` on
-a line is always the separator. `-nan` and `nan` compare equal: a NaN's sign
-is not observable in JavaScript. The grammar is checked on both texts before
+a line is always the separator. A Number prints as JavaScript's
+Number::toString writes it (the shortest digits that round-trip, so the
+comparison is still on the double's value), except that -0 keeps its sign, as
+JavaScript's console prints it; a NaN is `NaN` whatever its sign bit, which
+JavaScript cannot observe. The grammar is checked on both texts before
 they are compared, so a shared mistake in the escaping cannot pass by
 corrupting both sides the same way.
 
@@ -72,7 +75,7 @@ from CTNative.harness import CORE_INCLUDE, FLAGS, run
 
 # The output convention as a regex: the five forms of the value, in one place.
 GRAMMAR = re.compile(
-    r"^[A-Za-z_$][A-Za-z0-9_$]*=(true|false|undefined|null|-?(inf|nan)"
+    r"^[A-Za-z_$][A-Za-z0-9_$]*=(true|false|undefined|null|NaN|-?Infinity"
     r'|-?[0-9]+(\.[0-9]+)?(e[-+][0-9]+)?|"([-A-Za-z0-9._~]|%[0-9A-F][0-9A-F])*")$'
 )
 NAMED = re.compile(r"^([A-Za-z_$][A-Za-z0-9_$]*)=(.*)$")
@@ -84,7 +87,7 @@ COUNTS = re.compile(
 
 # The probe has one of everything the convention has to get right: two numbers
 # out of source order (the sort), a negative zero, a NaN, both booleans, null
-# beside `nan`, an unassigned `var`, the empty string, the string "nan", a
+# beside `NaN`, an unassigned `var`, the empty string, the string "nan", a
 # string holding every character that would break a layer between the two
 # programs, a NUL/two-byte/newline string, a lone surrogate, a function
 # (skipped and counted) and an object. An object is the kind the convention has
@@ -116,7 +119,7 @@ g="%ED%A0%80"
 m=-0
 n=null
 p="a%3D1%3Bb%5Cc%22d%25e"
-q=nan
+q=NaN
 s="text"
 u=undefined
 w="%00%C3%BF%0A"
@@ -220,7 +223,7 @@ def main(argv=None):
     probe = work / "probe.js"
     probe.write_text(PROBE)
     probed = run([args.reference, str(probe)])
-    if probed.stdout.replace("=-nan", "=nan") != PROBE_EXPECTED:
+    if probed.stdout != PROBE_EXPECTED:
         fail(
             "the reference does not print the convention - on the probe it printed:\n"
             f"{probed.stdout}expected:\n{PROBE_EXPECTED}"
@@ -251,7 +254,6 @@ def main(argv=None):
 
     # --- (f) check the grammar, then compare, naming the global -------------------
     def lines_of(text):
-        text = text.replace("=-nan", "=nan")
         text = text[:-1] if text.endswith("\n") else text
         return text.split("\n") if text else []
 
@@ -309,11 +311,11 @@ def mutate(cpp, target, kind, fail):
     that its edit landed, and the substituting branches that the text they
     replace occurs exactly once."""
     if kind == "number":
-        # The edit goes inside main, and that is asserted: the value-printing prelude is
-        # written with fputs/putchar so a helper never carries the printf the
-        # insertion anchors on. Qualified or bare `printf(`, because the
-        # hand-written module and a generated one spell it differently, and
-        # the insertion goes before the qualifier, or `std::<assignment>printf`
+        # The edit goes inside main, before its first print of a Number, and
+        # that is asserted. A module prints a Number with `print_number(`,
+        # qualified as `ctnative::print_number(` when generated and bare in the
+        # hand-written one; an older hand-written module may use `printf(`.
+        # The insertion goes before the qualifier, or `ctnative::<assignment>`
         # would not compile: a negative test that passes for the wrong reason.
         main_at = cpp.find("int32_t main() {")
         if main_at < 0:
@@ -321,13 +323,17 @@ def mutate(cpp, target, kind, fail):
                 "cannot mutate - no `int32_t main() {` in the emitted C++, the output convention has changed under this script"
             )
         from_main = cpp[main_at:]
-        relative = from_main.find("printf(")
-        if relative < 0:
+        prints = [
+            at for at in (from_main.find("printf("), from_main.find("print_number(")) if at >= 0
+        ]
+        if not prints:
             fail(
-                "cannot mutate - no printf( inside main in the emitted C++, the output convention has changed under this script"
+                "cannot mutate - no print_number( or printf( inside main in the emitted C++, the output convention has changed under this script"
             )
-        if relative >= 5 and from_main[relative - 5 : relative] == "std::":
-            relative -= 5
+        relative = min(prints)
+        for qualifier in ("std::", "ctnative::"):
+            if from_main[:relative].endswith(qualifier):
+                relative -= len(qualifier)
         at = main_at + relative
         head, tail = cpp[:at], cpp[at:]
         # The insertion must precede the load, or it changes nothing: the

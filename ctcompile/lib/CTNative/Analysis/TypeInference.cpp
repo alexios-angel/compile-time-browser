@@ -1088,7 +1088,7 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
             // this key on this object comes before the read on every path.
             // `var p = { n: 8 }; return p.n;` is then `num` rather than
             // `opt<num>`, which lets a `ctjs.store_global` of it through (a
-            // global is printed as `%.17g` and cannot spell `undefined`). The
+            // global is printed as a Number and cannot spell `undefined`). The
             // join below still covers the whole alias group: this removes only
             // the value the field cannot hold, not any value it can.
             field = fieldIsAssignedBefore(get.getObject(), key, op) ? mlir::Type{} : absentType(c);

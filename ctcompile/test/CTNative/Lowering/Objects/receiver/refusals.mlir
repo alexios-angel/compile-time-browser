@@ -150,7 +150,7 @@
 // BOOLFIELD: emitc.global static @g_shown : !emitc.opaque<"ctnative::nullable_scalar">
 // BOOLFIELD: call_opaque "ctnative::global_boolean"
 // BOOLFIELD-SAME: -> !emitc.opaque<"ctnative::js_boolean_t">
-// BOOLFIELD: call_opaque "printf"
+// BOOLFIELD: call_opaque "ctnative::print_boolean"
 // BOOLFIELD: emitc.func @look_1() -> !emitc.opaque<"ctnative::js_boolean_t">
 // BOOLFIELD: emitc.func @fn_2(%arg0: !emitc.ptr<!emitc.opaque<"ctn_flag">>) -> !emitc.opaque<"ctnative::js_boolean_t">
 // BOOLFIELD-NOT: ctnative.not_native

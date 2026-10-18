@@ -13,7 +13,8 @@
 // that is exact). ND-8 (an out-of-range index) closes the file.
 //
 // Every global here is a Number, so each comparison is between two doubles
-// printed with `%.17g`; booleans are converted with `? 1 : 0` to keep it so.
+// printed with Number::toString (-0 kept); booleans are converted with
+// `? 1 : 0` to keep it so.
 // The differential test (test/CTNative/Checks/compilation-unit.py) also
 // prints other kinds, but a Number comparison is what each divergence claim
 // is about.
@@ -65,8 +66,8 @@ var mod_inf_divisor = 5 % (1 / 0);
 
 // === ND-6: -0 is a distinct value and survives the printing convention ========
 //
-// `%.17g` prints -0 as `-0`, so the two sides are compared on the sign of a
-// zero and not only on its magnitude. `negzero_recip` is the arithmetic
+// The convention prints -0 as `-0`, so the two sides are compared on the sign
+// of a zero and not only on its magnitude. `negzero_recip` is the arithmetic
 // witness that makes the distinction observable as a Number rather than only
 // as a spelling: 1/-0 is -Infinity and 1/+0 is +Infinity.
 var negzero = 0 * (0 - 1);

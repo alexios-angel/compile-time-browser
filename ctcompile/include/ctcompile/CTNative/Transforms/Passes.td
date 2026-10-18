@@ -252,8 +252,9 @@ def CTNativeLowerToEmitC : Pass<"ctnative-lower-to-emitc", "mlir::ModuleOp"> {
         - never a boxed value under a collector.
 
     The importer's top-level function becomes `main`, and at its end every
-    numeric global is printed as `name=%.17g` - the convention the
-    compilation-unit gate compares against the interpreter.
+    numeric global is printed as `name=` and its Number::toString, with -0
+    kept - the convention the compilation-unit gate compares against the
+    interpreter.
 
     With explicit `host-manifest`, instead preserve the fingerprinted input
     before admission and consume a bounded complete ordinary-global owner

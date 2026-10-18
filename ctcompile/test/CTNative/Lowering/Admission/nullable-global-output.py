@@ -62,7 +62,7 @@ EXPECTED = {
     "undefinedValue": "undefined",
     "nullValue": "null",
     "negativeZero": "-0",
-    "nanValue": "nan",
+    "nanValue": "NaN",
     "falseValue": "false",
     "trueValue": "true",
     "missingString": "undefined",

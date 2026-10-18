@@ -145,7 +145,7 @@ CASES = {
         "%compilation_unit --module %t/disabled.mlir --js %S/default-optimizations.js --work %t --name defaults-disabled",
         "%t/native-unit-defaults-enabled/unit > %t/enabled.out",
         "%t/native-unit-defaults-disabled/unit > %t/disabled.out",
-        "printf 'answer=42\\nliteralNaNEqual=0\\nliteralStringEqual=1\\nnegativeInfinity=-inf\\nobserved=122\\nruntimeNaNEqual=0\\nruntimeNumberEqual=1\\ntrace=122\\n' | diff - %t/enabled.out",
+        "printf 'answer=42\\nliteralNaNEqual=0\\nliteralStringEqual=1\\nnegativeInfinity=-Infinity\\nobserved=122\\nruntimeNaNEqual=0\\nruntimeNumberEqual=1\\ntrace=122\\n' | diff - %t/enabled.out",
         "diff %t/enabled.out %t/disabled.out",
         "not cmp -s %t/native-unit-defaults-enabled/unit.cpp %t/native-unit-defaults-disabled/unit.cpp",
     ],

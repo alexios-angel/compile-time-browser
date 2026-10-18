@@ -36,17 +36,19 @@
 //   At the end of `main`, after the last top-level statement, every numeric
 //   global is printed, one per line, in ascending bytewise order of its name,
 //   as
-//       std::printf("%s=%.17g\n", "<name>", (double) <global>);
-//   and `main` returns 0. %.17g round-trips a double exactly, so the comparison
-//   with the interpreter is on the double's value, not on JavaScript's
-//   shortest-representation string. The interpreter side
-//   (test/Runtime/Reference/Interpreter.cpp) prints its double the same way.
-//   One exception: the sign of a NaN is not observable in JavaScript, x86
-//   arithmetic produces negative NaNs and constant folding positive ones, so
-//   the check compares `-nan` and `nan` as equal.
+//       print_number("<name>", (double) <global>);
+//   and `main` returns 0. print_number writes `<name>=` and the double as
+//   JavaScript's Number::toString does, the shortest digits that round-trip,
+//   except that -0 keeps its sign, so the comparison with the interpreter is
+//   still on the double's value. The interpreter side
+//   (test/Runtime/Reference/Interpreter.cpp) prints its double the same way,
+//   and ctnative's print_number is the general version; the one in this
+//   module is written with std::format, whose shortest form spells every
+//   value it prints here as Number::toString does. A NaN prints as `NaN`
+//   whatever its sign bit, which JavaScript cannot observe.
 //
-// Nothing from ctbrowser/ appears here: no include, no helper, no `ct_aot_*`
-// call. The check compiles this module standalone and runs `nm` on the result;
+// Nothing from ctbrowser/ appears here: no include, no runtime helper, no
+// `ct_aot_*` call. The check compiles this module standalone and runs `nm` on the result;
 // a `ctbrowser::script::` symbol in it would mean the program is not native,
 // and the check fails on it.
 
@@ -72,8 +74,8 @@
 // CHECK: &&
 // CHECK-LABEL: int32_t main() {
 // CHECK: fib20 = {{v[0-9]+}};
-// CHECK: std::printf("%s=%.17g\n", "clamped", {{v[0-9]+}});
-// CHECK: std::printf("%s=%.17g\n", "third", {{v[0-9]+}});
+// CHECK: print_number("clamped", {{v[0-9]+}});
+// CHECK: print_number("third", {{v[0-9]+}});
 // CHECK: return {{v[0-9]+}};
 //
 // compilation-unit.py compiles this module standalone, checks with nm that it
@@ -98,6 +100,14 @@ module {
   emitc.include <"cstdint">
   emitc.include <"cstdio">
   emitc.include <"cmath">
+  emitc.include <"format">
+  emitc.include <"string">
+
+  // The output convention's Number, written for this module (see above). An
+  // emitc.verbatim with no `args` prints its text as written, so the braces
+  // below are the C++ source's braces (and `{{` in std::format is one
+  // literal `{`).
+  emitc.verbatim "static void print_number(const char * name, double value) {\n  const std::string text = std::isnan(value) ? std::string{\"NaN\"}\n                           : std::isinf(value) ? std::string{value > 0 ? \"Infinity\" : \"-Infinity\"}\n                                               : std::format(\"{}\", value);\n  std::fputs(name, stdout);\n  std::fputc('=', stdout);\n  std::fputs(text.c_str(), stdout);\n  std::fputc('\\n', stdout);\n}"
 
   // --- the globals: one per numeric top-level `var`, in source order ---------
   emitc.global @fib20 : i32
@@ -335,50 +345,48 @@ module {
     emitc.assign %s_abc : f64 to %g_clamped : !emitc.lvalue<f64>
 
     // --- the output convention: every numeric global, sorted by name --------
-    %fmt = emitc.literal "\"%s=%.17g\\n\"" : !emitc.ptr<!emitc.opaque<"const char">>
-
     %o_clamped = emitc.load %g_clamped : !emitc.lvalue<f64>
     %n_clamped = emitc.literal "\"clamped\"" : !emitc.ptr<!emitc.opaque<"const char">>
-    emitc.call_opaque "std::printf"(%fmt, %n_clamped, %o_clamped) : (!emitc.ptr<!emitc.opaque<"const char">>, !emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
+    emitc.call_opaque "print_number"(%n_clamped, %o_clamped) : (!emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
 
     %o_collatz27 = emitc.load %g_collatz27 : !emitc.lvalue<i32>
     %d_collatz27 = emitc.cast %o_collatz27 : i32 to f64
     %n_collatz27 = emitc.literal "\"collatz27\"" : !emitc.ptr<!emitc.opaque<"const char">>
-    emitc.call_opaque "std::printf"(%fmt, %n_collatz27, %d_collatz27) : (!emitc.ptr<!emitc.opaque<"const char">>, !emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
+    emitc.call_opaque "print_number"(%n_collatz27, %d_collatz27) : (!emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
 
     %o_fib20 = emitc.load %g_fib20 : !emitc.lvalue<i32>
     %d_fib20 = emitc.cast %o_fib20 : i32 to f64
     %n_fib20 = emitc.literal "\"fib20\"" : !emitc.ptr<!emitc.opaque<"const char">>
-    emitc.call_opaque "std::printf"(%fmt, %n_fib20, %d_fib20) : (!emitc.ptr<!emitc.opaque<"const char">>, !emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
+    emitc.call_opaque "print_number"(%n_fib20, %d_fib20) : (!emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
 
     %o_inf_neg = emitc.load %g_inf_neg : !emitc.lvalue<f64>
     %n_inf_neg = emitc.literal "\"inf_neg\"" : !emitc.ptr<!emitc.opaque<"const char">>
-    emitc.call_opaque "std::printf"(%fmt, %n_inf_neg, %o_inf_neg) : (!emitc.ptr<!emitc.opaque<"const char">>, !emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
+    emitc.call_opaque "print_number"(%n_inf_neg, %o_inf_neg) : (!emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
 
     %o_inf_pos = emitc.load %g_inf_pos : !emitc.lvalue<f64>
     %n_inf_pos = emitc.literal "\"inf_pos\"" : !emitc.ptr<!emitc.opaque<"const char">>
-    emitc.call_opaque "std::printf"(%fmt, %n_inf_pos, %o_inf_pos) : (!emitc.ptr<!emitc.opaque<"const char">>, !emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
+    emitc.call_opaque "print_number"(%n_inf_pos, %o_inf_pos) : (!emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
 
     %o_mod_neg = emitc.load %g_mod_neg : !emitc.lvalue<f64>
     %n_mod_neg = emitc.literal "\"mod_neg\"" : !emitc.ptr<!emitc.opaque<"const char">>
-    emitc.call_opaque "std::printf"(%fmt, %n_mod_neg, %o_mod_neg) : (!emitc.ptr<!emitc.opaque<"const char">>, !emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
+    emitc.call_opaque "print_number"(%n_mod_neg, %o_mod_neg) : (!emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
 
     %o_negzero = emitc.load %g_negzero : !emitc.lvalue<f64>
     %n_negzero = emitc.literal "\"negzero\"" : !emitc.ptr<!emitc.opaque<"const char">>
-    emitc.call_opaque "std::printf"(%fmt, %n_negzero, %o_negzero) : (!emitc.ptr<!emitc.opaque<"const char">>, !emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
+    emitc.call_opaque "print_number"(%n_negzero, %o_negzero) : (!emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
 
     %o_nan = emitc.load %g_nan : !emitc.lvalue<f64>
     %n_nan = emitc.literal "\"not_a_number\"" : !emitc.ptr<!emitc.opaque<"const char">>
-    emitc.call_opaque "std::printf"(%fmt, %n_nan, %o_nan) : (!emitc.ptr<!emitc.opaque<"const char">>, !emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
+    emitc.call_opaque "print_number"(%n_nan, %o_nan) : (!emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
 
     %o_sum100 = emitc.load %g_sum100 : !emitc.lvalue<i32>
     %d_sum100 = emitc.cast %o_sum100 : i32 to f64
     %n_sum100 = emitc.literal "\"sum100\"" : !emitc.ptr<!emitc.opaque<"const char">>
-    emitc.call_opaque "std::printf"(%fmt, %n_sum100, %d_sum100) : (!emitc.ptr<!emitc.opaque<"const char">>, !emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
+    emitc.call_opaque "print_number"(%n_sum100, %d_sum100) : (!emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
 
     %o_third = emitc.load %g_third : !emitc.lvalue<f64>
     %n_third = emitc.literal "\"third\"" : !emitc.ptr<!emitc.opaque<"const char">>
-    emitc.call_opaque "std::printf"(%fmt, %n_third, %o_third) : (!emitc.ptr<!emitc.opaque<"const char">>, !emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
+    emitc.call_opaque "print_number"(%n_third, %o_third) : (!emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
 
     %rc = "emitc.constant"() <{value = 0 : i32}> : () -> i32
     emitc.return %rc : i32

@@ -157,21 +157,9 @@ void lowering::printObservations(mlir::OpBuilder & b, mlir::Location where) {
         mlir::Value current =
             callValue(b, where, isBoolean ? boolean : ec::OpaqueType::get(context, kNumberType),
                       isBoolean ? "ctnative::global_boolean" : "ctnative::global_number", loaded);
-        if (isBoolean) {
-            const auto literal = [&](llvm::StringRef spelling) -> mlir::Value {
-                return ec::LiteralOp::create(b, where, textType, b.getStringAttr(spelling));
-            };
-            current = ec::ConditionalOp::create(b, where, textType, truthy(b, where, current),
-                                                literal("\"true\""), literal("\"false\""));
-        } else {
-            // C varargs consume binary64, not the JavaScript value class.
-            current = memberCall(b, where, b.getF64Type(), current, "value");
-        }
-        mlir::Value format = ec::LiteralOp::create(
-            b, where, textType,
-            b.getStringAttr(("\"" + name + (isBoolean ? "=%s\\n\"" : "=%.17g\\n\"")).str()));
-        callWithConstValueOperands(b, where, mlir::TypeRange{}, b.getStringAttr("printf"),
-                                   mlir::ValueRange{format, current});
+        // The runtime spells the value as the reference does: Number::toString
+        // with -0 kept, or true and false.
+        print(isBoolean ? "ctnative::print_boolean" : "ctnative::print_number", current);
     }
 }
 
