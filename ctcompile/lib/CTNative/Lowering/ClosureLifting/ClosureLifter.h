@@ -357,12 +357,14 @@ struct closureLifter {
     //     another function has nowhere to prepend the captures (the METHODCAP
     //     case, one binding along), so a binding read from a nested function
     //     may only hold a closure whose every capture is itself a binding this
-    //     rule erases, or the identical cell already captured by its sibling
-    //     caller. The latter is passed through the caller's ordinary lifted
-    //     capture parameter. This condition matters in practice: a bundle's
-    //     helpers close over each other, and the recursive
-    //     `var f = function () { ... f(); }` is exactly the case where the one
-    //     capture is the binding being defined.
+    //     rule erases, or a cell of its frame that each caller holds: a caller
+    //     made in that frame captures it (canAddSiblingCapture), and one made
+    //     a frame further in takes it relayed from the closure it is made in
+    //     (canRelaySiblingCapture). The cell is passed through the caller's
+    //     ordinary lifted capture parameter. This condition matters in
+    //     practice: a bundle's helpers close over each other, and the
+    //     recursive `var f = function () { ... f(); }` is exactly the case
+    //     where the one capture is the binding being defined.
     //
     // Recursion is admitted, and the rule is built around it. `f` names
     // itself, so the closure captures the very box it is written into;
@@ -655,8 +657,19 @@ struct closureLifter {
 
     void makeBoundCallDirect(ctjs::CallOp call, ctjs::FuncOp target, ctjs::CreateClosureOp holder);
 
-    static std::optional<unsigned> siblingCaptureSlot(ctjs::CreateClosureOp closure, unsigned index,
-                                                      ctjs::CreateClosureOp holder);
+    std::optional<unsigned> siblingCaptureSlot(ctjs::CreateClosureOp closure, unsigned index,
+                                               ctjs::CreateClosureOp holder);
+    /// The one ctjs.create_closure of the function `made` sits in, whose slots
+    /// fill `made`'s relayed captures; null when that function has none or
+    /// several.
+    ctjs::CreateClosureOp enclosingClosureOf(ctjs::CreateClosureOp made);
+    /// Each function's ctjs.create_closure, or null for a function with
+    /// several.
+    llvm::DenseMap<mlir::Operation *, ctjs::CreateClosureOp> oneClosurePerFunction();
+    /// oneClosurePerFunction() while bindLocalFunctions runs, which makes and
+    /// erases no closure, so its fixpoint asks enclosingClosureOf without a
+    /// module walk per question.
+    std::optional<llvm::DenseMap<mlir::Operation *, ctjs::CreateClosureOp>> closureOfFunction;
 
     mlir::Value siblingCapturedValue(ctjs::CreateClosureOp closure, unsigned index,
                                      ctjs::CreateClosureOp holder);
@@ -669,6 +682,16 @@ struct closureLifter {
     /// Appends `cell` to `holder`'s captures, with its `enclosing_indices`
     /// entry and its target's `upvalue_count`.
     void addCaptureSlot(ctjs::CreateClosureOp holder, mlir::Value cell);
+    /// Whether `holder`, made one frame further in than `closure`, can take
+    /// the cell in slot `index` of `closure` relayed from its enclosing
+    /// closure, which is made in `closure`'s frame and captures the cell or
+    /// can (canAddSiblingCapture).
+    bool canRelaySiblingCapture(ctjs::CreateClosureOp closure, unsigned index,
+                                ctjs::CreateClosureOp holder);
+    /// Appends to `holder`'s captures a slot filled from slot `outer` of its
+    /// enclosing closure, whose operand is the importer's undefined
+    /// placeholder.
+    void addRelayedCaptureSlot(ctjs::CreateClosureOp holder, unsigned outer);
 
     void removeCaptureSlots(ctjs::CreateClosureOp c, llvm::ArrayRef<unsigned> slots);
 
