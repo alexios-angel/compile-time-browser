@@ -87,7 +87,8 @@ inline constexpr llvm::StringLiteral kRecordReturn = "ctnative.record_return";
 /// `ctjs.func` it is a unit attribute.
 inline constexpr llvm::StringLiteral kNativeStringCallback = "ctnative.string_callback";
 /// The String.prototype method a `ctjs.call` invokes on its receiver, written
-/// by TypeInference::markStringMethodCalls: "toLowerCase", "trim", or
+/// by TypeInference::markStringMethodCalls: "toLowerCase", "toUpperCase",
+/// "trim", or
 /// "replace" with a RegExp literal and a replacement that is not a function.
 /// "test" marks RegExp.prototype.test on a RegExp made from a constant source
 /// (`new RegExp("a|b").test(text)` or `/a|b/.test(text)`).
@@ -262,7 +263,7 @@ public:
                                          unsigned group);
     /// Whether `op` is a replace call closure lifting specialised.
     static bool isStringCallbackCall(mlir::Operation * op);
-    /// Marks each `text.toLowerCase()`, `text.trim()`,
+    /// Marks each `text.toLowerCase()`, `text.toUpperCase()`, `text.trim()`,
     /// `text.replace(/re/, replacement)` and `new RegExp("re").test(text)` call
     /// with kNativeStringMethod, while its key is still a constant the lowering
     /// has not rewritten.

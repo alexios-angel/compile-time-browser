@@ -163,8 +163,8 @@ REFUSALS = (
 )
 
 
-def main():
-    args = dom.parse_args(__doc__)
+def main(argv=None):
+    args = dom.parse_args(__doc__, argv=argv)
     compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
     ir, contract = dom.prepare(args, "classes", SOURCE, 1)
@@ -222,6 +222,10 @@ def main():
     if "fingerprint mismatch" not in dom.lower(args, ir, stale, "stale", success=False):
         raise RuntimeError("classList accepted a stale source fingerprint")
     print(f"classList: 32 native executions, {2 * len(REFUSALS) + 8} refusals; DOM/Core/Style only")
+
+
+def test_class_list(lit):
+    main(lit.args("%dom_driver"))
 
 
 if __name__ == "__main__":

@@ -204,9 +204,12 @@ bool admission::function(ctjs::FuncOp fn) {
         if (nativeDictionaryAction(o) == "plumbing") { return; }
         if (domEntry && domBookkeeping(*domEntry, o)) { return; }
         if (o->getNumResults() == 1 && lowersToNothing(o->getResult(0))) { return; }
-        // An object literal, or a record its callee returned, is its class.
+        // An object literal, a record its callee returned, or a read of a
+        // field that owns an instance by value, is its class.
         if (llvm::isa<ctjs::CreateObjectOp>(o) ||
-            (o->getNumResults() == 1 && TypeInference::isRecordCall(o->getResult(0)))) {
+            (o->getNumResults() == 1 && TypeInference::isRecordCall(o->getResult(0))) ||
+            (llvm::isa<ctjs::GetPropertyOp>(o) && o->hasAttr(kNativeOwnedInstance) &&
+             TypeInference::hasClosedShape(o->getResult(0)))) {
             return;
         }
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o);

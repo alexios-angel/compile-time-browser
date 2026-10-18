@@ -184,8 +184,8 @@ REFUSALS = {
 }
 
 
-def main():
-    args = dom.parse_args(__doc__)
+def main(argv=None):
+    args = dom.parse_args(__doc__, argv=argv)
     compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
     ir, contract = dom.prepare(args, "query-all", SOURCE, 1)
@@ -230,6 +230,10 @@ def main():
         f"Element.querySelectorAll: 16 native executions, {2 * len(REFUSALS) + 4} refusals; "
         "DOM/Core/Style only"
     )
+
+
+def test_query_all(lit):
+    main(lit.args("%dom_driver"))
 
 
 if __name__ == "__main__":

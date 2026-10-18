@@ -16,7 +16,9 @@ Targets are joined with spaces into `cmake --build ... --target`, so
 
 Environment: DEVBOX_HOST (ssh host or alias, default `devbox`), DEVBOX_DIR
 (directory on the box, default projects/compile-time-browser), CT_BUILD_JOBS
-and CT_TEST_JOBS (default: the box's CPU count), CLANG_STD_EMBED_TAG and
+and CT_TEST_JOBS (default: the box's CPU count), CT_BUILD_LOAD (Ninja's -l:
+start no new job while the load average is above it, so builds sharing a box
+share its cores), CLANG_STD_EMBED_TAG and
 CLANG_STD_EMBED_RELEASE (the pinned toolchain), CTBROWSER_ANGLE (default ON)
 and CTCOMPILE_MLIR (default ON).
 
@@ -207,6 +209,13 @@ def main(args):
     devbox_jobs = run("nproc", hide=True).stdout.strip()
     build_jobs = os.environ.get("CT_BUILD_JOBS", devbox_jobs)
     test_jobs = os.environ.get("CT_TEST_JOBS", devbox_jobs)
+    # Ninja's load limit goes after the `--` that hands the rest to Ninja.
+    if load := os.environ.get("CT_BUILD_LOAD"):
+        if "--" in args:
+            split = args.index("--") + 1
+            args = [*args[:split], "-l", load, *args[split:]]
+        else:
+            args = [*args, "--", "-l", load] if args else args
     print(
         f"devbox: {devbox_jobs} CPUs; build jobs={build_jobs}; CTest jobs={test_jobs}", flush=True
     )
@@ -278,7 +287,10 @@ def main(args):
         if args:
             run(f"{build} --target {' '.join(args)}")
         else:
-            run(f"{build} && ctest --preset default -j{test_jobs}")
+            load = os.environ.get("CT_BUILD_LOAD")
+            run(
+                f"{build}{f' -- -l {load}' if load else ''} && ctest --preset default -j{test_jobs}"
+            )
     return 0
 
 

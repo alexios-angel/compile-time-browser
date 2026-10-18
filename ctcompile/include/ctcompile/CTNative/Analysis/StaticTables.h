@@ -61,6 +61,26 @@ inline constexpr llvm::StringLiteral kNativeStaticTableLoopRefusal =
 /// holding an object literal that ...".
 inline constexpr llvm::StringLiteral kNativeStaticTableReason = "ctnative.static_table_reason";
 
+/// On a ctjs.call_direct whose callee returns a static's table, when the
+/// caller uses the returned table in a way the proof does not take: the
+/// refusal of that caller. The literal stays a table for the function that
+/// returns it and for that function's other callers.
+inline constexpr llvm::StringLiteral kNativeStaticTableUseRefusal =
+    "ctnative.static_table_use_refusal";
+
+/// The refusal of a function that reads static `name` (a kNativeStaticCell
+/// name, "static_" and the binding) and uses its object literal in a way the
+/// table proof does not take, `why` being a clause such as "is passed as an
+/// argument".
+inline std::string staticTableRefusal(llvm::StringRef name, llvm::StringRef why) {
+    name.consume_front("static_");
+    return ("it reads `" + name +
+            "`, a static variable of a function that runs once, "
+            "holding an object literal that " +
+            why)
+        .str();
+}
+
 /// The array index `key` names (a canonical numeric string below 2^32 - 1,
 /// ECMA-262 6.1.7), or nullopt for any other key.
 inline std::optional<std::uint32_t> arrayIndexKey(llvm::StringRef key) {

@@ -1,13 +1,15 @@
 //===- Records.cpp - Object literals returned by value --------------------===//
 //
 // A data record is an object literal a function builds and returns, whose
-// callers only read and write its fields through constant keys or lend it to
-// a parameter that does the same. Such an object is never shared beyond those
-// frames: the callee drops its only reference when it returns, and the caller
-// holds the only one afterwards, so copying it into the caller (a C++ struct
-// returned by value) observes nothing JavaScript could tell apart from passing
-// the reference. A parameter it is lent to receives a pointer to the caller's
-// copy, which is a reference with the same meaning.
+// callers only read and write its fields through constant keys, call its lifted
+// methods, or lend it to a parameter that does the same. A class instance
+// qualifies: the constructor lift made it a literal, and its constructor and
+// methods take it as their receiver. Such an object is never shared beyond
+// those frames: the callee drops its only reference when it returns, and the
+// caller holds the only one afterwards, so copying it into the caller (a C++
+// struct returned by value) observes nothing JavaScript could tell apart from
+// passing the reference. A parameter it is lent to receives a pointer to the
+// caller's copy, which is a reference with the same meaning.
 //
 // markRecordReturns proves both once per module. It writes kRecordReturn on a
 // returning function and on each of its calls, and adds a record parameter's
@@ -39,18 +41,27 @@ bool isFieldAccess(mlir::OpOperand & use) {
     return key && use.getOperandNumber() == 0 && !name.empty() && name != "__proto__";
 }
 
-/// Whether `value` is a plain object literal made in `fn`, used only through
-/// constant keys and returned: not a method table, not a class instance and
-/// not an object with run-time identity, each of which has its own carrier.
+/// Whether `use` is the receiver of a lifted constructor or method call. The
+/// closure lift proved that callee reaches its receiver only through constant
+/// keys or as the receiver of another such call, so it keeps no reference.
+bool isReceiver(mlir::OpOperand & use) {
+    return llvm::isa<ctjs::CallDirectOp>(use.getOwner()) && use.getOperandNumber() == 0 &&
+           use.getOwner()->hasAttr(kNativeReceiver);
+}
+
+/// Whether `value` is an object literal made in `fn`, used only through
+/// constant keys, as a lifted call's receiver, and returned: not a method
+/// table and not an object with run-time identity, each of which has its own
+/// carrier. A class instance (kNativeClassName) qualifies: the lifted `new`
+/// made it a literal whose constructor and methods take it as receiver.
 bool isPlainLiteral(mlir::Value value, ctjs::FuncOp fn) {
     auto literal = value.getDefiningOp<ctjs::CreateObjectOp>();
     if (!literal || literal->getParentOfType<ctjs::FuncOp>() != fn ||
-        !methodTableName(literal).empty() || literal->hasAttr(kNativeObjectIdentity) ||
-        literal->hasAttr(kNativeClassName)) {
+        !methodTableName(literal).empty() || literal->hasAttr(kNativeObjectIdentity)) {
         return false;
     }
     return llvm::all_of(literal.getResult().getUses(), [](mlir::OpOperand & use) {
-        return isFieldAccess(use) || llvm::isa<ctjs::ReturnOp>(use.getOwner());
+        return isFieldAccess(use) || isReceiver(use) || llvm::isa<ctjs::ReturnOp>(use.getOwner());
     });
 }
 
@@ -95,8 +106,9 @@ void TypeInference::markRecordReturns(mlir::Operation * top) {
         }
     });
     // A record value is a returning function's call result or a record
-    // parameter. Each of its uses must be a field access or a lend to a record
-    // parameter; anything else could keep or compare the reference.
+    // parameter. Each of its uses must be a field access, the receiver of a
+    // lifted call, or a lend to a record parameter; anything else could keep
+    // or compare the reference.
     const auto lendsToSlot = [&](mlir::OpOperand & use) {
         auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
         return call && use.getOperandNumber() >= 3 &&
@@ -104,7 +116,7 @@ void TypeInference::markRecordReturns(mlir::Operation * top) {
     };
     const auto onlyRecordUses = [&](mlir::Value value) {
         return llvm::all_of(value.getUses(), [&](mlir::OpOperand & use) {
-            return isFieldAccess(use) || lendsToSlot(use);
+            return isFieldAccess(use) || isReceiver(use) || lendsToSlot(use);
         });
     };
     const auto isRecordValue = [&](mlir::Value value) {
