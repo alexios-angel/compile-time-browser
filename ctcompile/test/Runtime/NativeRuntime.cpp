@@ -249,7 +249,7 @@ int main() {
     CHECK(boolean_string_text(boolean_string{js_string{}}) == js_string{});
     const boolean_string binaryText{js_string{std::string{"a\0b", 3}}};
     CHECK(boolean_string_text(binaryText) == js_string{"a\0b"});
-    CHECK(std::holds_alternative<js_string>(binaryText));
+    CHECK(binaryText.holds<js_string>());
     static_assert(std::is_same_v<decltype(to_number(binaryText)), ctnative::js_num>);
     CHECK(to_number(boolean_string{enabled}) == one);
     const auto unionZero = to_number(boolean_string{disabled});
@@ -469,7 +469,7 @@ int main() {
     CHECK(std::isnan(nullable_string{std::string{"1\0", 2}}.to_number().value()));
     CHECK(std::isnan(nullable_string{high}.to_number().value()));
 
-    static_assert(std::is_same_v<number_string, std::variant<ctnative::js_num, js_string>>);
+    static_assert(std::is_same_v<number_string, string_union<ctnative::js_num, false>>);
     static_assert(std::is_same_v<decltype(add(one, enabled)), number_string>);
     static_assert(std::is_same_v<decltype(to_number(one)), ctnative::js_num>);
     static_assert(std::is_same_v<decltype(to_number(number_string{})), ctnative::js_num>);
@@ -566,9 +566,7 @@ int main() {
     CHECK(savedAddition == number_string{js_string{"saved\0text"}});
     CHECK(global_number_string(storedAddition) == number_string{one});
 
-    static_assert(
-        std::is_same_v<nullable_number_string,
-                       std::variant<undefined_t, js_null_t, ctnative::js_num, js_string>>);
+    static_assert(std::is_same_v<nullable_number_string, string_union<ctnative::js_num, true>>);
     static_assert(primitive_addable<nullable_number_string>);
     static_assert(!std::is_constructible_v<nullable_number_string, bool>);
     static_assert(!std::is_constructible_v<nullable_number_string, js_boolean_t>);
@@ -581,10 +579,10 @@ int main() {
     static_assert(std::is_same_v<decltype(to_number(js_null_t{})), ctnative::js_num>);
     const nullable_number_string optionalUndefined{}, optionalNull{js_null_t{}},
         optionalZero{negativeZero}, optionalNaN{notANumber}, optionalText{js_string{"a\0b"}};
-    CHECK(std::holds_alternative<undefined_t>(optionalUndefined));
-    CHECK(std::holds_alternative<js_null_t>(optionalNull));
-    CHECK(std::holds_alternative<ctnative::js_num>(optionalZero));
-    CHECK(std::holds_alternative<js_string>(optionalText));
+    CHECK(optionalUndefined.holds<undefined_t>());
+    CHECK(optionalNull.holds<js_null_t>());
+    CHECK(optionalZero.holds<ctnative::js_num>());
+    CHECK(optionalText.holds<js_string>());
     CHECK(std::isnan(to_number(optionalUndefined).value()));
     CHECK(to_number(optionalNull) == zero && !std::signbit(to_number(optionalNull).value()));
     CHECK(std::signbit(to_number(optionalZero).value()));
@@ -608,10 +606,10 @@ int main() {
     CHECK(nullable_number_string_typeof(optionalNull) == "object");
     CHECK(nullable_number_string_typeof(optionalNaN) == "number");
     CHECK(nullable_number_string_typeof(optionalText) == "string");
-    CHECK(std::holds_alternative<undefined_t>(to_nullable_number_string(undefined)));
-    CHECK(std::holds_alternative<undefined_t>(to_nullable_number_string(absentText)));
-    CHECK(std::holds_alternative<js_null_t>(to_nullable_number_string(null)));
-    CHECK(std::holds_alternative<js_null_t>(to_nullable_number_string(nullText)));
+    CHECK(to_nullable_number_string(undefined).holds<undefined_t>());
+    CHECK(to_nullable_number_string(absentText).holds<undefined_t>());
+    CHECK(to_nullable_number_string(null).holds<js_null_t>());
+    CHECK(to_nullable_number_string(nullText).holds<js_null_t>());
     CHECK(std::signbit(
         global_number(to_nullable_number_string(nullable_scalar{negativeZero})).value()));
     CHECK(std::signbit(
@@ -633,14 +631,13 @@ int main() {
     nullable_number_string changingOptional = optionalText;
     const auto copiedOptional = changingOptional;
     changingOptional = undefined_t{};
-    CHECK(std::holds_alternative<undefined_t>(changingOptional));
+    CHECK(changingOptional.holds<undefined_t>());
     CHECK(global_string(copiedOptional) == std::string("a\0b", 3));
     changingOptional = negativeZero;
     CHECK(std::signbit(global_number(changingOptional).value()));
 
-    static_assert(std::is_same_v<boolean_string, std::variant<js_boolean_t, js_string>>);
-    static_assert(std::is_same_v<nullable_boolean_string,
-                                 std::variant<undefined_t, js_null_t, js_boolean_t, js_string>>);
+    static_assert(std::is_same_v<boolean_string, string_union<js_boolean_t, false>>);
+    static_assert(std::is_same_v<nullable_boolean_string, string_union<js_boolean_t, true>>);
     static_assert(primitive_addable<boolean_string> && primitive_addable<nullable_boolean_string>);
     static_assert(!std::is_constructible_v<boolean_string, bool>);
     static_assert(!std::is_constructible_v<boolean_string, ctnative::js_num>);
@@ -654,7 +651,7 @@ int main() {
     static_assert(std::is_same_v<decltype(boolean_string_text(boolean_string{})), js_string>);
     const boolean_string unionTrue{enabled}, unionFalse{disabled},
         unionFalseText{js_string{"false"}}, unionEmptyText{js_string{}};
-    CHECK(std::holds_alternative<js_boolean_t>(boolean_string{}));
+    CHECK(boolean_string{}.holds<js_boolean_t>());
     CHECK(to_number(unionTrue) == one && to_number(unionFalse) == zero);
     CHECK(!std::signbit(to_number(unionFalse).value()));
     CHECK(std::isnan(to_number(unionFalseText).value()));
@@ -674,7 +671,7 @@ int main() {
     CHECK(add(js_string{"x"}, unionTrue) == number_string{js_string{"xtrue"}});
     const nullable_boolean_string optionalBooleanUndefined{}, optionalBooleanNull{js_null_t{}},
         optionalBooleanFalse{disabled}, optionalBooleanText{js_string{"a\0b"}};
-    CHECK(std::holds_alternative<undefined_t>(optionalBooleanUndefined));
+    CHECK(optionalBooleanUndefined.holds<undefined_t>());
     CHECK(std::isnan(to_number(optionalBooleanUndefined).value()));
     CHECK(to_number(optionalBooleanNull) == zero &&
           !std::signbit(to_number(optionalBooleanNull).value()));
@@ -693,10 +690,10 @@ int main() {
     CHECK(nullable_boolean_string_typeof(optionalBooleanNull) == "object");
     CHECK(nullable_boolean_string_typeof(optionalBooleanFalse) == "boolean");
     CHECK(nullable_boolean_string_typeof(optionalBooleanText) == "string");
-    CHECK(std::holds_alternative<undefined_t>(to_nullable_boolean_string(undefined)));
-    CHECK(std::holds_alternative<undefined_t>(to_nullable_boolean_string(absentText)));
-    CHECK(std::holds_alternative<js_null_t>(to_nullable_boolean_string(null)));
-    CHECK(std::holds_alternative<js_null_t>(to_nullable_boolean_string(nullText)));
+    CHECK(to_nullable_boolean_string(undefined).holds<undefined_t>());
+    CHECK(to_nullable_boolean_string(absentText).holds<undefined_t>());
+    CHECK(to_nullable_boolean_string(null).holds<js_null_t>());
+    CHECK(to_nullable_boolean_string(nullText).holds<js_null_t>());
     CHECK(global_boolean(to_nullable_boolean_string(nullable_scalar{enabled})) == enabled);
     CHECK(global_boolean(to_nullable_boolean_string(nullable_scalar{disabled})) == disabled);
     CHECK(global_boolean_string(to_nullable_boolean_string(unionTrue)) == unionTrue);
@@ -718,7 +715,7 @@ int main() {
     CHECK(savedBoolean == boolean_string{js_string{"a\0b"}});
     CHECK(global_string(copiedBoolean) == std::string("a\0b", 3));
     changingBoolean = undefined_t{};
-    CHECK(std::holds_alternative<undefined_t>(changingBoolean));
+    CHECK(changingBoolean.holds<undefined_t>());
 
     static_assert(std::is_same_v<decltype(primitive_equal(one, js_string{"1"})), js_boolean_t>);
     static_assert(std::is_same_v<decltype(primitive_strict_equal(one, one)), js_boolean_t>);
