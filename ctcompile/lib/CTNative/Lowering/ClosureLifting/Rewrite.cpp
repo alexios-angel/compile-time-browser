@@ -515,7 +515,15 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     // "capture 0 is !ctnative.boxed - no caller proves it". ResolveGlobals
     // does the same under the same condition, which the checks above have
     // established: every caller of this function is visible.
-    mlir::SymbolTable::setSymbolVisibility(target, mlir::SymbolTable::Visibility::Private);
+    //
+    // A proved registry class's method that lifts with no call stays public:
+    // a private function nothing calls is dead to that analysis, and its
+    // receiver's type comes from the registry proof at that entry state, not
+    // from callers.
+    const bool registryEntry = liftsOnRegistryReceiver(made.front());
+    if (!registryEntry) {
+        mlir::SymbolTable::setSymbolVisibility(target, mlir::SymbolTable::Visibility::Private);
+    }
     ++out.functions;
 
     if (arrayCallbacks.contains(made.front())) {
@@ -557,7 +565,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     });
     const bool method = !constructor &&
                         (callsOfTarget.count(target.getOperation()) != 0 ||
-                         copiedAwayMethods.contains(target.getOperation())) &&
+                         copiedAwayMethods.contains(target.getOperation()) || registryEntry) &&
                         llvm::all_of(made, [&](ctjs::CreateClosureOp c) {
                             return methodClosures.contains(c.getOperation());
                         });

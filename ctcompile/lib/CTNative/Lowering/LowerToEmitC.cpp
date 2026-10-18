@@ -39,6 +39,7 @@
 #include "Refinements.h"
 #include "ctcompile/CTJS/Lowering/NativeRealm.h"
 #include "ctcompile/CTJS/Transforms/Passes.h"
+#include "ctcompile/CTNative/Analysis/Instances.h"
 #include "ctcompile/CTNative/Analysis/StaticTables.h"
 #include "ctcompile/CTNative/Analysis/WorkBudget.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
@@ -859,10 +860,30 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             return true;
         };
         const auto closeNativeSet = [&] {
+            // The constructor of each registry class (Analysis/Instances.h).
+            llvm::StringMap<mlir::Operation *> instanceConstructors;
+            for (ctjs::FuncOp fn : functions) {
+                if (auto name = fn->getAttrOfType<mlir::StringAttr>(kNativeInstanceClass)) {
+                    instanceConstructors[name.getValue()] = fn.getOperation();
+                }
+            }
             for (bool changed = true; changed;) {
                 changed = false;
                 for (ctjs::FuncOp fn : functions) {
                     const bool native = nativeSet.contains(fn.getOperation());
+                    // A registry class's method that the closure lift left
+                    // public, because no call of it resolved, is native only
+                    // with its class's constructor: no call ties it to the
+                    // functions that make the instances its receiver names,
+                    // which the shape census reads.
+                    if (auto name = fn->getAttrOfType<mlir::StringAttr>(kNativeInstanceMethod);
+                        native && name && fn.isPublic() && fn->hasAttr(kNativeReceiver) &&
+                        !nativeSet.contains(instanceConstructors.lookup(name.getValue()))) {
+                        nativeSet.erase(fn.getOperation());
+                        notNative(fn, "its class's constructor is not native");
+                        changed = true;
+                        continue;
+                    }
                     // A native end of an edge whose other end is not native stops
                     // being native; the reason names the other end.
                     const auto edge = [&](mlir::Operation * target, const llvm::Twine & forward,

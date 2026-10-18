@@ -1083,6 +1083,10 @@ struct closureLifter {
     /// calls of per-site copies. One left with no call lifts with none
     /// (whyNotLiftableMethod), so its class is not refused for it.
     llvm::DenseSet<mlir::Operation *> copiedAwayMethods;
+    /// Whether method `c`, which no call resolves and nothing copied away, is
+    /// a proved registry class's method that takes nothing but its receiver,
+    /// so it lifts with no call as a copied-away method does (Methods.cpp).
+    bool liftsOnRegistryReceiver(ctjs::CreateClosureOp c);
     /// Whether the cell `capture` holds, at `call`, the value every later read
     /// of it sees.
     bool settledAt(mlir::Value capture, mlir::Operation * call);
