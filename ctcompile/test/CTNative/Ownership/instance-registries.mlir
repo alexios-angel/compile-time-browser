@@ -13,13 +13,21 @@
 // RUN:   | FileCheck %s --check-prefix=PROVED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/proved.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
-// RUN:   | FileCheck %s --check-prefix=LIFT
+// RUN:   | FileCheck %s --check-prefix=LIFT --implicit-check-not=ctnative.not_native
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/proved.js --mlir-print-debuginfo 2>/dev/null \
+// RUN:   | ctjs-opt "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ctnative-lower-to-emitc, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))" \
+// RUN:              --mlir-print-debuginfo -o %t/proved.emitc.mlir
+// RUN: %compilation_unit --module %t/proved.emitc.mlir --js %t/proved.js --work %t/proved-native --name proved
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/tells.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=TELLS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/undefined-global.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
-// RUN:   | FileCheck %s --check-prefix=UNDEFINED-GLOBAL
+// RUN:   | FileCheck %s --check-prefix=UNDEFINED-GLOBAL --implicit-check-not=ctnative.not_native
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/undefined-global.js --mlir-print-debuginfo 2>/dev/null \
+// RUN:   | ctjs-opt "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ctnative-lower-to-emitc, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))" \
+// RUN:              --mlir-print-debuginfo -o %t/undefined-global.emitc.mlir
+// RUN: %compilation_unit --module %t/undefined-global.emitc.mlir --js %t/undefined-global.js --work %t/undefined-global-native --name undefined_global
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/unchecked.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-test-instance-registries \
 // RUN:   | FileCheck %s --check-prefix=UNCHECKED
@@ -107,19 +115,27 @@
 
 // In the lowering, the closure lifter marks the proved constructor, lifts it
 // although it passes `this` to the Map, and resolves the method calls on the
-// instances read back, so `grow` and `dispose` become direct calls.
-// LIFT-DAG: ctjs.call_direct @Widget${{[0-9]+}}({{.*}}{ctnative.receiver
-// LIFT-DAG: ctjs.call_direct @grow${{[0-9]+}}({{.*}}{ctnative.receiver
-// LIFT-DAG: ctjs.call_direct @dispose${{[0-9]+}}({{.*}}{ctnative.receiver
-// LIFT-DAG: ctjs.func private @Widget${{[0-9]+}}({{.*}}ctnative.instance_class = "Widget"
+// instances read back, so `grow` and `dispose` become direct calls. Nothing
+// else in the program can reach Map.prototype (mapRealmUnproved in
+// Analysis/NativeMap.cpp), so the Map, and with it the whole program, is
+// native; the %compilation_unit run checks its answer against the
+// interpreter.
+// LIFT-DAG: emitc.class @Widget
+// LIFT-DAG: call_opaque "std::make_shared<Widget>"
+// LIFT-DAG: call @Widget_{{[0-9]+}}(
+// LIFT-DAG: emitc.call @grow_{{[0-9]+}}(
+// LIFT-DAG: emitc.call @dispose_{{[0-9]+}}(
 
 // The accepted program runs natively end to end in
 // ../Fixtures/Objects/instance-registry.js. Two things its carrier, a
 // `std::shared_ptr<Widget>` that is null for both null and undefined, cannot
 // say are refused in the lowering:
 // TELLS: ctnative.not_native = "a comparison of an instance with something that tells null from undefined, which one null pointer stands for"
-// And reading the global `undefined` beside the Map keeps the Map unproved.
-// UNDEFINED-GLOBAL: ctnative.not_native = "standard Map identity is unproved with other host/global value reads"
+// Reading the global `undefined` beside the Map no longer keeps the Map
+// unproved: it cannot reach Map.prototype, so the program is native (and
+// agrees with the interpreter). ../Lowering/Maps/realm-identity.mlir keeps
+// the global reads that still refuse every Map.
+// UNDEFINED-GLOBAL: emitc.func @run_{{[0-9]+}}
 
 // --- A read used without a check -------------------------------------------
 // UNCHECKED: ctnative.instance_registry = "a value read from the registry Map is used at `ctjs.get_property` without a check - `get` answers undefined for a missing key"

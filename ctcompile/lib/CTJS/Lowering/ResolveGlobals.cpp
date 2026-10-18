@@ -866,7 +866,7 @@ struct bound_write {
 std::optional<std::string> dynamic_global_writes(
     mlir::ModuleOp module, const census & world,
     llvm::MapVector<mlir::StringAttr, bound_write> & bound_through,
-    llvm::SmallVectorImpl<std::string> & every) {
+    llvm::SmallVectorImpl<std::string> & every, llvm::SmallVectorImpl<std::string> & map_reads) {
     std::optional<std::string> reason;
     // Computed once: it is a question about the whole module, and
     // may_be_function() is asked once per `.constructor` read.
@@ -1267,6 +1267,14 @@ std::optional<std::string> dynamic_global_writes(
                 // comes out belongs to another object; it is marked
                 // conservatively.
                 const llvm::StringRef key = constantKey(get.getKey());
+                // A read that may yield the realm's `Map` hands its prototype
+                // to whatever reads `.prototype` next, which this walk does
+                // not follow; the native Map proof (Analysis/NativeMap.cpp)
+                // refuses it.
+                if (kind != watched::compiler && use.getOperandNumber() == 0 &&
+                    (key.empty() || key == "Map")) {
+                    map_reads.push_back(describe(op));
+                }
                 const bool hands_back = kind == watched::compiler
                                             ? hands_back_the_compiler(key)
                                             : hands_back_the_global_object(key);
@@ -1539,8 +1547,18 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         // it, and refuses nothing else.
         llvm::MapVector<mlir::StringAttr, bound_write> bound_through;
         llvm::SmallVector<std::string> escapes;
+        llvm::SmallVector<std::string> map_reads;
         const std::optional<std::string> dynamic =
-            dynamic_global_writes(module, world, bound_through, escapes);
+            dynamic_global_writes(module, world, bound_through, escapes, map_reads);
+        // The reads off the global object that may yield `Map`, for the
+        // native Map proof.
+        if (map_reads.empty()) {
+            module->removeAttr("ctjs.global_map_reads");
+        } else {
+            module->setAttr(
+                "ctjs.global_map_reads",
+                builder.getStrArrayAttr(llvm::to_vector_of<llvm::StringRef>(map_reads)));
+        }
         // Every clause 5 refusal, for a reader deciding what to widen next;
         // the rows below carry only the first.
         if (escapes.empty()) {
