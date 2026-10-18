@@ -348,8 +348,6 @@ auto visit_carrier(const std::variant<T...> & value, Text text, Scalar scalar) {
             using A = std::decay_t<decltype(alternative)>;
             if constexpr (std::is_same_v<A, js_string>) {
                 return text(alternative.value());
-            } else if constexpr (std::is_same_v<A, std::string>) {
-                return text(alternative);
             } else {
                 return scalar(nullable_scalar{alternative});
             }
@@ -410,16 +408,6 @@ template <class R, class... T> R present_carrier(const std::variant<T...> & valu
         value);
 }
 } // namespace detail
-
-inline bool boolean_string_truthy(const std::variant<js_boolean_t, std::string> & value) {
-    return detail::variant_truthy(value);
-}
-inline js_string boolean_string_text(const std::variant<js_boolean_t, std::string> & value) {
-    return detail::variant_text(value);
-}
-inline js_num to_number(const std::variant<js_boolean_t, std::string> & value) {
-    return detail::variant_number(value);
-}
 
 /// A value proved to be a Number or a String.
 using number_string = std::variant<js_num, js_string>;
@@ -569,8 +557,7 @@ inline std::string global_string(const nullable_boolean_string & value) {
 
 template <class T>
 concept primitive_add_operand =
-    detail::one_of<T, js_num, js_boolean_t, nullable_scalar, js_string, nullable_string,
-                   std::variant<js_boolean_t, std::string>> ||
+    detail::one_of<T, js_num, js_boolean_t, nullable_scalar, js_string, nullable_string> ||
     detail::primitive_union<T>;
 
 template <primitive_add_operand L, primitive_add_operand R>
@@ -580,8 +567,6 @@ number_string add(const L & left, const R & right) {
             return true;
         } else if constexpr (std::is_same_v<T, nullable_string>) {
             return value.tag == nullable_string::kind::string;
-        } else if constexpr (std::is_same_v<T, std::variant<js_boolean_t, std::string>>) {
-            return std::holds_alternative<std::string>(value);
         } else if constexpr (detail::primitive_union<T>) {
             return std::holds_alternative<js_string>(value);
         } else {
