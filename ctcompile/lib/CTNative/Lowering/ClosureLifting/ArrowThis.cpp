@@ -41,9 +41,7 @@
 namespace ctcompile::ctnative::lowering_detail {
 
 namespace {
-/// On a rewritten arrow, the capture slot that holds its lexical `this`; on
-/// the cell captureLexicalThis made for it, a unit marker.
-constexpr llvm::StringLiteral kLexicalThis = "ctnative.lexical_this";
+constexpr llvm::StringLiteral kLexicalThis = kNativeLexicalThis;
 
 /// The slot that `target`'s lexical `this` is captured in, if it has one.
 std::optional<unsigned> lexicalThisSlot(ctjs::FuncOp target) {

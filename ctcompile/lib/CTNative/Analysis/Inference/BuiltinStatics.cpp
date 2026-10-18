@@ -52,6 +52,16 @@ constexpr TypeInference::BuiltinStatic builtinStatics[] = {
      1,
      Result::string,
      true},
+    // Object.prototype.toString (20.1.3.6) of a primitive, or of a union of
+    // them: Bootstrap's toType reads the type name out of "[object Number]".
+    {"Object",
+     "toString",
+     "ctnative::Object.prototype.toString.call",
+     {Param::primitive},
+     1,
+     1,
+     Result::string,
+     true},
     // Element.prototype.querySelectorAll (DOM 4.2.6) and querySelector:
     // Bootstrap's SelectorEngine calls them through the prototype on its root
     // element, which may be the document element read as a default.

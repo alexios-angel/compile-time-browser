@@ -5,11 +5,15 @@
 // of them. Generated code reads `ctnative::as_string(x)` or
 // `ctnative::as_number(x)`.
 //
+// ctnative.hpp includes this header last, after the carriers it converts, and
+// it does not include ctnative.hpp back: a test driver that inlines
+// ctnative.hpp's text into the generated file (CTNative/harness.py,
+// inline_runtime) would otherwise get the runtime a second time from the real
+// header.
+//
 //===----------------------------------------------------------------------===//
 
 #pragma once
-
-#include "ctcompile/CTNative/Runtime/ctnative.hpp"
 
 #include <variant>
 

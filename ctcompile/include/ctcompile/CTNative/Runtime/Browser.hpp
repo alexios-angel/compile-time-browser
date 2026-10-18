@@ -43,6 +43,10 @@ class js_element_t {
     }
 
 public:
+    /// An unbound view: the value of a dead carried slot, such as a for-of
+    /// loop's element once its array is exhausted. Nothing reads it; value()
+    /// rejects it, since an element_ref without an owner names no element.
+    js_element_t() noexcept : element{}, styles(nullptr) {}
     explicit js_element_t(ctbrowser::element_ref borrowed, ctbrowser::style::engine & engine)
         : element(borrowed), styles(&engine) {
         (void)value();

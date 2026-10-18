@@ -392,6 +392,10 @@ struct lowering {
     /// Lowers a replace call with a specialised callback, and skips the plumbing
     /// it consumes (EmitC/StringCallbacks.cpp). False for any other operation.
     bool replaceStringCallback(mlir::Operation * o);
+    /// Lowers an accepted `throw new TypeError(message)` to
+    /// `ctnative::throw_type_error(message)`, and skips what it consumes
+    /// (Exceptions/TypeErrors.cpp). False for any other operation.
+    bool replaceTypeError(mlir::Operation * o);
     /// Gives each data-record call (TypeInference::markRecordReturns) its
     /// class by value and moves the result into a local (EmitC/Records.cpp).
     void passRecords(ctjs::FuncOp fn);

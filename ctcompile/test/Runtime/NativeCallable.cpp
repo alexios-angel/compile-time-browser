@@ -116,6 +116,27 @@ void test_a_set_member_copies_its_captures() {
     CHECK(ctnative::invoke_callable(f, 1.0) == 3.0);
 }
 
+struct box {
+    double x;
+};
+
+double plus_x(box * const self, double value) {
+    return value + self->x;
+}
+
+/// A member whose capture is a receiver pointer is spelled from the lifted
+/// function's own signature, `box * const` decayed to `box *`, which is what
+/// bind<plus_x> makes from a `box *`.
+static_assert(std::is_same_v<ctnative::bound_prefix<plus_x, 1>, ctnative::bound<plus_x, box *>>);
+static_assert(std::is_same_v<ctnative::bound_prefix<offset, 0>, ctnative::bound<offset>>);
+
+void test_a_member_binds_a_receiver_pointer() {
+    box b{4.0};
+    const std::variant<ctnative::bound_prefix<plus_x, 1>> f = ctnative::bind<plus_x>(&b);
+    b.x = 6.0;
+    CHECK(ctnative::invoke_callable(f, 1.0) == 7.0);
+}
+
 } // namespace
 
 int main() {
@@ -126,5 +147,6 @@ int main() {
     test_a_reference_copies_as_the_same_callable();
     test_a_set_calls_the_member_it_holds();
     test_a_set_member_copies_its_captures();
+    test_a_member_binds_a_receiver_pointer();
     REPORT("native_callable");
 }

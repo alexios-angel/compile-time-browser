@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../../Analysis/OwnedGlobalRoots.h"
+#include "../Exceptions/TypeErrors.h"
 #include "Admission.h"
 #include "ctcompile/CTJS/Import/EngineGlobals.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
@@ -190,7 +191,8 @@ bool admission::function(ctjs::FuncOp fn) {
             ok = refuse(("uses the engine-reserved name `" + reserved + "`").str());
             return;
         }
-        ok = op(o);
+        const std::optional<bool> thrown = typeErrorOperation(*this, o);
+        ok = thrown ? *thrown : op(o);
         if (!ok) { return; }
         // A result that lowers to nothing needs no carrier: lowersToNothing's
         // list, plus the bookkeeping, literal and owned-global rows here.
