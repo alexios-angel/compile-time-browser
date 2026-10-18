@@ -26,6 +26,12 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/computed.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=COMPUTED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/constant-key.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals \
+// RUN:   | FileCheck %s --check-prefix=CONSTANT-KEY-READS --implicit-check-not=ctjs.global_map_reads
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/constant-key.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=CONSTANT-KEY --implicit-check-not=ctnative.map_reason
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/families.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=FAMILIES
@@ -57,6 +63,13 @@
 // COMPUTED-READS: ctjs.global_map_reads = ["ctjs.get_property at {{[^"]*}}"]
 // COMPUTED: ctjs.func {{(private )?}}@probe$1
 // COMPUTED: ctjs.construct {{.*}}ctnative.map_reason = "standard Map identity is unproved with other host/global value reads"
+
+// --- A computed read whose key is one of two constants ---------------------------
+// `globalThis[key]` where `key` is "innerHeight" or "innerWidth" on every
+// path cannot yield `Map`, so it is not recorded and the Map is native.
+// CONSTANT-KEY-READS: ctjs.globals = [
+// CONSTANT-KEY: ctjs.func private @probe$1
+// CONSTANT-KEY: ctjs.construct {{.*}}ctnative.map_site
 
 // --- One family escapes ------------------------------------------------------------
 // The Map `leak` hands to `JSON.stringify` stays boxed with its own reason;
@@ -120,3 +133,15 @@ function nest() {
 function keep() { var map = new Map(); map.set(1, 2); return map.size; }
 var a = nest();
 var b = keep();
+
+//--- constant-key.js
+function probe() { var map = new Map(); map.set(1, 2); return map.size; }
+function other(text) { return JSON.parse(text); }
+function size(wide) {
+    var key = "innerHeight";
+    if (wide) { key = "innerWidth"; }
+    return typeof globalThis[key];
+}
+var a = probe();
+var b = other("1");
+var c = size(true);
