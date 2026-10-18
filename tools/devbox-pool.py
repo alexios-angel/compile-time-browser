@@ -35,7 +35,7 @@ validator's tree. Stopped boxes are skipped, not started.
 `status` shows each box's power state and free slots and, for a running box,
 its CPU (sampled over one second), memory and disk use, read with psutil
 on the box over Fabric. A box that does not answer is looked up through its
-cloud's SDK (boto3, google-cloud-compute) with the ids in its terraform state.
+cloud's SDK (boto3, google-cloud-compute, ibm-vpc) with the ids in its terraform state.
 
 Run it from any worktree by its absolute path: it finds its settings beside
 itself, and COMMAND runs in the caller's working directory.
@@ -212,25 +212,48 @@ def usage(box):
         return None
     gib = 1 << 30
     return (
-        f"CPU {u['cpu']:3.0f}% of {u['cores']} cores, "
+        f"CPU {u['cpu']:3.0f}% of {u['cores']} CPUs, "
         f"memory {u['mem_used'] / gib:.1f}/{u['mem_total'] / gib:.1f} GiB, "
         f"disk {u['disk_used'] / gib:.0f}/{u['disk_total'] / gib:.0f} GiB used"
     )
+
+
+def ibm_authenticator():
+    """IBMCLOUD_API_KEY when set, else the token of the `ibmcloud login` session."""
+    from ibm_cloud_sdk_core.authenticators import BearerTokenAuthenticator, IAMAuthenticator
+
+    if key := os.environ.get("IBMCLOUD_API_KEY"):
+        return IAMAuthenticator(key)
+    out = subprocess.run(
+        ["ibmcloud", "iam", "oauth-tokens", "--output", "json"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    return BearerTokenAuthenticator(json.loads(out)["iam_token"].removeprefix("Bearer "))
 
 
 def cloud_state(box):
     """The box's power state, lowercased, from its cloud's API.
 
     The instance comes from the terraform state beside the box's server.sh:
-    an `instance_id` output means AWS, a `project_id` output means GCP.
+    a `cloud` output of "ibm" means IBM Cloud, an `instance_id` output AWS,
+    a `project_id` output GCP.
     """
     from botocore.exceptions import BotoCoreError, ClientError
     from google.api_core.exceptions import GoogleAPIError
     from google.auth.exceptions import GoogleAuthError
+    from ibm_cloud_sdk_core import ApiException
 
     state = Path(box["server"]).with_name("terraform.tfstate")
     try:
         out = {k: v["value"] for k, v in json.loads(state.read_text())["outputs"].items()}
+        if out.get("cloud") == "ibm":
+            from ibm_vpc import VpcV1
+
+            vpc = VpcV1(authenticator=ibm_authenticator())
+            vpc.set_service_url(f"https://{out['region']}.iaas.cloud.ibm.com/v1")
+            return vpc.get_instance(out["vsi_id"]).get_result()["status"]
         if "instance_id" in out:
             import boto3
 
@@ -254,6 +277,7 @@ def cloud_state(box):
         ClientError,
         GoogleAPIError,
         GoogleAuthError,
+        ApiException,
     ) as e:
         return f"unknown ({type(e).__name__})"
 

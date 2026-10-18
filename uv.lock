@@ -396,6 +396,7 @@ tools = [
     { name = "botocore", extra = ["crt"] },
     { name = "fabric" },
     { name = "google-cloud-compute" },
+    { name = "ibm-vpc" },
 ]
 
 [package.metadata]
@@ -418,6 +419,7 @@ tools = [
     { name = "botocore", extras = ["crt"] },
     { name = "fabric", specifier = ">=3,<4" },
     { name = "google-cloud-compute" },
+    { name = "ibm-vpc" },
 ]
 
 [[package]]
@@ -725,6 +727,34 @@ wheels = [
 ]
 
 [[package]]
+name = "ibm-cloud-sdk-core"
+version = "3.28.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyjwt" },
+    { name = "python-dateutil" },
+    { name = "requests" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a6/d8/5e8e5fb066e206340d90213c83c5e4147bab81d6fcf89358e941b93030d9/ibm_cloud_sdk_core-3.28.0.tar.gz", hash = "sha256:3a5d8621e62b587d86959e91ad80658a1d23306c4644db33199c6628754d0ff2", size = 86479, upload-time = "2026-10-08T07:36:53.376Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/29/5b/1d4153cca3a910d8bc4b119f92ff9d0911e257d823a77a14551148b63ab4/ibm_cloud_sdk_core-3.28.0-py3-none-any.whl", hash = "sha256:40278bc9e4ac5326303039c59280de1e8c7137827dc349d8c4c96c32e881770e", size = 76751, upload-time = "2026-10-08T07:36:51.284Z" },
+]
+
+[[package]]
+name = "ibm-vpc"
+version = "0.36.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "ibm-cloud-sdk-core" },
+    { name = "python-dateutil" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7e/5f/bc4c4183f83940e8803def8bc02bf78999b0a82d8485c71c11f9a6335f1d/ibm_vpc-0.36.0.tar.gz", hash = "sha256:1ca8f5ef3cf273b272a3b48b1e6d57c25c7c4eab3bb59db585abc3d989648c51", size = 645918, upload-time = "2026-10-13T10:38:00.168Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5a/5c/ec64c7f042d7e59934e24f66f5dbafd19055948b052ff3fb806b56ab3042/ibm_vpc-0.36.0-py3-none-any.whl", hash = "sha256:721d120e2725dcd068a98f3044d061960d676375435ca787f821328bf922ce1f", size = 663872, upload-time = "2026-10-13T10:37:58.817Z" },
+]
+
+[[package]]
 name = "idna"
 version = "3.20"
 source = { registry = "https://pypi.org/simple" }
@@ -1008,6 +1038,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/49/2e/ced460408999b33da6b31b0021b0f37d329e202d4169aeb164493778f25b/pygments-2.21.0.tar.gz", hash = "sha256:610ca751c9bc2492b38eb9a38a7fbc93edbbb2d7182edaf34e66ae493dee5c8c", size = 5005329, upload-time = "2026-08-17T08:02:48.824Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/71/46/17f022dd3e953bf20a04a028a21ec746d942f8d2af30fa0f124fa0e6a684/pygments-2.21.0-py3-none-any.whl", hash = "sha256:2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9", size = 1250147, upload-time = "2026-08-17T08:02:44.912Z" },
+]
+
+[[package]]
+name = "pyjwt"
+version = "2.15.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/43/ea/5194e52748b0da83d71e082d75496eaec6e58f419f5e184786ded517e6a9/pyjwt-2.15.1.tar.gz", hash = "sha256:4f259e80cdfb6b3fc18a7de51fd1ef9ec79652f25019bae68975ca2468a34df8", size = 121252, upload-time = "2026-09-28T18:40:42.598Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/50/ca/44de4e75f8aadc457f0634be3b542815078ded46dca30efb960edeecad6e/pyjwt-2.15.1-py3-none-any.whl", hash = "sha256:42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193", size = 33860, upload-time = "2026-09-28T18:40:41.429Z" },
 ]
 
 [[package]]
