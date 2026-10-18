@@ -178,11 +178,18 @@ int main(int argc, char ** argv) {
     // way). Each --script then runs in the page's own context, as a classic
     // script would (check-workload.py's script-run loads a library and a probe
     // that calls it on the page's elements). Prints each console.log line; a
-    // script error fails.
+    // script error fails, after the lines: each page script is its own program,
+    // so the scripts after one that threw still ran, and their lines show it.
     if (page) {
         ctbrowser::shell::browser live{ctbrowser::shell::browser_options{400, 300}};
+        const auto print_lines = [&live] {
+            for (const std::string & line : live.bindings().console_output()) {
+                std::printf("%s\n", line.c_str());
+            }
+        };
         live.load_html(source);
         if (!live.script_error().empty()) {
+            print_lines();
             std::fprintf(stderr, "native reference: %s threw: %s\n", path.c_str(),
                          live.script_error().c_str());
             return 1;
@@ -196,14 +203,13 @@ int main(int argc, char ** argv) {
             const std::string text{std::istreambuf_iterator<char>{file},
                                    std::istreambuf_iterator<char>{}};
             if (!live.run_script(text) || !live.script_error().empty()) {
+                print_lines();
                 std::fprintf(stderr, "native reference: %s threw in %s: %s\n", script.c_str(),
                              path.c_str(), live.script_error().c_str());
                 return 1;
             }
         }
-        for (const std::string & line : live.bindings().console_output()) {
-            std::printf("%s\n", line.c_str());
-        }
+        print_lines();
         return 0;
     }
 

@@ -76,7 +76,16 @@ private:
     std::string step(mlir::Value value, llvm::SmallVectorImpl<mlir::Value> & work, objects & into);
     std::string parameterSources(FuncOp function, unsigned index,
                                  llvm::SmallVectorImpl<mlir::Value> & work);
-    std::string resultSources(CallOp call, llvm::SmallVectorImpl<mlir::Value> & work);
+    std::string resultSources(mlir::Operation * call, llvm::SmallVectorImpl<mlir::Value> & work);
+    /// The functions `call` (a ctjs.call or ctjs.call_direct) may enter.
+    std::string calleesOf(mlir::Operation * call, llvm::SmallVectorImpl<FuncOp> & functions);
+    /// Walks `values` of `function` in the frame `call` enters it with: the
+    /// function's parameters take the call's arguments. What leaves the frame
+    /// goes to `work`; the literals and closures made in it go to `made`.
+    std::string inFrame(FuncOp function, mlir::Operation * call,
+                        llvm::SmallVector<mlir::Value> values,
+                        llvm::SmallVectorImpl<mlir::Value> & work,
+                        llvm::SetVector<mlir::Operation *> & made);
     std::string elementSources(CallOp next, llvm::SmallVectorImpl<mlir::Value> & work);
     std::string onlyDestructured(CreateArrayOp array);
 
