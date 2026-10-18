@@ -317,7 +317,9 @@ unsigned rewriteSpreadParameters(llvm::ArrayRef<calledFunction> functions,
     }
     // Every JavaScript parameter of a function whose calls are all listed, in
     // a function that does not read `arguments` (whose elements alias the
-    // parameters in sloppy mode).
+    // parameters in sloppy mode) and does not use its own closure, `%arg2`: a
+    // named function expression calls itself through it, and that call is in
+    // no list.
     llvm::SetVector<mlir::Value> tracked;
     for (const calledFunction & row : functions) {
         ctjs::FuncOp fn = row.function;
@@ -325,8 +327,11 @@ unsigned rewriteSpreadParameters(llvm::ArrayRef<calledFunction> functions,
         const bool readsArguments = fn.walk([](ctjs::MakeArgumentsOp) {
                                           return mlir::WalkResult::interrupt();
                                       }).wasInterrupted();
-        if (readsArguments) { continue; }
         mlir::Block & entry = fn.getBody().front();
+        if (readsArguments || entry.getNumArguments() < ctjs::implicit_arguments ||
+            !entry.getArgument(ctjs::arg_callee).use_empty()) {
+            continue;
+        }
         for (unsigned i = ctjs::implicit_arguments; i < entry.getNumArguments(); ++i) {
             if (!entry.getArgument(i).use_empty()) { tracked.insert(entry.getArgument(i)); }
         }

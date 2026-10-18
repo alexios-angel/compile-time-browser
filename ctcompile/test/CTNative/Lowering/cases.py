@@ -19,6 +19,23 @@ HERE = Path(__file__).resolve().parent
 MAINS = {}
 
 CASES = {
+    "Closures/spread-parameters": [
+        "split-file %s %t",
+        "for name in one forwarded; do    ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/$name.mlir;    ctjs-opt %t/$name.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/$name.cpp; done",
+        "FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/one.mlir",
+        "FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/forwarded.mlir",
+        "FileCheck %s --check-prefix=CPP < %t/one.cpp",
+        "%gxx -O2 %t/one.cpp -o %t/one-gcc && %t/one-gcc | FileCheck %s --check-prefix=ONE",
+        "%clangxx -O2 %t/one.cpp -o %t/one-clang && %t/one-clang | FileCheck %s --check-prefix=ONE",
+        "%native_reference %t/one.js | FileCheck %s --check-prefix=ONE",
+        '%node -e \'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);\' %t/one.js | FileCheck %s --check-prefix=ONE-NODE',
+        "%gxx -O2 %t/forwarded.cpp -o %t/forwarded-gcc && %t/forwarded-gcc | FileCheck %s --check-prefix=FORWARDED",
+        "%clangxx -O2 %t/forwarded.cpp -o %t/forwarded-clang && %t/forwarded-clang | FileCheck %s --check-prefix=FORWARDED",
+        "%native_reference %t/forwarded.js | FileCheck %s --check-prefix=FORWARDED",
+        '%node -e \'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);\' %t/forwarded.js | FileCheck %s --check-prefix=FORWARDED-NODE',
+        "for name in two assigned written; do    ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc    | FileCheck %s --check-prefix=KEPT; done",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/selfcall.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc    | FileCheck %s --check-prefix=SELF",
+    ],
     "Admission/global-undefined": [
         "split-file %s %t",
         "python3 %S/nullable-global-output.py --translate ctjs-translate --opt ctjs-opt --work %t/execute --node %node --reference %native_reference",
