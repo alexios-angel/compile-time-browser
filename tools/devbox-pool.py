@@ -123,6 +123,17 @@ def acquire(settings, args):
         time.sleep(settings.get("poll_seconds", 10))
 
 
+def knows_build_load():
+    """Whether the calling worktree's remote-build passes CT_BUILD_LOAD on."""
+    try:
+        root = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"], check=True, capture_output=True, text=True
+        ).stdout.strip()
+        return "CT_BUILD_LOAD" in (Path(root) / "tools" / "remote_build.py").read_text()
+    except (OSError, subprocess.CalledProcessError):
+        return False
+
+
 def run(settings, args):
     if not args.command:
         sys.exit("devbox-pool: run needs a command after --")
@@ -140,7 +151,14 @@ def run(settings, args):
         env = dict(os.environ, DEVBOX_HOST=box["name"])
         # A box shared by several slots gives each job's build a share of the
         # cores (tools/remote-build.sh's -j); an explicit CT_BUILD_JOBS wins.
-        if "build_jobs" in box:
+        # With `build_load`, a remote-build.sh that knows CT_BUILD_LOAD lets
+        # every build use the whole box and has Ninja hold back new jobs
+        # while the load average is above it; an older one keeps build_jobs,
+        # since uncapped builds side by side can run the box out of memory.
+        if "build_load" in box and knows_build_load():
+            env.setdefault("CT_BUILD_JOBS", str(box["build_load"]))
+            env.setdefault("CT_BUILD_LOAD", str(box["build_load"]))
+        elif "build_jobs" in box:
             env.setdefault("CT_BUILD_JOBS", str(box["build_jobs"]))
         return subprocess.run(command, check=False, env=env).returncode
     finally:
