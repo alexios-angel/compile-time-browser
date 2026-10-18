@@ -1,8 +1,8 @@
 //===- ClosureLifting/ArrayCallbacks.cpp - Array-method callbacks -*- C++ -*-===//
 //
 // Specialises a closure passed to one of the Array methods the native runtime
-// implements with a callback (forEach, map, filter, some, every, find and
-// reduce, in Runtime/Array.hpp). The closure's only use is that argument, so
+// implements with a callback (forEach, map, filter, some, every, find, reduce
+// and sort, in Runtime/Array.hpp). The closure's only use is that argument, so
 // the call is its one call site: lift() makes its captures leading parameters
 // as for any lifted closure, and the call then passes the captured values in
 // place of the closure. The lowering spells the call as
@@ -42,13 +42,15 @@ std::optional<std::string> closureLifter::whyNotArrayCallback(ctjs::CreateClosur
     ctjs::CallOp call = arrayCallbacks.lookup(c.getOperation());
     const std::string method = ("Array.prototype." + ctjs::methodKey(call)).str();
     const bool reduce = ctjs::methodKey(call) == "reduce";
+    const bool sort = ctjs::methodKey(call) == "sort";
     const std::size_t arguments = call.getArgs().size();
     if (reduce && arguments < 2) {
         return method + " without an initial value - it throws on an empty array";
     }
     if (arguments > (reduce ? 2u : 1u)) {
-        return method +
-               (reduce ? " with an argument after the initial value" : " called with a thisArg");
+        return method + (reduce ? " with an argument after the initial value"
+                         : sort ? " with an argument after the comparator"
+                                : " called with a thisArg");
     }
     if (auto why = whyTargetIsNotLiftable(c)) { return why; }
     ctjs::FuncOp target = targetOf(c);
@@ -63,10 +65,11 @@ std::optional<std::string> closureLifter::whyNotArrayCallback(ctjs::CreateClosur
     if (ctjs::readsRawArguments(target)) {
         return "the callback of " + method + " reads its `arguments`";
     }
-    // The runtime passes (accumulator,) element, index and array, and calls a
-    // callback with as many of them as it declares, from the first.
+    // The runtime passes (accumulator,) element, index and array, or a
+    // comparator two elements, and calls a callback with as many of them as
+    // it declares, from the first.
     const unsigned declared = ctjs::parameterCount(entry);
-    const unsigned passed = reduce ? 4 : 3;
+    const unsigned passed = reduce ? 4 : sort ? 2 : 3;
     if (declared == 0 || declared > passed) {
         return "the callback of " + method + " declares " + std::to_string(declared) +
                " parameters - it is passed " + std::to_string(passed) + ", and needs at least one";

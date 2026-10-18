@@ -1859,8 +1859,13 @@ def check_prototype_keys(args, prepared):
     The helper reads numeric [0] on its parameter. Changing only that key and
     the method name tells disjoint keys from collisions: an empty-string key
     must still run natively, while the non-integer numbers (each paired with
-    the method name it would collide with, where there is one) and a dynamic
-    key must be refused. Returns (native runs, refusals).
+    the method name it would collide with, where there is one) must be
+    refused. A dynamic key runs natively too: the constructor rule counts only
+    constant-key reads, because admission gives an instance's struct only
+    constant-key accesses, so a parameter read through a dynamic key never
+    holds an instance in native code. prototype-methods.mlir's PARAMREAD keeps
+    a helper that does receive the instance refused. Returns (native runs,
+    refusals).
     """
     # #ctjs.number<N> holds a double's IEEE-754 bit pattern as an unsigned
     # integer: -0.0, NaN, +Infinity, -Infinity and 1e20 below.
@@ -1885,11 +1890,11 @@ def check_prototype_keys(args, prepared):
         )
         native = args.work / f"{name}.native.mlir"
         run([args.opt, str(source), "--ctnative-lower-to-emitc", "-o", str(native)])
-        if label == "empty":
+        if label in ("empty", "dynamic"):
             checked += check_executable(args, name, native, 7)
         else:
             check_refusal(name, native.read_text(), len(FUNCTION.findall(text)))
             if "its prototype method is also observed as a value" not in native.read_text():
-                raise RuntimeError(f"{name}: literal or unknown key escaped the prototype census")
+                raise RuntimeError(f"{name}: literal key escaped the prototype census")
             refused += 1
     return checked, refused

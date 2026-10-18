@@ -212,6 +212,37 @@ struct closedValueFlow {
             }
         }
     }
+    /// The capture parameters and the call operands
+    /// connectArrayCallbackCaptures joined.
+    llvm::DenseSet<mlir::Value> callbackCaptures;
+    llvm::DenseSet<mlir::OpOperand *> callbackCaptureUses;
+    /// Joins what an array-method call passes for its callback's captures
+    /// (ClosureLifting/ArrayCallbacks.cpp: the call's leading arguments, in
+    /// capture order) to the callback's capture parameters. The runtime binds
+    /// those values to the callback, and nothing else calls it. Opt-in: only
+    /// the native Map proof asks for it.
+    void connectArrayCallbackCaptures(mlir::ModuleOp module) {
+        module.walk([&](ctjs::CallOp call) {
+            auto name = call->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativeArrayCallback);
+            auto callback =
+                name ? mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, name)
+                     : ctjs::FuncOp{};
+            const auto captures =
+                callback ? callback->getAttrOfType<mlir::IntegerAttr>(kNativeCaptures) : nullptr;
+            if (!captures || callback.getBody().empty()) { return; }
+            mlir::Block & entry = callback.getBody().front();
+            const auto count = static_cast<unsigned>(captures.getInt());
+            for (unsigned k = 0; k < count && k < call.getArgs().size() &&
+                                 ctjs::implicit_arguments + k < entry.getNumArguments();
+                 ++k) {
+                const mlir::BlockArgument parameter =
+                    entry.getArgument(ctjs::implicit_arguments + k);
+                join(call.getArgs()[k], parameter);
+                callbackCaptures.insert(parameter);
+                callbackCaptureUses.insert(&call.getArgsMutable()[k]);
+            }
+        });
+    }
     /// Records every function's returns and every direct call's edges.
     void build(mlir::ModuleOp module) {
         module.walk([&](ctjs::FuncOp fn) {

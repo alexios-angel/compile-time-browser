@@ -44,10 +44,20 @@
 // set, so the class is flattened; the arrow keeps no check of the flag, and
 // no capture of it either, so the arrow rule lifts it with its lexical `this`
 // as an object argument and the arrow reads no upvalue. The flag's slot is
-// gone, so `this` is the arrow's only capture.
+// gone, so `this` is the arrow's only capture: fn_4 takes D's instance as its
+// one parameter. D's constructor and the copy of P's constructor it calls
+// through its prototype lift together, so the whole program lowers natively
+// and prints what Node and the interpreter print with both compilers.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/arrow.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
-// RUN:   | FileCheck %s --check-prefix=ARROW --implicit-check-not=ctnative.inheritance_reason
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/arrow.mlir
+// RUN: FileCheck %s --check-prefix=ARROW --implicit-check-not=ctnative.inheritance_reason --implicit-check-not=ctnative.not_native < %t/arrow.mlir
+// RUN: ctjs-opt %t/arrow.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/arrow.cpp
+// RUN: %gxx -O2 %t/arrow.cpp -o %t/arrow-gcc
+// RUN: %t/arrow-gcc | FileCheck %s --check-prefix=ARROW-RUN
+// RUN: %clangxx -O2 %t/arrow.cpp -o %t/arrow-clang
+// RUN: %t/arrow-clang | FileCheck %s --check-prefix=ARROW-RUN
+// RUN: %native_reference %t/arrow.js | FileCheck %s --check-prefix=ARROW-RUN
+// RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/arrow.js | FileCheck %s --check-prefix=ARROW-RUN
 //
 // Classes of a factory function are stored in bindings, and a child's
 // `extends` reads its parent's binding. Once flattening drops the heritage
@@ -79,11 +89,14 @@
 // FACTORY: ctnative.copies = {
 // FACTORY-NOT: _Base$
 // FACTORY: ctnative.inheritance_erased = [{{.*}}"Config$3"{{.*}}"Base$5"]
-// ARROW: ctjs.call_direct @fn$4({{.*}}ctnative.object_args
-// ARROW: ctjs.func private @fn$4({{.*}}ctnative.captures = 1 : i32, ctnative.lexical_this = 0 : i32
-// ARROW-NOT: ctjs.load_upvalue
+// ARROW: emitc.class @D
+// ARROW: emitc.func @D_{{[0-9]+}}(%arg0: !emitc.ptr<!emitc.opaque<"D">>
+// ARROW: call @fn_4(%arg0) : (!emitc.ptr<!emitc.opaque<"D">>)
+// ARROW: emitc.func @fn_4(%arg0: !emitc.ptr<!emitc.opaque<"D">>) ->
+// ARROW-NOT: load_upvalue
 // ARROW-NOT: ReferenceError
-// ARROW: ctjs.return
+// ARROW: return
+// ARROW-RUN: r=5
 // STATICS-NOT: ctnative.inheritance_reason
 // STATICS-DAG: emitc.func @make_D_
 // STATICS-DAG: emitc.func @name_D_

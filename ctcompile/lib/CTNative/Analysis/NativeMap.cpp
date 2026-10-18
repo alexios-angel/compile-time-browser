@@ -360,7 +360,9 @@ std::string collect(plan & out, closedValueFlow & graph,
         }
     }
     for (mlir::Value object : out.members) {
-        if (auto arg = llvm::dyn_cast<mlir::BlockArgument>(object)) {
+        if (graph.callbackCaptures.contains(object)) {
+            // A capture an array-method call binds to its callback.
+        } else if (auto arg = llvm::dyn_cast<mlir::BlockArgument>(object)) {
             if (!graph.closedParameter(arg)) {
                 return "native Map parameter requires a closed function with visible callers";
             }
@@ -392,6 +394,8 @@ std::string collect(plan & out, closedValueFlow & graph,
             if (use.getOperandNumber() == 1 && graph.staticWrites.contains(use.getOwner())) {
                 continue;
             }
+            // Bound to an array-method callback as one of its captures.
+            if (graph.callbackCaptureUses.contains(&use)) { continue; }
             if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
                 call && use.getOperandNumber() >= 3) {
                 auto fn = call.getTarget();
@@ -708,6 +712,7 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals,
     for (ctjs::ConstructOp made : madeSites) { graph.add(made.getResult()); }
     graph.connectEnvironmentReads(module);
     graph.connectRunOnceStatics(module);
+    graph.connectArrayCallbackCaptures(module);
     graph.build(module);
     connectSetReceivers(graph, module);
     connectPayloads(graph, module, madeSites);

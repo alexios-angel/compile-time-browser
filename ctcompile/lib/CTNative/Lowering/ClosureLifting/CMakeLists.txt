@@ -10,6 +10,7 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   ClassInheritance.h
   ClassStatics.cpp
   ClosureSets.cpp
+  ConstantTests.cpp
   Bindings.cpp
   BorrowedCallbacks.cpp
   Captures.cpp
@@ -25,6 +26,8 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   RunOnce.cpp
   SelfCalls.cpp
   Singletons.cpp
+  SpreadParameters.cpp
+  SpreadParameters.h
   StringCallbacks.cpp
   ClosureLifter.h
 )

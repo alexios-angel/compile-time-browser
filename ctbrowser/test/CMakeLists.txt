@@ -23,11 +23,30 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}"
                    "${CTBROWSER_MONOREPO_ROOT}/tools/check/check-cmake-hygiene.py")
   set_tests_properties(cmake_hygiene PROPERTIES TIMEOUT 30)
+endif()
+
+# test_review_tools.py and test_baseline.py are pytest files: running one with
+# Python only defines its tests. pytest comes from the repository's uv
+# environment (pyproject.toml's `test` group, which tools/remote-build.sh
+# syncs into .venv at the repository root), so these run that environment's
+# pytest, as ctcompile/test/cmake/Lit.cmake runs its lit.
+find_program(CTBROWSER_PYTEST
+  NAMES pytest
+  HINTS "${CTBROWSER_MONOREPO_ROOT}/.venv/bin"
+  NO_DEFAULT_PATH
+  DOC "pytest from the repository's uv environment, for the tool_* tests")
+if(CTBROWSER_PYTEST)
   foreach(check review_tools baseline)
     add_test(NAME tool_${check}
-             COMMAND "${Python3_EXECUTABLE}" "${CTBROWSER_MONOREPO_ROOT}/tools/check/test_${check}.py")
+             COMMAND "${CTBROWSER_PYTEST}" -q -p no:cacheprovider
+                     "${CTBROWSER_MONOREPO_ROOT}/tools/check/test_${check}.py")
     set_tests_properties(tool_${check} PROPERTIES TIMEOUT 30)
   endforeach()
+else()
+  # Say so rather than skip silently: a missing test looks like a passing one.
+  message(STATUS
+    "ctbrowser: pytest not found in ${CTBROWSER_MONOREPO_ROOT}/.venv - tool_review_tools "
+    "and tool_baseline are unavailable. Run `uv sync --group test` at the repository root")
 endif()
 
 # === test262 ===

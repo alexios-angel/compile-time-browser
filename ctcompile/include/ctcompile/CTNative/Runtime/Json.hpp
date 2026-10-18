@@ -22,7 +22,6 @@
 #include <cstddef>
 #include <memory>
 #include <string>
-#include <type_traits>
 #include <utility>
 #include <variant>
 
@@ -34,40 +33,38 @@ namespace detail {
 /// SerializeJSONProperty (ECMA-262 25.5.2.2) for one node, with no replacer
 /// and no gap, appended to `out`.
 inline void json_write(const ctbrowser::json_value & value, std::string & out) {
-    std::visit(
-        [&]<class T>(const T & node) {
-            if constexpr (std::is_same_v<T, std::nullptr_t>) {
-                out += "null";
-            } else if constexpr (std::is_same_v<T, bool>) {
-                out += node ? "true" : "false";
-            } else if constexpr (std::is_same_v<T, double>) {
-                // Step 9: a finite Number is ToString(value); NaN and the
-                // infinities are "null".
-                out += std::isfinite(node) ? ctbrowser::number_to_string(node) : "null";
-            } else if constexpr (std::is_same_v<T, std::string>) {
-                ctbrowser::quote_json(node, out);
-            } else if constexpr (std::is_same_v<T, ctbrowser::json_value::array>) {
-                // SerializeJSONArray (25.5.2.6) with an empty gap.
-                out += '[';
-                for (std::size_t i = 0; i < node.size(); ++i) {
-                    if (i != 0) { out += ','; }
-                    json_write(node[i], out);
-                }
-                out += ']';
-            } else {
-                // SerializeJSONObject (25.5.2.5) with an empty gap, in the
-                // tree's own member order.
-                out += '{';
-                for (std::size_t i = 0; i < node.size(); ++i) {
-                    if (i != 0) { out += ','; }
-                    ctbrowser::quote_json(node[i].key, out);
-                    out += ':';
-                    json_write(node[i].value, out);
-                }
-                out += '}';
-            }
-        },
-        value.data);
+    // Each kind of node is tested directly, so every branch is a plain call.
+    const auto & data = value.data;
+    if (const bool * flag = std::get_if<bool>(&data)) {
+        out += *flag ? "true" : "false";
+    } else if (const double * number = std::get_if<double>(&data)) {
+        // Step 9: a finite Number is ToString(value); NaN and the infinities
+        // are "null".
+        out += std::isfinite(*number) ? ctbrowser::number_to_string(*number) : "null";
+    } else if (const std::string * text = std::get_if<std::string>(&data)) {
+        ctbrowser::quote_json(*text, out);
+    } else if (const auto * array = std::get_if<ctbrowser::json_value::array>(&data)) {
+        // SerializeJSONArray (25.5.2.6) with an empty gap.
+        out += '[';
+        for (std::size_t i = 0; i < array->size(); ++i) {
+            if (i != 0) { out += ','; }
+            json_write((*array)[i], out);
+        }
+        out += ']';
+    } else if (const auto * object = std::get_if<ctbrowser::json_value::object>(&data)) {
+        // SerializeJSONObject (25.5.2.5) with an empty gap, in the tree's own
+        // member order.
+        out += '{';
+        for (std::size_t i = 0; i < object->size(); ++i) {
+            if (i != 0) { out += ','; }
+            ctbrowser::quote_json((*object)[i].key, out);
+            out += ':';
+            json_write((*object)[i].value, out);
+        }
+        out += '}';
+    } else {
+        out += "null";
+    }
 }
 
 /// The JSON node of one property value. Only these carriers are admitted

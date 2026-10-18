@@ -112,11 +112,44 @@ var ends = 0;
         }, duration);
     }
 
+    // Bootstrap's components hand their callbacks to _queueCallback, which
+    // hands them to executeAfterTransition: there the callback arrives as a
+    // parameter, and execute runs it at once or from the listener.
+    function afterTransitionWith(callback, element, waits) {
+        if (!waits) {
+            execute(callback);
+            return;
+        }
+        const handler = ({
+            target
+        }) => {
+            if (target !== element) {
+                return;
+            }
+            element.removeEventListener('transitionend', handler);
+            execute(callback);
+        };
+        element.addEventListener('transitionend', handler);
+    }
+
+    function queue(callback, element, waits) {
+        afterTransitionWith(callback, element, waits);
+    }
+
     // `third` runs one callback at once and one when its timer ends the
-    // transition at 15 ms; the end at 40 ms finds the listener gone.
+    // transition at 15 ms; the end at 40 ms finds the listener gone. It also
+    // queues one callback that runs at once and one that the end at 15 ms
+    // runs from its listener.
     function thirds(third) {
         afterTransition(third, 'x', 15, true);
         afterTransition(third, 'y', 15, false);
+        const label = 'q';
+        queue(() => {
+            log = log + 'done:' + label + ';';
+        }, third, true);
+        queue(() => {
+            log = log + 'now:' + label + ';';
+        }, third, false);
         setTimeout(() => {
             triggerTransitionEnd(third);
         }, 40);
