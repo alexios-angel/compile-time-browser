@@ -3255,8 +3255,8 @@ def standalone(args, native, name, checks, expected, compilers, includes, librar
                     raise RuntimeError("fresh identity mutation failed for an unrelated reason")
 
 
-def main():
-    args = dom.parse_args(__doc__, oracles=True)
+def main(argv=None):
+    args = dom.parse_args(__doc__, oracles=True, argv=argv)
     agreements = oracle(args)
     compilers = args.compilers
     includes, libraries = dom.link_options(args, core_only=True)
@@ -4232,6 +4232,10 @@ def main():
         f"{agreements} Node/VM agreements; "
         f"{8 * len(CASES)} native executions, {refusals} refusals, 2 mutations; Core only, no DOM inputs"
     )
+
+
+def test_intrinsic_symbols(lit):
+    main(lit.args("%dom_driver --node %node --reference %native_reference"))
 
 
 if __name__ == "__main__":

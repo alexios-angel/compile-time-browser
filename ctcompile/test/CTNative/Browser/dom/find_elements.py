@@ -254,8 +254,8 @@ def unguarded_default(args, cases, intrinsics, compilers, includes, libraries):
             dom.standalone(args, native, label, client, compilers, includes, libraries)
 
 
-def main():
-    args = dom.parse_args(__doc__)
+def main(argv=None):
+    args = dom.parse_args(__doc__, argv=argv)
     vendor = dom.BOOTSTRAP
     if FIND + "," not in vendor.read_text():
         raise RuntimeError("Bootstrap R.find source pin changed")
@@ -329,6 +329,10 @@ def main():
     print(
         f"Bootstrap R.find elements: 56 native executions, {refusals} refusals; DOM/Core/Style only"
     )
+
+
+def test_find_elements(lit):
+    main(lit.args("%dom_driver"))
 
 
 if __name__ == "__main__":

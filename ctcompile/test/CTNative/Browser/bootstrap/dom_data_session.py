@@ -190,8 +190,8 @@ int main() {
 """
 
 
-def main():
-    args = dom.parse_args(__doc__, oracles=True)
+def main(argv=None):
+    args = dom.parse_args(__doc__, oracles=True, argv=argv)
     compilers = args.compilers
     source, values, prefix = umd_source()
     js, _, original, _ = prepare_umd(args)
@@ -428,6 +428,10 @@ def main():
         "five alias partitions, recorder/payload isolation, reentry, retained/detached keys, domain-first rejection and teardown; "
         "both policies/layouts/compilers, generated-client ASan/UBSan and mutation/privacy controls passed"
     )
+
+
+def test_dom_data_session(lit):
+    main(lit.args("%dom_driver --node %node --reference %native_reference"))
 
 
 if __name__ == "__main__":
