@@ -1,22 +1,25 @@
 //===- ctcompile/test/Runtime/NativeMembers.cpp - JavaScript spellings ----===//
 //
 // Tests the operators and JavaScript-named members of the native runtime's
-// carriers (CTNative/Runtime/ctnative.hpp, Number.hpp, String.hpp and
-// Browser.hpp): `%` and `<=>` on Numbers; a String's length, case, trim,
-// split, `[]` and `<=>`; `===` as `==` and ToBoolean as an explicit `bool` on
-// every carrier; loose_equals; js_array; and an element's attribute and
-// classList members. Each case pins where JavaScript differs from the plain
-// C++ reading: NaN and -0, an index past the end reading undefined, UTF-16
-// code-unit order rather than byte order, and fmod's signs.
+// carriers (CTNative/Runtime/ctnative.hpp, Number.hpp, String.hpp,
+// Browser.hpp, Format.hpp): `%` and `<=>` on Numbers; a String's length,
+// case, trim, split, `[]` and `<=>`; `===` as `==` and ToBoolean as an
+// explicit `bool` on every carrier; loose_equals; String(x) and `{}` as
+// ToString; js_array; and an element's attribute and classList members.
+// Each case pins where JavaScript differs from the plain C++ reading: NaN
+// and -0, an index past the end reading undefined, UTF-16 code-unit order
+// rather than byte order, and fmod's signs.
 //
 //===----------------------------------------------------------------------===//
 #define CTNATIVE_DOM 1
 #include "ctcompile/CTNative/Runtime/Array.hpp"
 #include "ctcompile/CTNative/Runtime/Browser.hpp"
+#include "ctcompile/CTNative/Runtime/Format.hpp"
 #include "ctcompile/CTNative/Runtime/ctnative.hpp"
 
 #include <cmath>
 #include <compare>
+#include <format>
 #include <limits>
 #include <memory>
 #include <string>
@@ -234,6 +237,29 @@ void test_to_fixed() {
     CHECK(!range_error(100.0) && !range_error(-0.5));
 }
 
+void test_format() {
+    // `{}` is ToString, the same text String(x) gives.
+    using ctnative::String;
+    CHECK(std::format("{}", js_num{0.1}) == "0.1");
+    CHECK(std::format("{}", js_num{1e21}) == "1e+21");
+    CHECK(std::format("{}", js_num{-0.0}) == "0");
+    CHECK(std::format("{} {}", js_num{nan}, js_num{-infinity}) == "NaN -Infinity");
+    CHECK(std::format("{}", js_boolean_t{true}) == "true");
+    CHECK(std::format("{} {}", nullable_scalar{}, nullable_scalar::null()) == "undefined null");
+    CHECK(std::format("{}", ctnative::js_null_t{}) == "null");
+    CHECK(std::format("{}", ctnative::number_string{js_num{1.5}}) == "1.5");
+    CHECK(std::format("{}", js_num{1e-7}) == String(js_num{1e-7}).value());
+    // The standard specification applies to the text.
+    CHECK(std::format("[{:>4}]", js_num{1.0}) == "[   1]");
+    // ctnative::format is a template literal's value: a String, with the
+    // halves of a pair split across two substitutions joined, as `+` joins
+    // them.
+    const js_string pair =
+        ctnative::format("{}{}", js_string{"\xED\xA0\xBD"}, js_string{"\xED\xB8\x80"});
+    CHECK(pair == js_string{"\xF0\x9F\x98\x80"} && pair.length() == js_num{2.0});
+    CHECK(ctnative::format("a{}b{{}}", js_num{-0.0}) == js_string{"a0b{}"});
+}
+
 void test_parse_globals() {
     using ctnative::parseFloat;
     using ctnative::parseInt;
@@ -411,6 +437,7 @@ int main() {
     test_loose_equals();
     test_to_string();
     test_to_fixed();
+    test_format();
     test_parse_globals();
     test_mixed_kind_operators();
     test_scalar_truthiness_and_equality();

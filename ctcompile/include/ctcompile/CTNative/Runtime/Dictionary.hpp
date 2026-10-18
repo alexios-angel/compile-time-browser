@@ -25,7 +25,6 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <memory>
 #include <optional>
@@ -225,8 +224,8 @@ typename dictionary_read<V>::type dictionary_get(const std::shared_ptr<dictionar
         // The compiler admitted this read only for keys it proved are never
         // such a name (Admission/Dictionaries.cpp). Stop rather than answer:
         // no catch may carry on with a wrong undefined.
-        std::fprintf(stderr, "ctnative: a table read under `%s`, which Object.prototype answers\n",
-                     name.c_str());
+        print_error_line("ctnative: a table read under `" + name +
+                         "`, which Object.prototype answers");
         std::abort();
     }
     return {};

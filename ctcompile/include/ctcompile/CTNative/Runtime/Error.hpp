@@ -13,7 +13,8 @@
 
 #pragma once
 
-#include <cstdio>
+#include "Output.hpp"
+
 #include <cstdlib>
 #include <exception>
 #include <stdexcept>
@@ -47,12 +48,10 @@ namespace detail {
         try {
             std::rethrow_exception(thrown);
         } catch (const type_error & error) {
-            std::fflush(stdout);
-            std::fprintf(stderr, "threw: uncaught TypeError: %s\n", error.what());
+            print_error_line(std::string{"threw: uncaught TypeError: "} + error.what());
             std::_Exit(1);
         } catch (const range_error & error) {
-            std::fflush(stdout);
-            std::fprintf(stderr, "threw: uncaught RangeError: %s\n", error.what());
+            print_error_line(std::string{"threw: uncaught RangeError: "} + error.what());
             std::_Exit(1);
         } catch (...) {}
     }
