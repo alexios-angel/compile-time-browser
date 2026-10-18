@@ -22,7 +22,7 @@
 #
 # RUN: for name in checked thrown; do \
 # RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --mlir-print-debuginfo 2>/dev/null \
-# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/$name.mlir; \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/$name.mlir; \
 # RUN:   ctjs-opt %t/$name.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/$name.cpp; done
 # RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/checked.mlir
 # RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/thrown.mlir
@@ -54,10 +54,10 @@
 # helper, so reading it outside the handler could differ from reading it
 # inside, and nothing is rewritten:
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/caught.js 2>/dev/null \
-# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 # RUN:   | FileCheck %s --check-prefix=CAUGHT
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/replaced.js 2>/dev/null \
-# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 # RUN:   | FileCheck %s --check-prefix=REPLACED
 
 # LIFTED: ctjs.func {{.*}}@check${{[0-9]+}}({{.*}}ctjs.not_structured = "'ctjs.push_handler' op transformation does not support terminators with side effects"

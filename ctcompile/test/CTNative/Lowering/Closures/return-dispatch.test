@@ -3,7 +3,7 @@
 # RUN: split-file %s %t
 # RUN: %node %t/expected.cjs %t/values.js
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir
-# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false observe-globals=true},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
 # RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func --implicit-check-not=scf.index_switch < %t/runtime.mlir
 # RUN: ctjs-translate --mlir-to-cpp %t/runtime.mlir | FileCheck %s --check-prefix=CPP --implicit-check-not=ctbrowser::script --implicit-check-not=ctbrowser::aot
 # RUN: ctjs-opt %t/runtime.mlir --ctnative-print-deduced -o %t/deduced.mlir
@@ -11,14 +11,14 @@
 # RUN: %compilation_unit --cxx %dom_clang --module %t/runtime.mlir --js %t/values.js --work %t --name return_dispatch_runtime_clang --core-build %build
 # RUN: %compilation_unit --cxx g++ --module %t/deduced.mlir --js %t/values.js --work %t --name return_dispatch_deduced_gcc --core-build %build
 # RUN: %compilation_unit --cxx %dom_clang --module %t/deduced.mlir --js %t/values.js --work %t --name return_dispatch_deduced_clang --core-build %build
-# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/optimized.mlir
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{observe-globals=true},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/optimized.mlir
 # RUN: %compilation_unit --cxx g++ --module %t/optimized.mlir --js %t/values.js --work %t --name return_dispatch_optimized_gcc --core-build %build
 # RUN: %compilation_unit --cxx %dom_clang --module %t/optimized.mlir --js %t/values.js --work %t --name return_dispatch_optimized_clang --core-build %build
 # RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name return_dispatch_mutation --mutate zNumeric --core-build %build 2>&1 | FileCheck %s --check-prefix=MUTATION
-# RUN: ctjs-opt %t/input.mlir --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false structure-max-steps=0" | FileCheck %s --check-prefix=BUDGET
-# RUN: ctjs-opt %t/input.mlir --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false structure-max-steps=1" | FileCheck %s --check-prefix=BUDGET
+# RUN: ctjs-opt %t/input.mlir --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false structure-max-steps=0 observe-globals=true" | FileCheck %s --check-prefix=BUDGET
+# RUN: ctjs-opt %t/input.mlir --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false structure-max-steps=1 observe-globals=true" | FileCheck %s --check-prefix=BUDGET
 # RUN: cat %t/values.js %t/bigint.js > %t/refused.js
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/refused.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED --implicit-check-not=ctnative.structure_refusal
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/refused.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false observe-globals=true" | FileCheck %s --check-prefix=REFUSED --implicit-check-not=ctnative.structure_refusal
 
 # NATIVE: emitc.func @numberCell_1
 # NATIVE-SAME: !emitc.opaque<"ctnative::number_string">

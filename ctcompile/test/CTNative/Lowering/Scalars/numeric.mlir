@@ -11,7 +11,7 @@
 // refusal is the assertion: it names the parameter and what would prove it.
 
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %s \
-// RUN:   | ctjs-opt --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
+// RUN:   | ctjs-opt --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false observe-globals=true" \
 // RUN:   | FileCheck %s
 // optimize=false keeps the literal power operation whose runtime lowering
 // this test inspects; the default precomputation folds it to a constant.

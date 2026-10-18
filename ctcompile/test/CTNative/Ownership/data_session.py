@@ -179,7 +179,11 @@ int main() {
         def refuse(ir, manifest, label, extra=flags):
             """Require that lowering `ir` with `manifest` refuses the session."""
             result = host.run(
-                [args.opt, str(ir), f"--ctnative-lower-to-emitc=host-manifest={manifest} {extra}"],
+                [
+                    args.opt,
+                    str(ir),
+                    f"--ctnative-lower-to-emitc=host-manifest={manifest} observe-globals=true {extra}",
+                ],
                 success=False,
             )
             if (

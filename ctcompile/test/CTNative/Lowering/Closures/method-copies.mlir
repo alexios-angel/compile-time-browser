@@ -21,7 +21,7 @@
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/fader.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/fader.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/fader.mlir
 // RUN: FileCheck %s --check-prefix=COPIES --implicit-check-not=ctnative.not_native < %t/fader.mlir
 // RUN: ctjs-opt %t/fader.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/fader.cpp
 // RUN: FileCheck %s --check-prefix=COPIESCPP --implicit-check-not=std::variant --implicit-check-not=std::visit < %t/fader.cpp
@@ -31,10 +31,10 @@
 // RUN: %t/fader-clang | FileCheck %s --check-prefix=COPIESOUT
 // RUN: %native_reference %t/fader.js | FileCheck %s --check-prefix=COPIESOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/receiver.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=RECEIVER
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/unknown.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=UNKNOWN
 
 // COPIES: function = "add${{[0-9]+}}", reason = "removed: unreachable

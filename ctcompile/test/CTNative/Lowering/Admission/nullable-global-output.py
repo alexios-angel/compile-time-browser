@@ -118,7 +118,7 @@ def main():
         outputs = []
         for name, source in (("plain", prepared), ("forged", forged)):
             output = args.work / f"{policy}.{name}.mlir"
-            pipeline = f"builtin.module(ctnative-lower-to-emitc{{{options}}},{owned.CLEANUP})"
+            pipeline = f"builtin.module(ctnative-lower-to-emitc{{{options} observe-globals=true}},{owned.CLEANUP})"
             host.run([args.opt, str(source), "--pass-pipeline=" + pipeline, "-o", str(output)])
             assert len(boundary.NATIVE.findall(output.read_text())) == count
             assert not boundary.FUNCTION.search(output.read_text())

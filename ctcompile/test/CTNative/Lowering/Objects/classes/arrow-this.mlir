@@ -10,7 +10,7 @@
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/direct.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/direct.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/direct.mlir
 // RUN: FileCheck %s --check-prefix=DIRECT --implicit-check-not=ctnative.not_native < %t/direct.mlir
 // RUN: ctjs-opt %t/direct.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/direct.cpp
 // RUN: FileCheck %s --check-prefix=DIRECTCPP < %t/direct.cpp
@@ -21,7 +21,7 @@
 // RUN: %native_reference %t/direct.js | FileCheck %s --check-prefix=DIRECTOUT
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/direct.js | FileCheck %s --check-prefix=DIRECTOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nested.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/nested.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/nested.mlir
 // RUN: FileCheck %s --check-prefix=NESTED --implicit-check-not=ctnative.not_native < %t/nested.mlir
 // RUN: ctjs-opt %t/nested.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/nested.cpp
 // RUN: FileCheck %s --check-prefix=NESTEDCPP < %t/nested.cpp
@@ -32,7 +32,7 @@
 // RUN: %native_reference %t/nested.js | FileCheck %s --check-prefix=NESTEDOUT
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/nested.js | FileCheck %s --check-prefix=NESTEDOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/borrowed.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/borrowed.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/borrowed.mlir
 // RUN: FileCheck %s --check-prefix=BORROWED --implicit-check-not=ctnative.not_native < %t/borrowed.mlir
 // RUN: ctjs-opt %t/borrowed.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/borrowed.cpp
 // RUN: FileCheck %s --check-prefix=BORROWEDCPP < %t/borrowed.cpp
@@ -43,7 +43,7 @@
 // RUN: %native_reference %t/borrowed.js | FileCheck %s --check-prefix=BORROWEDOUT
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/borrowed.js | FileCheck %s --check-prefix=BORROWEDOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/unread.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/unread.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/unread.mlir
 // RUN: FileCheck %s --check-prefix=UNREAD --implicit-check-not=ctnative.not_native < %t/unread.mlir
 // RUN: ctjs-opt %t/unread.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/unread.cpp
 // RUN: %gxx -O2 %t/unread.cpp -o %t/unread-gcc
@@ -53,13 +53,13 @@
 // RUN: %native_reference %t/unread.js | FileCheck %s --check-prefix=UNREADOUT
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/unread.js | FileCheck %s --check-prefix=UNREADOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/stored.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=STORED --implicit-check-not="reads its lexical"
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nestedstored.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=NESTEDSTORED --implicit-check-not="reads its lexical"
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/unproved.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=UNPROVED --implicit-check-not="reads its lexical"
 
 // A method makes `() => this._x` and calls it twice in its own frame. The

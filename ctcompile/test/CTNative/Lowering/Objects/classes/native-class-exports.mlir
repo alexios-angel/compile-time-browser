@@ -9,7 +9,7 @@
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/local.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/local.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/local.mlir
 // RUN: FileCheck %s --check-prefix=LOCAL --implicit-check-not=ctnative.not_native --implicit-check-not=ctnative.class_reason < %t/local.mlir
 // RUN: ctjs-opt %t/local.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/local.cpp
 // RUN: FileCheck %s --check-prefix=CPP < %t/local.cpp
@@ -25,19 +25,19 @@
 // not class work: the factory reaches the header as an argument, and the
 // object it returns leaves its frame.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/umd.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=UMD --implicit-check-not=ctnative.class_reason --implicit-check-not='ctjs.load_global "lib"'
 //
 // What the proof refuses (ctnative.static_reason keeps the rewrite's reason
 // when the class census refuses the class for the store first).
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/early.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=EARLY
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/passed.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=PASSED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/dynamic.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=DYNAMIC
 
 // LOCAL: emitc.func @main

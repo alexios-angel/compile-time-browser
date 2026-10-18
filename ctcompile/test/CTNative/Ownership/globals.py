@@ -40,7 +40,7 @@ def lower(args, ir, name, config, *, options="", cleanup=True):
     """Run ctnative-lower-to-emitc on `ir` with the manifest `config` and extra pass
     `options`, followed by CLEANUP when `cleanup`; return the output path."""
     output = args.work / f"{name}.native.mlir"
-    flags = f"host-manifest={config} {options}"
+    flags = f"host-manifest={config} observe-globals=true {options}"
     pipeline = f"builtin.module(ctnative-lower-to-emitc{{{flags}}}"
     pipeline += f",{CLEANUP})" if cleanup else ")"
     host.run([args.opt, str(ir), "--pass-pipeline=" + pipeline, "-o", str(output)])
