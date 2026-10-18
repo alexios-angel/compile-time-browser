@@ -46,6 +46,18 @@ if(CTCOMPILE_ENABLE_MLIR)
       "${PROJECT_BINARY_DIR}/tools/ctjs-translate"
       "${PROJECT_BINARY_DIR}/tools/ctcompile")
     set(LLVM_TOOLS_DIR "${LLVM_TOOLS_BINARY_DIR}")
+    # The boxed tier's emitted C++ includes ctbrowser/script headers, which
+    # include Boost. %cxx and %cxx_exe (lit.cfg.py) take the include
+    # directories the CMake targets get from Boost::headers (find_package in
+    # Runtime.cmake), since a Boost installed under a prefix such as Homebrew's
+    # is not on the host compiler's default path.
+    set(CTCOMPILE_LIT_BOOST_INCLUDE "")
+    if(TARGET Boost::headers)
+      get_target_property(CTCOMPILE_LIT_BOOST_INCLUDE Boost::headers INTERFACE_INCLUDE_DIRECTORIES)
+      if(NOT CTCOMPILE_LIT_BOOST_INCLUDE)
+        set(CTCOMPILE_LIT_BOOST_INCLUDE "")
+      endif()
+    endif()
     configure_lit_site_cfg(
       "${CMAKE_CURRENT_SOURCE_DIR}/lit.site.cfg.py.in"
       "${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg.py"
