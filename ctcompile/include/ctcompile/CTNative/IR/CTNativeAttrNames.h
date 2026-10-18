@@ -60,6 +60,13 @@ inline constexpr llvm::StringLiteral kNativeClassSetup = "ctnative.class_setup";
 /// (ClosureLifting/ClassStatics.cpp) proved that member's `this` is that class;
 /// the constructor lift builds the instance there.
 inline constexpr llvm::StringLiteral kNativeClassConstruct = "ctnative.class_construct";
+/// On each ctjs.call_direct the class statics rewrite
+/// (ClosureLifting/ClassStatics.cpp) makes of a static member, where the
+/// source read the member through the class: a refused caller may call such
+/// a member through a closure instead, as it did through the class
+/// (closeNativeSet in LowerToEmitC.cpp), and the registry proof reads a
+/// family key through such a getter (Analysis/Inference/Instances.cpp).
+inline constexpr llvm::StringLiteral kNativeStaticMemberCall = "ctnative.static_member_call";
 /// On a ctjs.cell_get of a run-once static cell written only with a class's
 /// closure, before every read, and on its ctjs.cell_set writes: the name of
 /// that class constructor's ctjs.func (a string, as above). A `new` of the
