@@ -88,6 +88,14 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
 // RUN:              --ctnative-test-instance-registries=lifted=true \
 // RUN:   | FileCheck %s --check-prefix=NESTED-REMOVED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/new-this.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
+// RUN:              --ctnative-test-instance-registries=lifted=true \
+// RUN:   | FileCheck %s --check-prefix=NEW-THIS
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/new-this-stored.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
+// RUN:              --ctnative-test-instance-registries=lifted=true \
+// RUN:   | FileCheck %s --check-prefix=NEW-THIS-STORED
 
 // --- The accepted shape ----------------------------------------------------
 // `getInstance` reads back with `|| null`, so `!== null` is a check; a
@@ -198,6 +206,23 @@
 
 // --- An inner Map read after a call that could remove it --------------------
 // NESTED-REMOVED: ctnative.instance_registry = "an inner Map is read from the outer registry Map where `has` did not just find or make it - `get` answers undefined for a missing key"
+
+// --- Instances made by a static member's `new this`, as Bootstrap's -------
+// `getOrCreateInstance`: `this.getInstance(element) || new this(element)`.
+// The class statics rewrite (ClosureLifting/ClassStatics.cpp) makes the
+// `new this` of each class's copy a marked construct of that class; the
+// proof follows the fresh instance as it follows a read, through the join
+// with the read and the return, and nothing else constructs either class.
+// The family keys are read through the static getters that rewrite made
+// direct calls.
+// NEW-THIS-DAG: ctjs.func @Alert${{[0-9]+}}({{.*}}ctnative.instance_key = "bs.alert", ctnative.instance_registry = "proved"
+// NEW-THIS-DAG: ctjs.func @Button${{[0-9]+}}({{.*}}ctnative.instance_key = "bs.button", ctnative.instance_registry = "proved"
+
+// --- A fresh instance stored into an object ----------------------------------
+// Only the instance `new this` makes is stored; the read is returned as it
+// is. Without following the fresh instance, the proof would only see the
+// join of the read with it.
+// NEW-THIS-STORED: ctnative.instance_registry = "a value read from the registry Map is stored into an object, so shared ownership could form a cycle no destructor breaks"
 
 //--- proved.js
 function run() {
@@ -822,6 +847,147 @@ var total = (function () {
     new Alert(el);
     new Button(el);
     let t = 0;
+    const a = Alert.getInstance(el);
+    if (a) { t = t + a.close(); }
+    const b = Button.getInstance(el);
+    if (b) { t = t + b.toggle(); b.dispose(); }
+    if (Button.getInstance(el) === null) { t = t + 10; }
+    return t;
+})();
+
+//--- new-this.js
+var total = (function () {
+    const elements = new Map();
+    const Data = {
+        set(element, key, instance) {
+            if (!elements.has(element)) {
+                elements.set(element, new Map());
+            }
+            elements.get(element).set(key, instance);
+        },
+        get(element, key) {
+            return (elements.has(element) && elements.get(element).get(key)) || null;
+        },
+        remove(element, key) {
+            if (!elements.has(element)) {
+                return;
+            }
+            const instances = elements.get(element);
+            instances.delete(key);
+            if (instances.size === 0) {
+                elements.delete(element);
+            }
+        }
+    };
+    class Base {
+        constructor(element) {
+            this._element = element;
+            Data.set(element, this.constructor.DATA_KEY, this);
+        }
+        dispose() {
+            Data.remove(this._element, this.constructor.DATA_KEY);
+        }
+        static getInstance(element) {
+            return Data.get(element, this.DATA_KEY);
+        }
+        static getOrCreateInstance(element) {
+            return this.getInstance(element) || new this(element);
+        }
+    }
+    class Alert extends Base {
+        constructor(element) {
+            super(element);
+            this.kind = 1;
+        }
+        static get DATA_KEY() { return "bs.alert"; }
+        close() { return 1; }
+    }
+    class Button extends Base {
+        constructor(element) {
+            super(element);
+            this.kind = 2;
+        }
+        static get DATA_KEY() { return "bs.button"; }
+        toggle() { return 2; }
+    }
+    const el = { id: 1 };
+    let t = 0;
+    t = t + Alert.getOrCreateInstance(el).close();
+    t = t + Button.getOrCreateInstance(el).toggle();
+    const a = Alert.getInstance(el);
+    if (a) { t = t + a.close(); }
+    const b = Button.getInstance(el);
+    if (b) { t = t + b.toggle(); b.dispose(); }
+    if (Button.getInstance(el) === null) { t = t + 10; }
+    return t;
+})();
+
+//--- new-this-stored.js
+var total = (function () {
+    const elements = new Map();
+    const kept = {};
+    const Data = {
+        set(element, key, instance) {
+            if (!elements.has(element)) {
+                elements.set(element, new Map());
+            }
+            elements.get(element).set(key, instance);
+        },
+        get(element, key) {
+            return (elements.has(element) && elements.get(element).get(key)) || null;
+        },
+        remove(element, key) {
+            if (!elements.has(element)) {
+                return;
+            }
+            const instances = elements.get(element);
+            instances.delete(key);
+            if (instances.size === 0) {
+                elements.delete(element);
+            }
+        }
+    };
+    class Base {
+        constructor(element) {
+            this._element = element;
+            Data.set(element, this.constructor.DATA_KEY, this);
+        }
+        dispose() {
+            Data.remove(this._element, this.constructor.DATA_KEY);
+        }
+        static getInstance(element) {
+            return Data.get(element, this.DATA_KEY);
+        }
+        static getOrCreateInstance(element) {
+            const found = this.getInstance(element);
+            if (found) {
+                return found;
+            }
+            const made = new this(element);
+            kept.last = made;
+            return made;
+        }
+    }
+    class Alert extends Base {
+        constructor(element) {
+            super(element);
+            this.kind = 1;
+        }
+        static get DATA_KEY() { return "bs.alert"; }
+        close() { return 1; }
+    }
+    class Button extends Base {
+        constructor(element) {
+            super(element);
+            this.kind = 2;
+        }
+        static get DATA_KEY() { return "bs.button"; }
+        toggle() { return 2; }
+    }
+    const el = { id: 1 };
+    let t = 0;
+    t = t + Alert.getOrCreateInstance(el).close();
+    t = t + Button.getOrCreateInstance(el).toggle();
     const a = Alert.getInstance(el);
     if (a) { t = t + a.close(); }
     const b = Button.getInstance(el);
