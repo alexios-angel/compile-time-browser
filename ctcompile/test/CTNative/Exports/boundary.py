@@ -88,8 +88,8 @@ def follow(args, ir, name):
     return json.loads(report.read_text()), output
 
 
-def main():
-    args = native_args(__doc__)
+def main(argv=None):
+    args = native_args(__doc__, argv=argv)
     reference, node = args.reference, args.node
     sources = {
         "scalar": "var host = {}; host.slot = 42; var trace = host.slot;",
@@ -289,6 +289,14 @@ def main():
         "checked table 3/3, checked captured Map 4/4; "
         "published startup prefix without manifest remains 0/4; confined control 4/4; "
         "four Node/interpreter observations and forged/rerun controls pass"
+    )
+
+
+def test_boundary(lit):
+    main(
+        lit.args(
+            "--translate ctjs-translate --opt ctjs-opt --work %t --node %node --reference %native_reference"
+        )
     )
 
 

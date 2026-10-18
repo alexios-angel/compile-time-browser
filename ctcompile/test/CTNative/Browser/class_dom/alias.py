@@ -95,8 +95,8 @@ def observe(args, name, text, suffix, expected):
             raise RuntimeError(f"{name}: alias partition observation changed: {actual!r}")
 
 
-def main():
-    args = dom.parse_args(__doc__, oracles=True)
+def main(argv=None):
+    args = dom.parse_args(__doc__, oracles=True, argv=argv)
     executions = refusals = 0
     variants = sources()
     for label, (text, expected) in variants.items():
@@ -256,6 +256,14 @@ var traceUnchanged = a === -13;
     print(
         "DOM alias lifetimes: six Node/VM observations, four preparations, "
         f"four provider proofs, {executions} native executions, {refusals} refusals"
+    )
+
+
+def test_alias(lit):
+    main(
+        lit.args(
+            "--translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --nm %nm --work %t"
+        )
     )
 
 

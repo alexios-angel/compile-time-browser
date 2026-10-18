@@ -1156,9 +1156,13 @@ def check_constructed_methods(args):
     """Check the plain-* fixtures, whose methods are assigned in the constructor.
 
     Each must print its expected value under Node and the reference interpreter
-    (None: both must throw). plain-method and plain-prototype must run natively;
-    the rest must be refused by native lowering under both optimization
-    settings. Returns (native runs, refusals).
+    (None: both must throw). plain-method, plain-prototype and
+    plain-borrowed-write must run natively: in plain-borrowed-write every call
+    of `replace` passes the instance, so the method it writes through its
+    parameter joins the instance's `read` as one closure set. The rest must be
+    refused by native lowering under both optimization settings, among them
+    plain-borrowed-write-unknown, where `replace` is called through an array,
+    so not every call of it is known. Returns (native runs, refusals).
     """
     checked = refused = 0
     for name, expected in {
@@ -1166,6 +1170,7 @@ def check_constructed_methods(args):
         "plain-before-store": None,
         "plain-constructor-before-store": None,
         "plain-borrowed-write": 9,
+        "plain-borrowed-write-unknown": 9,
         "plain-self-replace": 79,
         "plain-constructor-write": 7,
         "plain-detached": 1,
@@ -1180,7 +1185,7 @@ def check_constructed_methods(args):
             result = run(command, success=expected is not None)
             if expected is not None and result.stdout != f"a={expected}\n":
                 raise RuntimeError(f"{name}: constructed method observation changed")
-        if name in ("plain-method", "plain-prototype"):
+        if name in ("plain-method", "plain-prototype", "plain-borrowed-write"):
             checked += check_native(args, source, name, expected)
             continue
         raw = args.work / f"{name}.raw.mlir"

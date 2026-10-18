@@ -29,8 +29,8 @@ DOM_BODY = CLASS + "  return element.getAttribute(shape.read()) === null;\n"
 WRAPPER = re.compile(r"^  ctjs.func @_script_\$0\(.*?^  }\n", re.M | re.S)
 
 
-def main():
-    args = native_args(__doc__)
+def main(argv=None):
+    args = native_args(__doc__, argv=argv)
     refusals, observations = 0, 0
 
     def imported(name, body, parameters="element", suffix=""):
@@ -139,6 +139,14 @@ def main():
         refusals += 1
     print(
         f"class entry: 2 preparations, {observations} Node/interpreter observations, {refusals} refusals"
+    )
+
+
+def test_entry(lit):
+    main(
+        lit.args(
+            "--translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --work %t"
+        )
     )
 
 
