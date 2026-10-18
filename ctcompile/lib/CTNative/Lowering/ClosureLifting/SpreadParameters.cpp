@@ -336,13 +336,15 @@ unsigned rewriteSpreadParameters(llvm::ArrayRef<calledFunction> functions,
             if (!entry.getArgument(i).use_empty()) { tracked.insert(entry.getArgument(i)); }
         }
     }
-    // A use a tracked parameter forwards to another tracked parameter.
+    // A use a tracked parameter forwards to another tracked parameter, as an
+    // argument of a call or a `new`.
     const auto forwards = [&](mlir::OpOperand & use) {
         mlir::Operation * call = use.getOwner();
         ctjs::FuncOp callee = calleeOf.lookup(call);
         const unsigned first = llvm::isa<ctjs::CallDirectOp>(call) ? 3 : 2;
         if (!callee || callee.getBody().empty() ||
-            !llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(call) || use.getOperandNumber() < first) {
+            !llvm::isa<ctjs::CallOp, ctjs::CallDirectOp, ctjs::ConstructOp>(call) ||
+            use.getOperandNumber() < first) {
             return false;
         }
         mlir::Block & entry = callee.getBody().front();

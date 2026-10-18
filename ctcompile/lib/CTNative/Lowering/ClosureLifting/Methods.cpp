@@ -518,12 +518,13 @@ bool closureLifter::methodCallOn(ctjs::CallOp call, mlir::Value object) {
 }
 
 /// True when `use` passes an object to a parameter that argumentCensus
-/// proved can take a pointer. A ctjs.call's arguments start at operand 2, a
-/// ctjs.call_direct's at 3.
+/// proved can take a pointer. The arguments of a ctjs.call and a
+/// ctjs.construct start at operand 2, a ctjs.call_direct's at 3.
 bool closureLifter::carriesObjectArgument(mlir::OpOperand & use) {
     mlir::Operation * call = use.getOwner();
     const unsigned first = llvm::isa<ctjs::CallDirectOp>(call) ? 3 : 2;
-    if (!llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(call) || use.getOperandNumber() < first) {
+    if (!llvm::isa<ctjs::CallOp, ctjs::CallDirectOp, ctjs::ConstructOp>(call) ||
+        use.getOperandNumber() < first) {
         return false;
     }
     auto * made = objectArgumentCallee(call);
@@ -600,6 +601,36 @@ llvm::SmallVector<closureLifter::closureCall> closureLifter::objectArgumentCalls
     ctjs::FuncOp target = targetOf(c);
     if (!target || !completeObjectArgumentSymbols) { return {}; }
     llvm::SmallVector<closureCall> calls;
+    // A constructor's calls are its `new` sites. Besides those, its closure
+    // may be used only by what the constructor lift erases with them (the
+    // class setup, its proved prototype, a static variable whose every read
+    // is a marked `new`); every `new` of its function must name it, and a
+    // direct call of the function would be a call this list misses.
+    if (constructorClosures.contains(c.getOperation())) {
+        const auto prototype = immutablePrototype(c);
+        for (mlir::OpOperand & use : c.getResult().getUses()) {
+            mlir::Operation * user = use.getOwner();
+            if ((prototype && user == prototype->attachment) || user->hasAttr(kNativeClassSetup) ||
+                (llvm::isa<ctjs::CellSetOp>(user) && user->hasAttr(kNativeStaticClass)) ||
+                isSelfConstruct(use, c)) {
+                continue;
+            }
+            return {};
+        }
+        if (llvm::any_of(
+                objectArgumentSymbolUsers.lookup(target.getSymName()),
+                [](mlir::Operation * user) { return llvm::isa<ctjs::CallDirectOp>(user); })) {
+            return {};
+        }
+        for (ctjs::ConstructOp made : constructsOfTarget.lookup(target.getOperation())) {
+            if (made.getCallee() != c.getResult() &&
+                !(isClassConstruct(made) && constructsClosure(made, c))) {
+                return {};
+            }
+            calls.push_back({made, made.getArgs(), {}});
+        }
+        return calls;
+    }
     for (mlir::OpOperand & use : c.getResult().getUses()) {
         if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(use.getOwner());
             store && objectArgumentDeclarations.lookup(store.getName()) == c) {
@@ -650,6 +681,10 @@ bool closureLifter::slotCarriesAnObject(mlir::Operation * callable, unsigned j) 
 /// The closure, or the private directly-called function, whose object slots
 /// apply to `call`; null when there is none.
 mlir::Operation * closureLifter::objectArgumentCallee(mlir::Operation * call) {
+    if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(call)) {
+        ctjs::CreateClosureOp closure = constructedClosure(made);
+        return closure ? closure.getOperation() : nullptr;
+    }
     if (auto closure = closureCalledBy(call)) { return closure; }
     auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(call);
     auto function = direct ? direct.getTarget() : ctjs::FuncOp{};

@@ -628,8 +628,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             // callee, like the receiver mark: replace() reads it once per
             // operand, and a symbol lookup there would cost one lookup per
             // argument per call.
-            if (!cellArgs.empty()) { direct->setAttr(kNativeCellArgs, cellSlots); }
-            if (!sharedArgs.empty()) { direct->setAttr(kNativeSharedCellArgs, sharedSlots); }
+            tagSlots(direct);
             // `new` evaluates to the instance, not to the call's result. The
             // interpreter's context::construct ends with
             // `produced.is_object_like() ? produced : self`, and

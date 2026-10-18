@@ -19,6 +19,25 @@ HERE = Path(__file__).resolve().parent
 MAINS = {}
 
 CASES = {
+    "Closures/new-parameters": [
+        "split-file %s %t",
+        "for name in point trap made; do    ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/$name.mlir;    ctjs-opt %t/$name.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/$name.cpp;    FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/$name.mlir; done",
+        "FileCheck %s --check-prefix=POINT-CPP < %t/point.cpp",
+        "FileCheck %s --check-prefix=TRAP-CPP < %t/trap.cpp",
+        "%gxx -O2 %t/point.cpp -o %t/point-gcc && %t/point-gcc | FileCheck %s --check-prefix=POINT",
+        "%clangxx -O2 %t/point.cpp -o %t/point-clang && %t/point-clang | FileCheck %s --check-prefix=POINT",
+        "%native_reference %t/point.js | FileCheck %s --check-prefix=POINT",
+        '%node -e \'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);\' %t/point.js | FileCheck %s --check-prefix=POINT',
+        "%gxx -O2 %t/trap.cpp -o %t/trap-gcc && %t/trap-gcc | FileCheck %s --check-prefix=TRAP",
+        "%clangxx -O2 %t/trap.cpp -o %t/trap-clang && %t/trap-clang | FileCheck %s --check-prefix=TRAP",
+        "%native_reference %t/trap.js | FileCheck %s --check-prefix=TRAP",
+        '%node -e \'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);\' %t/trap.js | FileCheck %s --check-prefix=TRAP',
+        "%gxx -O2 %t/made.cpp -o %t/made-gcc && %t/made-gcc | FileCheck %s --check-prefix=MADE",
+        "%clangxx -O2 %t/made.cpp -o %t/made-clang && %t/made-clang | FileCheck %s --check-prefix=MADE",
+        "%native_reference %t/made.js | FileCheck %s --check-prefix=MADE",
+        '%node -e \'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);\' %t/made.js | FileCheck %s --check-prefix=MADE',
+        "for name in backdrop kinds; do    ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc    | FileCheck %s --check-prefix=KEPT; done",
+    ],
     "Closures/spread-parameters": [
         "split-file %s %t",
         "for name in one forwarded; do    ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/$name.mlir;    ctjs-opt %t/$name.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/$name.cpp; done",

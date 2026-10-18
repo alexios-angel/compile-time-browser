@@ -1541,7 +1541,6 @@ def main():
             before, after = structured.read_text(), prepared.read_text()
             if name.startswith("inherited-own-fields-iterate-borrow-") or name in (
                 "override-different-leaves",
-                "inherited-helper-order",
                 "captured-holder-unused",
             ):
                 operations = ()
@@ -1815,11 +1814,6 @@ def main():
                         and f"!ctnative.map<{key_type}" not in native_text
                     ):
                         raise RuntimeError("class Map lost its key representation refusal")
-                    if name == "inherited-helper-order" and (
-                        "an object literal passed to a direct call as an argument"
-                        not in native_text
-                    ):
-                        raise RuntimeError("helper mutation lost its argument ownership refusal")
                     if name == "captured-holder-unused" and (
                         "a method field: nothing calls it" not in native_text
                     ):
