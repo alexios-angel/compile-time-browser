@@ -5,8 +5,8 @@
 // pattern one the native runtime runs as JavaScript does (Runtime/RegExp.hpp),
 // and the callback has to return a String or a Number, which the runtime
 // converts with ToString. The method read and the RegExp literal the call
-// consumes lower to nothing. `text.toLowerCase()` and `text.trim()` need a
-// String receiver, `text.replace(/re/, s)` a String receiver, a pattern as
+// consumes lower to nothing. `text.toLowerCase()`, `text.toUpperCase()` and
+// `text.trim()` need a String receiver, `text.replace(/re/, s)` a String receiver, a pattern as
 // above and a String replacement, and `new RegExp("re").test(text)` a String
 // argument and a pattern as above. `[k]` of Object.prototype.toString's
 // match needs a String text and a group that takes part in every match.
