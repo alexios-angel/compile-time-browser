@@ -266,10 +266,12 @@
 // builds, and every read of it in `set`, `get` and `remove` is that one
 // instance (Analysis/NativeMap/Presence.cpp's staticOrigins). A `has` on one
 // read then proves the `get` on the next, which the nested Map needs. The
-// %compilation_unit run checks the answer, 11175, against the interpreter.
-// DATA-ONLY: emitc.func @set_{{[0-9]+}}(
-// DATA-ONLY: emitc.func @get_{{[0-9]+}}(
-// DATA-ONLY: emitc.func @remove_{{[0-9]+}}(
+// object-literal methods lift to closures (fn_N); the program's three Map
+// operations lower to direct map_storage calls, and the %compilation_unit
+// run checks the answer, 11175, against the interpreter.
+// DATA-ONLY: emitc.func @main() -> i32
+// DATA-ONLY-DAG: call_opaque "ctnative::make_map<double, std::shared_ptr<ctnative::string_to_number_map>>"
+// DATA-ONLY-DAG: call_opaque "ctnative::map_get_present"
 
 // --- A fresh instance stored into an object ----------------------------------
 // Only the instance `new this` makes is stored; the read is returned as it
