@@ -502,7 +502,12 @@ std::optional<std::string> closureLifter::whyCarriedCellStaysABox(ctjs::CreateCe
         mlir::Operation * user = use.getOwner();
         const cellUse kind = classify(use);
         if (kind == cellUse::read || kind == cellUse::write) { continue; }
-        if (llvm::isa<ctjs::CallDirectOp>(user) && namesACellArgument(user, use)) { continue; }
+        // A specialised Array-method call lists the captures its callback
+        // takes by address the same way (ClosureLifting/ArrayCallbacks.cpp).
+        if ((llvm::isa<ctjs::CallDirectOp>(user) || TypeInference::isArrayCallbackCall(user)) &&
+            namesACellArgument(user, use)) {
+            continue;
+        }
         // A kept callback's operation passes a shared cell's handle among its
         // captures (rule 2b), which the runtime holds after this frame.
         if (keptCells.contains(cell.getOperation()) &&
