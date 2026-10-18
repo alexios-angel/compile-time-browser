@@ -18,6 +18,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "ClosureLifter.h"
+#include "SpreadParameters.h"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/Instances.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -758,6 +759,35 @@ void closureLifter::argumentCensus() {
             }
         }
     }
+    // A parameter every call passes an object literal of one shape may also
+    // be tested with `typeof` and spread into a fresh literal: both are
+    // written out for that shape (SpreadParameters.h), so the rule below sees
+    // the constant-key reads they become. The literals a folded test drops
+    // leave the census with it.
+    {
+        llvm::SmallVector<calledFunction> called;
+        const auto row = [&](ctjs::FuncOp function, llvm::ArrayRef<closureCall> sites) {
+            calledFunction & entry = called.emplace_back();
+            entry.function = function;
+            for (const closureCall & site : sites) {
+                entry.calls.emplace_back(site.op, llvm::to_vector(site.args));
+            }
+        };
+        for (ctjs::CreateClosureOp closure : closures) {
+            const auto sites = objectArgumentCalls(closure);
+            if (!sites.empty()) { row(targetOf(closure), sites); }
+        }
+        for (const auto & [function, sites] : directCalls) {
+            row(llvm::cast<ctjs::FuncOp>(function), sites);
+        }
+        llvm::SmallVector<mlir::Operation *> erased;
+        if (rewriteSpreadParameters(called, erased) && !erased.empty()) {
+            const llvm::SmallPtrSet<mlir::Operation *, 8> gone(erased.begin(), erased.end());
+            llvm::erase_if(objects, [&](ctjs::CreateObjectOp object) {
+                return gone.contains(object.getOperation());
+            });
+        }
+    }
     const auto closedArgument = [&](mlir::Value value) {
         if (closedAfterLift(value)) { return true; }
         auto parameter = llvm::dyn_cast<mlir::BlockArgument>(value);
@@ -945,11 +975,12 @@ void closureLifter::methodCensus() {
         }
     }
     // True when no write can replace `key` on `receiver`: every set_property
-    // that may reach it has a constant key, and writes `key` only through a
-    // store `owned` accepts. Stores to other fresh literals cannot reach the
-    // receiver and are skipped; any other object, including every parameter,
-    // may alias it and counts.
-    const auto stableKey = [&](mlir::Value receiver, llvm::StringRef key, const auto & owned) {
+    // that may reach it writes `key` only through a store `owned` accepts and,
+    // when `computedKeys` is set, has a constant key. Stores to other fresh
+    // literals cannot reach the receiver and are skipped; any other object,
+    // including every parameter, may alias it and counts.
+    const auto stableKey = [&](mlir::Value receiver, llvm::StringRef key, bool computedKeys,
+                               const auto & owned) {
         bool stable = true;
         module.walk([&](ctjs::SetPropertyOp set) {
             if (set.getObject().getDefiningOp<ctjs::CreateObjectOp>() &&
@@ -957,7 +988,9 @@ void closureLifter::methodCensus() {
                 return;
             }
             const auto written = ctjs::constantKey(set.getKey());
-            if (written.empty() || (written == key && !owned(set))) { stable = false; }
+            if ((computedKeys && written.empty()) || (written == key && !owned(set))) {
+                stable = false;
+            }
         });
         return stable;
     };
@@ -981,9 +1014,9 @@ void closureLifter::methodCensus() {
             // on which store ran, which condition 2 forbids. The call through
             // it stays a ctjs.call and is refused by name later.
             if (writes[entry.first()] != 1) { continue; }
-            if (!constructed || stableKey(object, entry.first(), [&](ctjs::SetPropertyOp set) {
-                    return instanceStores.contains(set);
-                })) {
+            if (!constructed ||
+                stableKey(object, entry.first(), /*computedKeys=*/true,
+                          [&](ctjs::SetPropertyOp set) { return instanceStores.contains(set); })) {
                 into[entry.first()] = entry.second;
             }
         }
@@ -1005,9 +1038,16 @@ void closureLifter::methodCensus() {
             auto method = field.getValue().getDefiningOp<ctjs::CreateClosureOp>();
             if (!method) { continue; }
             const auto key = ctjs::constantKey(field.getKey());
-            // As for methods stored after construction, every write that may
-            // reach the receiver counts.
-            if (!stableKey(origin, key, [&](ctjs::SetPropertyOp set) { return set == field; })) {
+            // A write of `key` to anything but this definition counts wherever
+            // it is: `this`, a parameter or any other value may name an
+            // instance, an instance's struct admits a constant-key write, and
+            // an own `key` would shadow the method. A write through a computed
+            // key does not count: an instance lowers to a struct that admission
+            // gives only constant-key accesses (hasClosedShape) and no delete,
+            // the prototype has no use but its definitions (immutablePrototype),
+            // and code that admission refuses never runs natively.
+            if (!stableKey(origin, key, /*computedKeys=*/false,
+                           [&](ctjs::SetPropertyOp set) { return set == field; })) {
                 continue;
             }
             methodsOf[origin][key] = methodField{field, method};

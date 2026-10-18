@@ -1,13 +1,14 @@
 //===- ArrayCallbacks.cpp - Types of specialised Array-method callbacks ---===//
 //
 // Closure lifting (Lowering/ClosureLifting/ArrayCallbacks.cpp) specialises a
-// closure passed to forEach, map, filter, some, every, find or reduce for its
-// one call: the call names the callback by `ctnative.array_callback` and
-// passes the callback's captured values in place of the closure. No
+// closure passed to forEach, map, filter, some, every, find, reduce or sort
+// for its one call: the call names the callback by `ctnative.array_callback`
+// and passes the callback's captured values in place of the closure. No
 // ctjs.call_direct reaches the callback, so its parameters are typed here, by
 // the call, the way a direct call types its callee's: captured values from the
 // call's operands, then (reduce's accumulator,) the receiver's element, the
-// index (a Number) and the receiver itself.
+// index (a Number) and the receiver itself; a sort comparator is passed two
+// elements.
 //
 //===----------------------------------------------------------------------===//
 
@@ -41,7 +42,7 @@ unsigned capturesOf(ctjs::CallOp call) {
 
 bool TypeInference::isArrayCallbackMethod(llvm::StringRef key) {
     return llvm::StringSwitch<bool>(key)
-        .Cases({"forEach", "map", "filter", "some", "every", "find", "reduce"}, true)
+        .Cases({"forEach", "map", "filter", "some", "every", "find", "reduce", "sort"}, true)
         .Default(false);
 }
 
@@ -54,6 +55,10 @@ bool TypeInference::arrayCallbackMakesArray(mlir::Operation * op) {
     if (!isArrayCallbackCall(op)) { return false; }
     const llvm::StringRef method = ctjs::methodKey(llvm::cast<ctjs::CallOp>(op));
     return method == "filter" || method == "map";
+}
+
+bool TypeInference::arrayCallbackSorts(mlir::Operation * op) {
+    return isArrayCallbackCall(op) && ctjs::methodKey(llvm::cast<ctjs::CallOp>(op)) == "sort";
 }
 
 bool TypeInference::arrayCallbackBorrows(mlir::Operation * op, unsigned index) {
@@ -114,6 +119,13 @@ mlir::Type TypeInference::arrayCallbackType(mlir::Operation * op,
         // the callback's parameters are unknown.
         for (unsigned i = next; i < entry.getNumArguments(); ++i) { pass(i, BoxedType::get(c)); }
         return {};
+    }
+    if (method == "sort") {
+        // The comparator is asked about two elements, and the call answers
+        // the receiver itself, sorted in place.
+        pass(next, vector.getElementType());
+        pass(next + 1, vector.getElementType());
+        return vector;
     }
     llvm::SmallVector<mlir::Value> returned;
     callback.walk([&](ctjs::ReturnOp ret) { returned.push_back(ret.getValue()); });

@@ -778,10 +778,12 @@ int main() {
     // exits 0 and looks exactly like a passing one. Update this number when a
     // case is added; it is exact rather than a lower bound because a lower
     // bound would not notice a case being deleted.
-    // 103 meet rows in both directions (the five class-tag rows among them),
-    // 5 law checks, 3 variant-cap checks, 3 closure-set-cap checks,
-    // 6 interpreter pins and 5 C++ carrier checks.
-    const int expectedChecks = 228;
+    // Every meet row is checked in both directions (the five class-tag rows
+    // among them); the rest are 5 law checks, 3 variant-cap checks,
+    // 3 closure-set-cap checks, 6 interpreter pins and 5 C++ carrier checks.
+    constexpr int meetRows = 100;
+    static_assert(std::size(kMeetTable) == meetRows, "a meet row was added or lost");
+    const int expectedChecks = 2 * meetRows + 5 + 3 + 3 + 6 + 5;
     if (checks != expectedChecks) {
         std::printf("FAILED  ran %d checks, expected %d - a case was added or lost\n", checks,
                     expectedChecks);

@@ -129,7 +129,7 @@ carrier carrierOf(mlir::Type type) {
         // ctnative::timer_id, which names no timer.
         if (inner == carrier::timer) { return carrier::timer; }
         // A possibly absent member of a closure set: std::optional of its
-        // variant (EmitC/ClosureSets.cpp).
+        // struct (EmitC/ClosureSets.cpp).
         if (inner == carrier::closureSet) { return carrier::closureSet; }
         if (llvm::isa<BottomType>(opt.getElementType()) || isScalarCarrier(inner)) {
             return carrier::nullable;
@@ -552,6 +552,9 @@ std::string dictionarySpelling(mlir::Type type) {
 }
 
 mlir::Type valueCarrierType(mlir::MLIRContext * context, mlir::Type type) {
+    if (auto map = llvm::dyn_cast_or_null<MapType>(type); map && carrierOf(type) == carrier::map) {
+        return mapCarrierType(map);
+    }
     return carrierOf(type) == carrier::dictionary
                ? mlir::Type(ec::OpaqueType::get(context, dictionarySpelling(type)))
                : carrierType(context, carrierOf(type));
