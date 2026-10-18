@@ -156,6 +156,9 @@ struct readers {
     /// proved.
     llvm::SmallVector<ctjs::CallOp> enumerations;
     llvm::DenseSet<mlir::Operation *> followed;
+    /// Direct calls of a function that returns the table, each with why its
+    /// caller's use of the returned table is not one the proof takes.
+    llvm::SmallVector<std::pair<ctjs::CallDirectOp, std::string>> refusedCalls;
 
     /// Whether `use` is the argument of a built-in statics row that takes a
     /// constant table (Object.entries, keys, values) and every field of this
@@ -212,8 +215,13 @@ struct readers {
                 if (!followed.insert(function).second) { continue; }
                 const auto found = calls.find(function);
                 if (found == calls.end()) { continue; }
+                // A caller's use the proof does not take refuses that caller
+                // (kNativeStaticTableUseRefusal), not the table: the returning
+                // function and its other callers keep it.
                 for (ctjs::CallDirectOp call : found->second) {
-                    if (auto why = check(call.getResult())) { return why; }
+                    if (auto why = check(call.getResult())) {
+                        refusedCalls.emplace_back(call, std::move(*why));
+                    }
                 }
                 continue;
             }
@@ -326,6 +334,11 @@ void markStaticTables(mlir::ModuleOp module) {
                               mlir::StringAttr::get(cell.getContext(), *why));
             }
             continue;
+        }
+        for (auto & [call, why] : uses.refusedCalls) {
+            call->setAttr(
+                kNativeStaticTableUseRefusal,
+                mlir::StringAttr::get(call.getContext(), staticTableRefusal(name.getValue(), why)));
         }
         for (mlir::Operation * part : fields.parts) { part->setAttr(kNativeStaticTable, name); }
         for (auto [read, constant] : uses.reads) {

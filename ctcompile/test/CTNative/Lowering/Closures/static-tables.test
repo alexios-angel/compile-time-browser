@@ -71,6 +71,9 @@
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/guarded.js --mlir-print-debuginfo 2>/dev/null \
 # RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 # RUN:   | FileCheck %s --check-prefix=GUARDED --implicit-check-not="holding an object literal"
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/passed.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+# RUN:   | FileCheck %s --check-prefix=PASSED
 
 # TABLE: emitc.include <"ctcompile/CTNative/Runtime/StaticTable.hpp">
 # TABLE: emitc.global static @static_config : !emitc.opaque<"ctnative::static_table_ptr">
@@ -102,6 +105,18 @@
 # GUARDED: emitc.func @fn_3() -> !emitc.opaque<"ctnative::static_table_ptr">
 # GUARDED: ctjs.func @guarded$5
 # GUARDED-SAME: ctnative.not_native = "unstructured control flow"
+
+# A function that returns the table (here a static getter) keeps it when one
+# of its callers uses the returned table in a way the proof does not take:
+# that caller is refused, with the reason the table would have had, at the
+# call (kNativeStaticTableUseRefusal), and the getter lowers. The function
+# the table is passed to reads a table its proof did not check, so it is
+# refused too.
+# PASSED: ctjs.func private @use$2
+# PASSED-SAME: ctnative.not_native = "a read of a run-once static's constant table that its proof did not check"
+# PASSED: emitc.func @fn_4() -> !emitc.opaque<"ctnative::static_table_ptr">
+# PASSED: ctjs.func private @passed$6
+# PASSED-SAME: ctnative.not_native = "it reads `config`, a static variable of a function that runs once, holding an object literal that is passed as an argument"
 
 # A spread of the table writes out one read per field. The first spread runs
 # before the run-once function stores the table, so it copies nothing and the
@@ -313,4 +328,18 @@ var r = (function () {
     }
     const box = new Box(1);
     return box.size() + box.guarded();
+})();
+
+#--- passed.js
+var r = (function () {
+    var config = {interval: 5000, pause: "hover"};
+    function use(o) { return o.interval; }
+    class Box {
+        constructor(v) { this.v = v; }
+        static get Default() { return config; }
+        size() { return this.v + this.constructor.Default.interval; }
+        passed() { return use(this.constructor.Default); }
+    }
+    const box = new Box(1);
+    return box.size() + box.passed();
 })();
