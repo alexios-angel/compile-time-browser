@@ -107,6 +107,10 @@ liftReport closureLifter::run() {
         }
     }
     bindLocalFunctions(out);
+    // Tests of a closure value, `typeof` and truthiness, are answered here
+    // (ConstantTests.cpp), so a closure that is tested and then called is only
+    // called by the time the censuses read its uses.
+    foldConstantTests();
     // A listener that removes itself through its own binding names itself
     // directly (HostCallbacks.cpp), before the censuses read the binding.
     bindSelfRemovingListeners();

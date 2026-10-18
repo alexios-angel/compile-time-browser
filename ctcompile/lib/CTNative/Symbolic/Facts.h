@@ -11,6 +11,7 @@
 
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTNative/Analysis/WorkBudget.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "llvm/ADT/DenseMap.h"
 
@@ -75,5 +76,7 @@ struct Changes {
 /// Replaces each operation whose result `analysis` proved constant with a
 /// constant, and each scf.if with a known condition by the taken branch.
 Changes rewrite(mlir::ModuleOp module, const Analysis & analysis, WorkBudget & budget);
+/// Replaces `branch` with the contents of its `take` region; returns true.
+bool select(mlir::scf::IfOp branch, bool take);
 
 } // namespace ctcompile::ctnative::symbolic
