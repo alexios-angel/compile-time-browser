@@ -363,6 +363,8 @@ bool closureLifter::copyCallSitesForClosures() {
                                        return box && !holdsOnlyItsValue(box);
                                    }) &&
                      !passedOnOrMerged(parameter);
+            // Or every closure that calls it makes it there (ExecuteCalls.cpp).
+            handed = handed || (chain.size() > 1 && relaysCallback(parameter));
             break;
         }
         if (!handed || chain.size() > kMaxChain) { continue; }
@@ -467,6 +469,11 @@ bool closureLifter::copyCallSitesForClosures() {
             }
             box->erase();
         }
+        // A closure capturing a box of it, or execute's call of it, calls it
+        // directly (ExecuteCalls.cpp).
+        for (mlir::Operation * helper : relayCallback(inside, cells, cloneDeep)) {
+            originals.insert(helper);
+        }
         // The parameter the closure came in by is dead in every copy now:
         // drop it, and its argument at each call, from the last copy back to
         // the call that made the closure.
@@ -501,9 +508,19 @@ bool closureLifter::copyCallSitesForClosures() {
         });
     };
     llvm::SetVector<mlir::Operation *> dead;
+    // A closure made inside a dead function is never made: the function it
+    // names is dead too once nothing else makes or calls it, so its calls
+    // keep nothing alive (ExecuteCalls.cpp's relay leaves an execute helper
+    // only those calls). Such a closure is left in its dead function.
+    const auto inDead = [&](mlir::Operation * op) {
+        auto owner = op->getParentOfType<ctjs::FuncOp>();
+        return owner && dead.contains(owner.getOperation());
+    };
+    llvm::SetVector<mlir::Operation *> candidates(originals.begin(), originals.end());
     for (bool grew = true; grew;) {
         grew = false;
-        for (mlir::Operation * op : originals) {
+        for (size_t i = 0; i < candidates.size(); ++i) {
+            mlir::Operation * op = candidates[i];
             auto fn = llvm::cast<ctjs::FuncOp>(op);
             if (dead.contains(op)) { continue; }
             const auto uses = mlir::SymbolTable::getSymbolUses(fn, &module.getBodyRegion());
@@ -513,16 +530,20 @@ bool closureLifter::copyCallSitesForClosures() {
                     return !owner || !dead.contains(owner.getOperation());
                 });
             if (called || llvm::any_of(madeBy.lookup(op), [&](ctjs::CreateClosureOp c) {
-                    return !c.getResult().use_empty() || supplies(c);
+                    return !inDead(c) && (!c.getResult().use_empty() || supplies(c));
                 })) {
                 continue;
             }
             dead.insert(op);
             grew = true;
+            fn.walk([&](ctjs::CreateClosureOp c) {
+                if (ctjs::FuncOp target = targetOf(c)) { candidates.insert(target); }
+            });
         }
     }
     for (mlir::Operation * op : dead) {
         for (ctjs::CreateClosureOp c : madeBy.lookup(op)) {
+            if (inDead(c)) { continue; }
             bindingClosures.erase(c.getOperation());
             for (auto & entry : boundCaptureCalls) {
                 llvm::erase_if(entry.second,

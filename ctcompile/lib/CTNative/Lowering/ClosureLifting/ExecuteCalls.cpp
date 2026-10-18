@@ -22,6 +22,25 @@
 // realm's own Function.prototype.call: realmBuiltinsUnproved finds nothing,
 // and the program never names `Function`.
 //
+// A callback can also arrive as a parameter, as in Bootstrap's components:
+//
+//   _queueCallback(callback, element, isAnimated) {
+//       executeAfterTransition(callback, element, isAnimated);
+//   }
+//
+// executeAfterTransition hands it to execute when nothing is animated, and
+// otherwise boxes it for the transitionend listener, which hands it to
+// execute later. A per-call-site copy (CallSiteCopies.cpp) makes such a
+// callback in the copy of executeAfterTransition, and the relay below
+// (relaysCallback, relayCallback) lets it make it where it is called
+// instead: execute's call of it becomes a plain call, and a closure that
+// captures its box and only calls what the box holds takes the callback's
+// captures and makes the callback itself where it read the box. The box is
+// never written and the callback writes none of its captures (the copy's
+// settledAt), so each callback made there calls the same code on the same
+// values, and since nothing but a call sees it, nothing can tell the
+// callbacks apart.
+//
 //===----------------------------------------------------------------------===//
 
 #include "../ForOf.h"
@@ -148,10 +167,7 @@ bool isExecuteHelper(ctjs::FuncOp fn) {
 /// Rewrites each `execute(f)` (see the file comment) whose other arguments
 /// are absent or undefined and whose `f` is a function into `f()`.
 void closureLifter::callExecutedFunctions() {
-    if (realmBuiltinsUnproved(module)) { return; }
-    bool namesFunction = false;
-    module.walk([&](ctjs::LoadGlobalOp load) { namesFunction |= load.getName() == "Function"; });
-    if (namesFunction) { return; }
+    if (!executeCallsRewritable()) { return; }
     // The one closure that makes each function, for reads of its captures.
     llvm::DenseMap<mlir::Operation *, ctjs::CreateClosureOp> makers;
     module.walk([&](ctjs::CreateClosureOp c) {
@@ -430,6 +446,205 @@ void closureLifter::callExecutedFunctions() {
         }
         cell.erase();
     }
+}
+
+/// Whether execute(f) may become f() in this module (see the file comment).
+bool closureLifter::executeCallsRewritable() {
+    if (!executeRewritable) {
+        bool namesFunction = false;
+        module.walk([&](ctjs::LoadGlobalOp load) { namesFunction |= load.getName() == "Function"; });
+        executeRewritable = !namesFunction && !realmBuiltinsUnproved(module);
+    }
+    return *executeRewritable;
+}
+
+namespace {
+
+/// Whether `use` hands its value alone to execute, in a module where that
+/// call may become a plain call.
+bool isExecuteCall(closureLifter & lifter, mlir::OpOperand & use) {
+    auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+    return call && use.getOperandNumber() == ctjs::implicit_arguments && call.getTarget() &&
+           llvm::all_of(call.getArgs().drop_front(), ctjs::isUndefinedConstant) &&
+           isExecuteHelper(call.getTarget()) && lifter.executeCallsRewritable();
+}
+
+/// Whether every use of `value` calls it or hands it alone to execute.
+bool onlyCalledOrExecuted(closureLifter & lifter, mlir::Value value) {
+    return llvm::all_of(value.getUses(), [&](mlir::OpOperand & use) {
+        return (llvm::isa<ctjs::CallOp>(use.getOwner()) && use.getOperandNumber() == 0) ||
+               isExecuteCall(lifter, use);
+    });
+}
+
+/// Closures that capture a box, each with the slot that holds it.
+using RelayHolders = llvm::SmallVector<std::pair<ctjs::CreateClosureOp, unsigned>>;
+
+/// The closures that capture `box`, each with its slot, when what the box
+/// holds can be made where they call it: the box is no static variable,
+/// nothing writes it, and each read of it only calls what it holds or hands
+/// that to execute; each capturing closure is the one closure of its
+/// function, which reads the slot only that way, never writes it and relays
+/// it to no closure it makes. Nullopt otherwise.
+std::optional<RelayHolders> relayHolders(closureLifter & lifter, ctjs::CreateCellOp box) {
+    if (box->hasAttr(kNativeStaticCell)) { return std::nullopt; }
+    RelayHolders holders;
+    for (mlir::OpOperand & use : box.getResult().getUses()) {
+        const cellUse kind = classify(use);
+        if (kind == cellUse::read && onlyCalledOrExecuted(lifter, use.getOwner()->getResult(0))) {
+            continue;
+        }
+        if (kind != cellUse::capture) { return std::nullopt; }
+        auto holder = llvm::cast<ctjs::CreateClosureOp>(use.getOwner());
+        const unsigned slot = use.getOperandNumber() - kFirstCapture;
+        ctjs::FuncOp target = lifter.targetOf(holder);
+        mlir::Block * entry = target ? ctjs::implicitEntry(target) : nullptr;
+        if (!entry || closureLifter::enclosingIndex(holder, slot) >= 0) { return std::nullopt; }
+        unsigned makers = 0;
+        lifter.module.walk(
+            [&](ctjs::CreateClosureOp c) { makers += lifter.targetOf(c) == target ? 1 : 0; });
+        const mlir::Value own = entry->getArgument(ctjs::arg_callee);
+        const bool unfit =
+            target
+                .walk([&](mlir::Operation * op) {
+                    bool fits = true;
+                    if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op)) {
+                        fits = read.getClosure() != own ||
+                               static_cast<unsigned>(read.getIndex()) != slot ||
+                               onlyCalledOrExecuted(lifter, read.getResult());
+                    } else if (auto write = llvm::dyn_cast<ctjs::StoreUpvalueOp>(op)) {
+                        fits = write.getClosure() == own &&
+                               static_cast<unsigned>(write.getIndex()) != slot;
+                    } else if (auto nested = llvm::dyn_cast<ctjs::CreateClosureOp>(op)) {
+                        for (unsigned i = 0; fits && i < nested.getUpvalues().size(); ++i) {
+                            fits = closureLifter::enclosingIndex(nested, i) !=
+                                   static_cast<std::int32_t>(slot);
+                        }
+                    }
+                    return fits ? mlir::WalkResult::advance() : mlir::WalkResult::interrupt();
+                })
+                .wasInterrupted();
+        if (makers != 1 || unfit) { return std::nullopt; }
+        holders.emplace_back(holder, slot);
+    }
+    return holders;
+}
+
+/// Makes each call that hands `callback` alone to execute a plain call of it,
+/// and adds the helper each such call named to `helpers`.
+void callExecuted(closureLifter & lifter, mlir::Value callback,
+                  llvm::SetVector<mlir::Operation *> & helpers) {
+    const auto valueType = ctjs::ValueType::get(callback.getContext());
+    for (mlir::OpOperand & use : llvm::make_early_inc_range(callback.getUses())) {
+        if (!isExecuteCall(lifter, use)) { continue; }
+        auto executed = llvm::cast<ctjs::CallDirectOp>(use.getOwner());
+        helpers.insert(executed.getTarget());
+        mlir::OpBuilder at(executed);
+        auto call = ctjs::CallOp::create(at, executed.getLoc(), valueType, callback,
+                                         lifter.undefinedAt(at, executed.getLoc()),
+                                         mlir::ValueRange{});
+        executed.getResult().replaceAllUsesWith(call.getResult());
+        mlir::Operation * helper = executed.getCalleeValue().getDefiningOp();
+        executed.erase();
+        if (llvm::isa_and_nonnull<ctjs::CellGetOp, ctjs::LoadUpvalueOp>(helper) &&
+            helper->use_empty()) {
+            helper->erase();
+        }
+    }
+}
+
+} // namespace
+
+/// Whether a per-call-site copy whose last link takes the callback as
+/// `parameter` may make the callback where it is called (see the file
+/// comment): every use of the parameter calls it, hands it alone to execute,
+/// or boxes it for closures relayHolders accepts, and at least one does not
+/// just call it.
+bool closureLifter::relaysCallback(mlir::BlockArgument parameter) {
+    bool relayed = false;
+    for (mlir::OpOperand & use : parameter.getUses()) {
+        if (llvm::isa<ctjs::CallOp>(use.getOwner()) && use.getOperandNumber() == 0) { continue; }
+        auto box = llvm::dyn_cast<ctjs::CreateCellOp>(use.getOwner());
+        if (!isExecuteCall(*this, use) && !(box && relayHolders(*this, box))) { return false; }
+        relayed = true;
+    }
+    return relayed;
+}
+
+/// The relay, in the copy's last link: `inside`, made from `cells`, now
+/// stands where the parameter did. Each closure capturing a box of it takes
+/// `cells` as new last slots and makes the callback from them where it read
+/// the box, whose slot it then drops; each call handing the callback alone to
+/// execute calls it. Each function has one closure that makes it, so every
+/// callback made in a capturing closure names a copy of the callback's
+/// function from `cloneDeep` (recorded in ctnative.copies), except that the
+/// first takes the function itself when `inside` is left with no use.
+/// Returns the execute helpers whose calls it replaced, which the copy's sweep
+/// of uncalled originals then also asks about.
+llvm::SetVector<mlir::Operation *>
+closureLifter::relayCallback(ctjs::CreateClosureOp inside, llvm::ArrayRef<mlir::Value> cells,
+                             llvm::function_ref<ctjs::FuncOp(ctjs::FuncOp)> cloneDeep) {
+    llvm::SetVector<mlir::Operation *> helpers;
+    llvm::SmallVector<std::pair<ctjs::CreateCellOp, RelayHolders>> boxes;
+    // Whether `inside` keeps a use here, so that no callback made in a
+    // holder may take its function.
+    bool kept = false;
+    for (mlir::OpOperand & use : inside.getResult().getUses()) {
+        auto box = llvm::dyn_cast<ctjs::CreateCellOp>(use.getOwner());
+        std::optional<RelayHolders> holders = box ? relayHolders(*this, box) : std::nullopt;
+        if (!holders) {
+            kept = true;
+            continue;
+        }
+        kept |= llvm::any_of(box->getUsers(),
+                             [](mlir::Operation * user) { return llvm::isa<ctjs::CellGetOp>(user); });
+        boxes.emplace_back(box, std::move(*holders));
+    }
+    const ctjs::FuncOp callback = targetOf(inside);
+    for (auto & [box, holders] : boxes) {
+        for (auto [holder, slot] : holders) {
+            ctjs::FuncOp target = targetOf(holder);
+            const mlir::Value own = target.getBody().front().getArgument(ctjs::arg_callee);
+            llvm::SmallVector<std::int32_t> relayed;
+            for (mlir::Value cell : cells) {
+                relayed.push_back(static_cast<std::int32_t>(holder.getUpvalues().size()));
+                addCaptureSlot(holder, cell);
+            }
+            llvm::SmallVector<ctjs::LoadUpvalueOp> reads;
+            target.walk([&](ctjs::LoadUpvalueOp read) {
+                if (read.getClosure() == own && static_cast<unsigned>(read.getIndex()) == slot) {
+                    reads.push_back(read);
+                }
+            });
+            for (ctjs::LoadUpvalueOp read : reads) {
+                mlir::OpBuilder at(read);
+                const mlir::Value undefined = undefinedAt(at, read.getLoc());
+                auto made = llvm::cast<ctjs::CreateClosureOp>(at.clone(*inside));
+                if (kept) { made.setFunction(*ctjs::functionIndex(cloneDeep(callback))); }
+                kept = true;
+                made.getEnclosingClosureMutable().assign(own);
+                made.getEnclosingThisMutable().assign(undefined);
+                made.getUpvaluesMutable().assign(
+                    llvm::SmallVector<mlir::Value>(cells.size(), undefined));
+                if (!relayed.empty()) {
+                    made->setAttr("enclosing_indices",
+                                  mlir::Builder(context).getDenseI32ArrayAttr(relayed));
+                }
+                read.getResult().replaceAllUsesWith(made.getResult());
+                read.erase();
+                callExecuted(*this, made.getResult(), helpers);
+            }
+            removeCaptureSlots(holder, {slot});
+        }
+        for (mlir::Operation * read : llvm::make_early_inc_range(box->getUsers())) {
+            read->getResult(0).replaceAllUsesWith(inside.getResult());
+            read->erase();
+        }
+        box.erase();
+    }
+    callExecuted(*this, inside.getResult(), helpers);
+    if (inside.getResult().use_empty()) { inside.erase(); }
+    return helpers;
 }
 
 } // namespace ctcompile::ctnative::lowering_detail
