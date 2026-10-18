@@ -34,7 +34,8 @@ validator's tree. Stopped boxes are skipped, not started.
 
 `status` shows each box's power state and free slots and, for a running box,
 its CPU (sampled over one second), memory and disk use, read with psutil
-on the box over Fabric.
+on the box over Fabric. A box that does not answer is looked up through its
+cloud's SDK (boto3, google-cloud-compute) with the ids in its terraform state.
 
 Run it from any worktree by its absolute path: it finds its settings beside
 itself, and COMMAND runs in the caller's working directory.
@@ -217,6 +218,46 @@ def usage(box):
     )
 
 
+def cloud_state(box):
+    """The box's power state, lowercased, from its cloud's API.
+
+    The instance comes from the terraform state beside the box's server.sh:
+    an `instance_id` output means AWS, a `project_id` output means GCP.
+    """
+    from botocore.exceptions import BotoCoreError, ClientError
+    from google.api_core.exceptions import GoogleAPIError
+    from google.auth.exceptions import GoogleAuthError
+
+    state = Path(box["server"]).with_name("terraform.tfstate")
+    try:
+        out = {k: v["value"] for k, v in json.loads(state.read_text())["outputs"].items()}
+        if "instance_id" in out:
+            import boto3
+
+            ec2 = boto3.client("ec2", region_name=out["region"])
+            found = ec2.describe_instances(InstanceIds=[out["instance_id"]])
+            return found["Reservations"][0]["Instances"][0]["State"]["Name"]
+        from google.api_core.client_options import ClientOptions
+        from google.cloud import compute_v1
+
+        # Bill the call to the box's project, as pick-machine.py does, so
+        # end-user credentials need no quota project of their own.
+        options = ClientOptions(quota_project_id=out["project_id"])
+        instances = compute_v1.InstancesClient(client_options=options)
+        found = instances.get(project=out["project_id"], zone=out["zone"], instance=out["name"])
+        return found.status.lower()
+    except (
+        OSError,
+        KeyError,
+        ValueError,
+        BotoCoreError,
+        ClientError,
+        GoogleAPIError,
+        GoogleAuthError,
+    ) as e:
+        return f"unknown ({type(e).__name__})"
+
+
 def box_status(box):
     free = 0
     for path in slot_locks(box):
@@ -226,13 +267,13 @@ def box_status(box):
             os.close(lock)
     round_ = ", round" if os.path.exists(box["round_marker"]) else ""
     slots = f"{free}/{len(slot_locks(box))} slots free{round_}"
-    # A box that answers is running, so the slow cloud status (16 s for AWS's
-    # server.sh) is asked only of a box that does not.
+    # A box that answers is running, so its cloud is asked only about a box
+    # that does not.
     if (load := usage(box)) is not None:
         return f"{box['name']:12s} running  {slots}; {load}"
-    if is_running(box):
-        return f"{box['name']:12s} running  {slots}; not answering over ssh"
-    return f"{box['name']:12s} stopped  {slots}"
+    state = cloud_state(box)
+    note = "; not answering over ssh" if state == "running" else ""
+    return f"{box['name']:12s} {state:8s} {slots}{note}"
 
 
 def status(settings):
