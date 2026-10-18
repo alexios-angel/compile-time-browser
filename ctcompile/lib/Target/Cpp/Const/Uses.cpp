@@ -55,6 +55,23 @@ bool readsBinding(mlir::OpOperand & operand) {
             if (receiver.getValue() == "ctnative::js_num") { return result.isF64(); }
             return receiver.getValue() == "ctnative::js_string" && isOpaque(result, "std::string");
         }
+        // js_string's JavaScript members are const: they read the String and
+        // return a new value.
+        if (receiver.getValue() == "ctnative::js_string") {
+            const llvm::StringRef name = call.getCallee();
+            const auto arguments = call.getArgOperands();
+            if (name == "length" && arguments.empty()) {
+                return isOpaque(result, "ctnative::js_num");
+            }
+            if ((name == "toLowerCase" || name == "toUpperCase" || name == "trim" ||
+                 name == "toString") &&
+                arguments.empty()) {
+                return isOpaque(result, "ctnative::js_string");
+            }
+            if (name == "split" && arguments.size() == 1) {
+                return isOpaque(result, "std::vector<ctnative::js_string>");
+            }
+        }
         if (receiver.getValue() != "ctnative::js_string" || call.getCallee() != "startsWith" ||
             call.getArgOperands().size() != 1 || !result.isInteger(1)) {
             return false;
