@@ -9,8 +9,10 @@ root reason. Fixing a reason that is not a root gains nothing until its root
 is fixed.
 
 A refused function F depends on:
-  - its direct callers, when its reason is a parameter or capture that no
-    caller proves (a callee cannot be typed while its callers are refused);
+  - its callers, when its reason is a parameter or capture that no caller
+    proves (a callee cannot be typed while its callers are refused): the
+    functions with a direct call of it, and those that call it through a
+    run-once function's static variable holding its closure;
   - the ctjs.create_closure that makes it, when that closure was refused and
     F's reason is a parameter, `this`, new.target or its own closure (an
     unlifted closure has no call site that passes them);
@@ -76,6 +78,12 @@ STRING = re.compile(r'ctjs\.constant #ctjs\.string<"([^"]*)">')
 SET = re.compile(r"ctjs\.set_property (%[\w#]+)\[(%[\w#]+)\], (%[\w#]+)")
 ACCESSOR = re.compile(r"ctjs\.define_accessor \S+ on (%[\w#]+) get (%[\w#]+) set (%[\w#]+)")
 INDEX = re.compile(r"[$_](\d+)$")
+# A static variable of a run-once function (ClosureLifting/RunOnce.cpp): its
+# box, and the reference to it in each function that reads it, carry its name.
+STATIC_CELL = re.compile(r'ctjs\.create_cell .*ctnative\.static_cell = "([^"]+)"')
+CELL_GET = re.compile(r"ctjs\.cell_get (%[\w#]+)")
+CELL_SET = re.compile(r"ctjs\.cell_set (%[\w#]+), (%[\w#]+)")
+CALL = re.compile(r"ctjs\.call (%[\w#]+)\(")
 
 ENCLOSING = "capture N is filled from the enclosing closure, which did not lift: "
 VALUE = "a closure used as a value: "
@@ -117,7 +125,8 @@ def parse(text):
 
     Returns (funcs, callers, closures, classes): funcs maps a name to its
     not_native reason (None when it lowered); callers maps a name to the
-    functions with a direct call of it; closures lists (creator, target,
+    functions with a direct call of it, or a call through a static variable
+    written with a closure of it; closures lists (creator, target,
     reason or None, class target or None), where the class is the refused
     class whose constructor or prototype the closure is stored on, or which
     the closure constructs; classes maps a constructor's target to its
@@ -126,6 +135,9 @@ def parse(text):
     """
     funcs, callers, closures, classes = {}, collections.defaultdict(set), [], {}
     by_index, pending = {}, []
+    # Static variable -> the closures written to it, and the functions that
+    # call through it.
+    held, through = collections.defaultdict(set), collections.defaultdict(set)
     current = None
     for line in text.splitlines():
         header = FUNC.match(line)
@@ -136,8 +148,9 @@ def parse(text):
             index = INDEX.search(current)
             if index:
                 by_index[int(index.group(1))] = current
-            # Per function: SSA name -> pending closure, string, or class.
-            made_at, strings, class_of = {}, {}, {}
+            # Per function: SSA name -> pending closure, string, class, static
+            # box, or read of a static box.
+            made_at, strings, class_of, boxes, reads = {}, {}, {}, {}, {}
             continue
         if current is None:
             continue
@@ -150,6 +163,16 @@ def parse(text):
         constant = STRING.search(line)
         if result and constant:
             strings[result.group(1)] = constant.group(1)
+        box, read = STATIC_CELL.search(line), CELL_GET.search(line)
+        if result and box:
+            boxes[result.group(1)] = box.group(1)
+        elif result and read and read.group(1) in boxes:
+            reads[result.group(1)] = boxes[read.group(1)]
+        written, call = CELL_SET.search(line), CALL.search(line)
+        if written and written.group(1) in boxes and written.group(2) in made_at:
+            held[boxes[written.group(1)]].add(made_at[written.group(2)][1])
+        if call and call.group(1) in reads:
+            through[reads[call.group(1)]].add(current)
         made = CLOSURE.search(line)
         if made:
             why = CLOSURE_REASON.search(line)
@@ -185,6 +208,11 @@ def parse(text):
     for creator, index, why, cls in pending:
         if index in by_index:
             closures.append((creator, by_index[index], why, by_index.get(cls)))
+    # A call through a static variable reaches the function it holds.
+    for symbol, calling in through.items():
+        for index in held[symbol]:
+            if index in by_index:
+                callers[by_index[index]] |= calling
     classes = {by_index[i]: why for i, why in classes.items() if i in by_index}
     return funcs, callers, closures, classes
 
