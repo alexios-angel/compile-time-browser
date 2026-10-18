@@ -505,18 +505,76 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         eraseIfUnused(o);
         return;
     }
-    // A field that owns an instance by value: a read is the member itself,
-    // and the store copies the constructed instance into it.
+    // A field that owns an instance is a ctnative::owned or
+    // ctnative::replaceable member (Runtime/Owned.hpp). A read is a pointer to
+    // the instance it holds, and throws the interpreter's TypeError, naming
+    // the property its use reaches, when the field holds undefined or null; a
+    // read only tested for truth (kOwnedHeld) is held(). The store owns the
+    // instance and a store of null (kOwnedNull) marks the field null.
     if (o->hasAttr(kNativeOwnedInstance)) {
+        const mlir::Type storage = accessType.lookup(o);
+        const auto field = [&](mlir::Value object) -> mlir::Value {
+            return ec::AddressOfOp::create(b, where, ec::PointerType::get(storage),
+                                           memberAccess(b, where, object, memberName(o), storage));
+        };
+        const auto mark = o->getAttrOfType<mlir::StringAttr>(kNativeOwnedInstance);
+        if (auto get = llvm::dyn_cast<GetPropertyOp>(o);
+            get && mark && mark.getValue() == kOwnedHeld) {
+            swap(callWithConstValueOperands(b, where, get.getResult().getType(),
+                                            b.getStringAttr("ctnative::held"),
+                                            mlir::ValueRange{field(get.getObject())})
+                     .getResult(0));
+            return;
+        }
         if (auto get = llvm::dyn_cast<GetPropertyOp>(o)) {
-            swap(memberAccess(b, where, get.getObject(), memberName(o), accessType.lookup(o)));
+            // The use is still a ctjs op here: replace() runs in program order.
+            // A lifted method call keeps the method's name in its callee, the
+            // ctjs.func's `name$N` or the emitc.func's `name_N`.
+            bool writes = false;
+            std::string reached;
+            for (mlir::OpOperand & use : get.getResult().getUses()) {
+                if (use.getOperandNumber() != 0) { continue; }
+                if (auto read = llvm::dyn_cast<GetPropertyOp>(use.getOwner())) {
+                    reached = ctjs::constantKey(read.getKey()).str();
+                } else if (auto write = llvm::dyn_cast<SetPropertyOp>(use.getOwner())) {
+                    writes = true;
+                    reached = ctjs::constantKey(write.getKey()).str();
+                } else if (auto call = llvm::dyn_cast<CallDirectOp>(use.getOwner())) {
+                    llvm::StringRef name = call.getCallee();
+                    const size_t cut = name.find_last_of("$_");
+                    if (cut != llvm::StringRef::npos && cut + 1 < name.size() &&
+                        llvm::all_of(name.drop_front(cut + 1), llvm::isDigit)) {
+                        name = name.take_front(cut);
+                    }
+                    reached = name.str();
+                } else {
+                    continue;
+                }
+                break;
+            }
+            const auto text = ec::PointerType::get(ec::OpaqueType::get(context, "const char"));
+            mlir::Value key = ec::LiteralOp::create(
+                b, where, text, b.getStringAttr(cpp::c_string_literal(reached)));
+            swap(callWithConstValueOperands(
+                     b, where, get.getResult().getType(),
+                     b.getStringAttr(writes ? "ctnative::setting" : "ctnative::reading"),
+                     mlir::ValueRange{field(get.getObject()), key})
+                     .getResult(0));
             return;
         }
         auto set = llvm::cast<SetPropertyOp>(o);
-        const mlir::Type storage = accessType.lookup(o);
-        ec::AssignOp::create(b, where,
-                             memberAccess(b, where, set.getObject(), memberName(o), storage),
-                             ec::LoadOp::create(b, where, storage, set.getValue()));
+        if (mark && mark.getValue() == kOwnedNull) {
+            callWithConstValueOperands(b, where, mlir::TypeRange{},
+                                       b.getStringAttr("ctnative::disown"),
+                                       mlir::ValueRange{field(set.getObject())});
+        } else {
+            const mlir::Type instance =
+                llvm::cast<ec::LValueType>(set.getValue().getType()).getValueType();
+            callWithConstValueOperands(
+                b, where, mlir::TypeRange{}, b.getStringAttr("ctnative::own"),
+                mlir::ValueRange{field(set.getObject()),
+                                 ec::LoadOp::create(b, where, instance, set.getValue())});
+        }
         eraseIfUnused(o);
         return;
     }

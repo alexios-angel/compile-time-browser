@@ -206,7 +206,8 @@ def check_record_executable(
         )
     compilers = args.compilers
     includes, libraries = dom.link_options(args)
-    executions = 0
+    flags = [*FLAGS, *includes]
+    builds = []
     deduced = args.work / f"{name}.deduced.mlir"
     run([args.opt, str(native), "--ctnative-print-deduced", "-o", str(deduced)])
     for mode, module in (("explicit", native), ("deduced", deduced)):
@@ -225,23 +226,28 @@ def check_record_executable(
             raise RuntimeError(f"{name}: document outlives its atoms")
         path = args.work / f"{name}.{mode}.cpp"
         path.write_text(cpp + client.replace("@OWNER@", owner[0]))
-        flags = [*FLAGS, *includes]
         for index, compiler in enumerate(compilers):
-            binary = path.with_suffix(f".{index}")
-            result = build_and_run(
-                compiler,
-                path,
-                binary,
-                flags=flags,
-                libraries=libraries,
-                nm=args.nm,
-                vm=dom.VM,
-                clean=True,
-            )
-            if result.stdout != "DOM record Data passed\n":
-                raise RuntimeError(f"{name}: real document observations incomplete")
-            executions += 1
-    return executions
+            builds.append((path.with_suffix(f".{index}"), path, compiler))
+
+    # Each program builds and runs on its own, writing only its binary, so
+    # both modes' programs build side by side with each compiler (dom.parallel).
+    def build(case):
+        binary, path, compiler = case
+        result = build_and_run(
+            compiler,
+            path,
+            binary,
+            flags=flags,
+            libraries=libraries,
+            nm=args.nm,
+            vm=dom.VM,
+            clean=True,
+        )
+        if result.stdout != "DOM record Data passed\n":
+            raise RuntimeError(f"{name}: real document observations incomplete")
+
+    dom.parallel(build, builds)
+    return len(builds)
 
 
 def published_prepare(args, name, text, *, parameters=1):
@@ -1389,8 +1395,8 @@ def object_constructors(args, constructor):
     return checked
 
 
-def main():
-    args = dom.parse_args(__doc__, oracles=True, switches=("class-families-only",))
+def main(argv=None):
+    args = dom.parse_args(__doc__, oracles=True, switches=("class-families-only",), argv=argv)
     published_families(args)
     published_composite_results(args)
     published_class_fields(args)
@@ -1527,6 +1533,14 @@ def main():
         f"{executions} native object-key executions; unpublished class DOM sessions remain refused"
     )
     published_records(args)
+
+
+def test_data(lit):
+    main(
+        lit.args(
+            "--translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --nm %nm --work %t"
+        )
+    )
 
 
 if __name__ == "__main__":

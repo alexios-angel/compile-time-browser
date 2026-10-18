@@ -215,6 +215,7 @@ def check_direct_refusals(args, ir, contract, facts):
 def check_native(args, modules, optimize, compilers, includes, libraries):
     """Compile the lowered modules into one C++ program per layout and run it."""
     cases = CLASS_CASES | CASES
+    builds = []
     for layout in ("explicit", "deduced"):
         headers, bodies, checks, expected = set(), [], [], []
         for name, owned, native in modules:
@@ -308,17 +309,24 @@ def check_native(args, modules, optimize, compilers, includes, libraries):
             + "\n}\n"
         )
         for index, compiler in enumerate(compilers):
-            binary = path.with_suffix(f".{index}")
-            flags = [*FLAGS, *includes]
-            result = build_and_run(
-                compiler, path, binary, flags=flags, libraries=libraries, nm=args.nm, vm=dom.VM
-            )
-            if result.stdout != "".join(expected):
-                raise RuntimeError("class DOM native observations disagree with source")
+            builds.append((path.with_suffix(f".{index}"), path, compiler, "".join(expected)))
+
+    # Each program builds and runs on its own, writing only its binary, so both
+    # layouts' programs build side by side with each compiler (dom.parallel).
+    def build(case):
+        binary, path, compiler, expected = case
+        flags = [*FLAGS, *includes]
+        result = build_and_run(
+            compiler, path, binary, flags=flags, libraries=libraries, nm=args.nm, vm=dom.VM
+        )
+        if result.stdout != expected:
+            raise RuntimeError("class DOM native observations disagree with source")
+
+    dom.parallel(build, builds)
 
 
-def main():
-    args = dom.parse_args(__doc__, oracles=True)
+def main(argv=None):
+    args = dom.parse_args(__doc__, oracles=True, argv=argv)
     # The cases copy Bootstrap's minified helpers verbatim, so check they still
     # match the vendored bundle: M decodes a data-attribute value (boolean,
     # Number, null, JSON, URI), F turns a camelCase key into kebab-case, and H is
@@ -688,7 +696,9 @@ def main():
                     success=False,
                 )
                 refusals += 1
-    for optimize in (False, True):
+
+    def check_optimized(case):
+        _, optimize = case
         modules = [
             (
                 name,
@@ -705,9 +715,23 @@ def main():
             for name, owned, ir, contract in prepared
         ]
         check_native(args, modules, optimize, compilers, includes, libraries)
+
+    # The two settings lower and build only files named for their own setting,
+    # so they run side by side (dom.parallel).
+    dom.parallel(
+        check_optimized, [(f"optimize-{optimize}", optimize) for optimize in (False, True)]
+    )
     print(
         f"DOM classes, receivers and fields: {observations} Node/interpreter observations, "
         f"8 combined native executions, {refusals} refusals"
+    )
+
+
+def test_basics(lit):
+    main(
+        lit.args(
+            "--translate ctjs-translate --opt ctjs-opt --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --work %t --nm %nm --node %node --reference %native_reference"
+        )
     )
 
 

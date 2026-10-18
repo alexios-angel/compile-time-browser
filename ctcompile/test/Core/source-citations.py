@@ -33,29 +33,41 @@ def table_text(path):
     )
 
 
-definition, root = Path(sys.argv[1]), Path(sys.argv[2]) / "ctbrowser"
-citations = sorted(
-    set(re.findall(r"[A-Za-z_0-9]+\.(?:cpp|hpp|def|h):[0-9]+", table_text(definition)))
-)
-wanted = {citation.rsplit(":", 1)[0] for citation in citations}
-files = {}  # One walk of the tree, indexed by basename.
-for path in root.rglob("*"):
-    if path.name in wanted:
-        files.setdefault(path.name, []).append(path)
-checked, bad = 0, []
-for citation in citations:
-    cited_file, cited_line = citation.rsplit(":", 1)
-    found = files.get(cited_file, [])
-    if not found:
-        continue
-    checked += 1
-    if not any(path.read_text().count("\n") >= int(cited_line) for path in found):
-        bad.append(citation)
-if bad:
-    sys.exit(
-        "the table cites lines past the end of the files it names:\n  "
-        + "\n  ".join(bad)
-        + '\nRepair by citing the handler BY NAME - "run_loop.cpp\'s VM_CASE(cell_get)" - rather '
-        "than by a fresh line number, which will rot again the next time that file moves."
+def main(argv=None):
+    definition, root = (Path(a) for a in (sys.argv[1:] if argv is None else argv))
+    root /= "ctbrowser"
+    citations = sorted(
+        set(re.findall(r"[A-Za-z_0-9]+\.(?:cpp|hpp|def|h):[0-9]+", table_text(definition)))
     )
-print(f"ok citations ({checked} file:line citations, all inside their files)")
+    wanted = {citation.rsplit(":", 1)[0] for citation in citations}
+    files = {}  # One walk of the tree, indexed by basename.
+    for path in root.rglob("*"):
+        if path.name in wanted:
+            files.setdefault(path.name, []).append(path)
+    checked, bad = 0, []
+    for citation in citations:
+        cited_file, cited_line = citation.rsplit(":", 1)
+        found = files.get(cited_file, [])
+        if not found:
+            continue
+        checked += 1
+        if not any(path.read_text().count("\n") >= int(cited_line) for path in found):
+            bad.append(citation)
+    if bad:
+        sys.exit(
+            "the table cites lines past the end of the files it names:\n  "
+            + "\n  ".join(bad)
+            + '\nRepair by citing the handler BY NAME - "run_loop.cpp\'s VM_CASE(cell_get)" - rather '
+            "than by a fresh line number, which will rot again the next time that file moves."
+        )
+    print(f"ok citations ({checked} file:line citations, all inside their files)")
+
+
+def test_def_citations(lit):
+    """def-citations.test: both tables' RUN lines."""
+    main(lit.args("%{monorepo}/ctbrowser/include/ctbrowser/aot/aot_helpers.def %{monorepo}"))
+    main(lit.args("%S/../../include/ctcompile/JavaScript/FrameEnds.def %{monorepo}"))
+
+
+if __name__ == "__main__":
+    main()

@@ -171,12 +171,12 @@ def hoisted_declarations(args):
                 raise RuntimeError("host publication proof accepted malformed declarations")
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--translate", required=True)
     parser.add_argument("--opt", required=True)
     parser.add_argument("--work", type=Path, required=True)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     args.work.mkdir(parents=True, exist_ok=True)
     hoisted_declarations(args)
     # name -> (JavaScript source, expected selected_branches,
@@ -588,6 +588,10 @@ def main():
     print(
         "host prefix: source consumers, effect/context refusals, guarded Map/realm contracts and stale/forged/budget controls passed"
     )
+
+
+def test_prefix(lit):
+    main(lit.args("--translate ctjs-translate --opt ctjs-opt --work %t"))
 
 
 if __name__ == "__main__":

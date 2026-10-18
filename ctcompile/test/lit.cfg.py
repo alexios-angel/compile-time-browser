@@ -104,16 +104,20 @@ llvm_config.add_tool_substitutions(["mlir-translate", "not", "split-file"], [con
 # which fails with a message about a file called "_exe".
 #
 # Both add the runtime header's directory: every native program includes
-# ctcompile/CTNative/Runtime/ctnative.hpp.
+# ctcompile/CTNative/Runtime/ctnative.hpp. Both also add Boost's, as system
+# headers the way CMake adds an imported target's: the engine's script headers
+# that the boxed tier's output includes need it (lit.site.cfg.py.in).
 runtime_include = f"-I {config.ctcompile_src_root}/include"
+boost_include = "".join(f" -isystem {path}" for path in config.boost_include.split(";") if path)
+engine_include = f"-I {config.ctbrowser_include}{boost_include}"
 config.substitutions.append(
-    ("%cxx_exe", f"{config.host_cxx} -std=c++23 {runtime_include} -I {config.ctbrowser_include}")
+    ("%cxx_exe", f"{config.host_cxx} -std=c++23 {runtime_include} {engine_include}")
 )
 
 config.substitutions.append(
     (
         "%cxx",
-        f"{config.host_cxx} -std=c++23 -fsyntax-only {runtime_include} -I {config.ctbrowser_include}",
+        f"{config.host_cxx} -std=c++23 -fsyntax-only {runtime_include} {engine_include}",
     )
 )
 

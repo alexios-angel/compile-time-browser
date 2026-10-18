@@ -883,8 +883,8 @@ def standalone(
     parallel(build, builds)
 
 
-def main():
-    args = parse_args(__doc__)
+def main(argv=None):
+    args = parse_args(__doc__, argv=argv)
     if not args.nm:
         raise RuntimeError("native DOM gate requires nm")
     compilers = args.compilers
@@ -1118,6 +1118,10 @@ def main():
         f"native DOM: {len(entries)} action/identity/attribute/query/error entries, "
         f"both policies/layouts, GCC/Clang, DOM/Core and selector-only Style; {len(refusals) + 7} refusal controls"
     )
+
+
+def test_dom(lit):
+    main(lit.args("%dom_driver"))
 
 
 if __name__ == "__main__":

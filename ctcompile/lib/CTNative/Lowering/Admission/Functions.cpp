@@ -205,11 +205,14 @@ bool admission::function(ctjs::FuncOp fn) {
         if (domEntry && domBookkeeping(*domEntry, o)) { return; }
         if (o->getNumResults() == 1 && lowersToNothing(o->getResult(0))) { return; }
         // An object literal, a record its callee returned, or a read of a
-        // field that owns an instance by value, is its class.
+        // field that owns an instance, is its class; a read that only tests
+        // whether the field holds the instance (kOwnedHeld) is a boolean.
+        const auto owned = o->getAttrOfType<mlir::StringAttr>(kNativeOwnedInstance);
         if (llvm::isa<ctjs::CreateObjectOp>(o) ||
             (o->getNumResults() == 1 && TypeInference::isRecordCall(o->getResult(0))) ||
             (llvm::isa<ctjs::GetPropertyOp>(o) && o->hasAttr(kNativeOwnedInstance) &&
-             TypeInference::hasClosedShape(o->getResult(0)))) {
+             ((owned && owned.getValue() == kOwnedHeld) ||
+              TypeInference::hasClosedShape(o->getResult(0))))) {
             return;
         }
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o);

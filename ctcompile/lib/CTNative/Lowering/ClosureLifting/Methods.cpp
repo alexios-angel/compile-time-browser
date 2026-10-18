@@ -18,6 +18,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "ClosureLifter.h"
+#include "SpreadParameters.h"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/Instances.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -82,13 +83,13 @@ std::string functionOf(mlir::Operation * op) {
 } // namespace
 
 bool closureLifter::ownsByValue(ctjs::SetPropertyOp set,
-                                llvm::SmallVectorImpl<ctjs::GetPropertyOp> * reads,
+                                llvm::SmallVectorImpl<mlir::Operation *> * uses,
                                 std::string * why) {
     if (const auto known = refusedInstanceUses.find(set); known != refusedInstanceUses.end()) {
         if (why) { *why = known->second; }
         return false;
     }
-    llvm::SmallVector<ctjs::GetPropertyOp> found;
+    llvm::SmallVector<mlir::Operation *> found;
     const std::optional<std::string> refusal = [&]() -> std::optional<std::string> {
         const llvm::StringRef key = ctjs::constantKey(set.getKey());
         if (key.empty() || ctjs::reservedKey(key)) {
@@ -105,40 +106,43 @@ bool closureLifter::ownsByValue(ctjs::SetPropertyOp set,
             !self.getOwner()->isEntryBlock()) {
             return "it is stored into an object other than `this`";
         }
-        if (set->getBlock() != self.getOwner()) {
-            return ("the store to `" + key + "` does not run on every path through " +
-                    functionOf(set))
-                .str();
-        }
+        // The class whose constructor, or a method of whose prototype, makes
+        // the store.
         auto owner = llvm::dyn_cast<ctjs::FuncOp>(self.getOwner()->getParentOp());
-        const ctjs::CreateClosureOp closure = owner ? uniqueClosureByTarget.lookup(owner) : nullptr;
-        const auto prototype = closure ? immutablePrototype(closure) : std::nullopt;
-        if (!prototype) {
-            return functionOf(set) +
-                   " is not the constructor of a class whose prototype is proved immutable";
+        ctjs::CreateClosureOp constructor = owner ? uniqueClosureByTarget.lookup(owner) : nullptr;
+        const bool inConstructor =
+            constructor && (constructorClosures.contains(constructor.getOperation()) ||
+                            jsClasses.count(constructor.getOperation()));
+        if (!inConstructor) {
+            constructor = nullptr;
+            for (const auto & entry : jsClasses) {
+                if (llvm::any_of(entry.second.methods, [&](const auto & method) {
+                        return targetOf(method.second) == owner;
+                    })) {
+                    constructor = entry.second.constructor;
+                    break;
+                }
+            }
         }
-        // The store runs unconditionally in the constructor, and nothing
-        // before it can reach the field: until then `this` is used only to
-        // read and write other keys, so no method runs and nothing else holds
-        // the instance. A read that ran earlier would find no field, where the
-        // member already exists.
-        for (mlir::OpOperand & use : self.getUses()) {
-            mlir::Operation * at = self.getOwner()->findAncestorOpInBlock(*use.getOwner());
-            if (!at || at == set.getOperation() || !at->isBeforeInBlock(set)) { continue; }
-            if (!isConstantKeyAccess(use)) {
-                return ("`this` reaches `" + use.getOwner()->getName().getStringRef() +
-                        "` before the store to `" + key +
-                        "`, so code could read the field before it exists")
-                    .str();
-            }
-            if (ctjs::constantKey(ctjs::propertyKey(use.getOwner())) == key) {
-                return ("`" + key + "` is used before the store to it").str();
-            }
+        if (!constructor) {
+            return functionOf(set) + " is neither the constructor nor a method of a class";
+        }
+        const auto prototype = immutablePrototype(constructor);
+        if (!prototype) {
+            return "the class " + functionOf(set) +
+                   " belongs to is not proved, so its prototype is not known to be immutable";
         }
         // Only the constructor and the methods of its prototype read the
         // field, and only through their own `this`: another object has no
-        // such field.
-        llvm::SmallPtrSet<mlir::Operation *, 8> readers{owner.getOperation()};
+        // such field. A read before the store, or after a store of null,
+        // finds the field undefined or null, which the member records
+        // (Runtime/Owned.hpp), and throws the interpreter's TypeError. A store
+        // in the constructor runs once per instance, so no method of an
+        // instance the field held is still running when it is replaced; a
+        // store in a method can replace one whose method is running, so the
+        // field keeps every instance it held alive (ctnative::replaceable).
+        if (!inConstructor) { replaceableStores.insert(set.getOperation()); }
+        llvm::SmallPtrSet<mlir::Operation *, 8> readers{targetOf(constructor).getOperation()};
         for (ctjs::SetPropertyOp field : prototype->fields) {
             if (auto method = field.getValue().getDefiningOp<ctjs::CreateClosureOp>()) {
                 if (ctjs::FuncOp target = targetOf(method)) {
@@ -146,40 +150,61 @@ bool closureLifter::ownsByValue(ctjs::SetPropertyOp set,
                 }
             }
         }
+        const auto readersThis = [&](mlir::Value object) {
+            auto from = llvm::dyn_cast<mlir::BlockArgument>(object);
+            return from && from.getArgNumber() == ctjs::arg_receiver &&
+                   from.getOwner()->isEntryBlock() &&
+                   readers.contains(from.getOwner()->getParentOp());
+        };
         std::optional<std::string> open;
         module.walk([&](mlir::Operation * op) {
             const mlir::Value named = ctjs::propertyKey(op);
             if (!named || ctjs::constantKey(named) != key || op == set) {
                 return mlir::WalkResult::advance();
             }
-            // Another store of the key could replace or share the instance.
+            // A store of null through the class's own `this`, as a dispose
+            // method makes, leaves the instance alive in the member.
+            if (auto disown = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
+                disown && readersThis(disown.getObject()) &&
+                ctjs::constantAttr<ctjs::NullAttr>(disown.getValue())) {
+                found.push_back(op);
+                return mlir::WalkResult::advance();
+            }
+            // Any other store of the key could replace or share the instance.
             auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
             if (!read) {
                 open =
                     ("field `" + key + "` is also written or deleted in " + functionOf(op)).str();
                 return mlir::WalkResult::interrupt();
             }
-            auto from = llvm::dyn_cast<mlir::BlockArgument>(read.getObject());
-            if (!from || from.getArgNumber() != ctjs::arg_receiver ||
-                !from.getOwner()->isEntryBlock() ||
-                !readers.contains(from.getOwner()->getParentOp())) {
+            if (!readersThis(read.getObject())) {
                 open = ("field `" + key + "` is read in " + functionOf(op) +
                         " through something other than the `this` of the class's constructor "
                         "or methods")
                            .str();
                 return mlir::WalkResult::interrupt();
             }
+            // A read only tested for truth asks whether the field holds the
+            // instance (ctnative::held); any other read reaches it only
+            // through constant keys and method calls.
+            const auto tested = [](mlir::OpOperand & use) {
+                return llvm::isa<ctjs::TruthyOp>(use.getOwner());
+            };
+            const bool test =
+                !read.getResult().use_empty() && llvm::all_of(read.getResult().getUses(), tested);
             for (mlir::OpOperand & use : read.getResult().getUses()) {
                 auto method = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-                if (!isConstantKeyAccess(use) &&
+                if (!test && !isConstantKeyAccess(use) &&
                     !(method && use.getOperandNumber() == 1 && methodCallOn(method, use.get()))) {
                     open = ("a read of field `" + key + "` in " + functionOf(op) + " is " +
-                            describeUse(use) + ", so the instance would be shared")
+                            (tested(use) ? std::string("tested for truth and also used")
+                                         : describeUse(use)) +
+                            ", so the instance would be shared")
                                .str();
                     return mlir::WalkResult::interrupt();
                 }
             }
-            found.push_back(read);
+            found.push_back(op);
             return mlir::WalkResult::advance();
         });
         return open;
@@ -189,7 +214,7 @@ bool closureLifter::ownsByValue(ctjs::SetPropertyOp set,
         refusedInstanceUses[set.getOperation()] = *refusal;
         return false;
     }
-    if (reads) { reads->append(found.begin(), found.end()); }
+    if (uses) { uses->append(found.begin(), found.end()); }
     return true;
 }
 
@@ -731,6 +756,35 @@ void closureLifter::argumentCensus() {
             }
         }
     }
+    // A parameter every call passes an object literal of one shape may also
+    // be tested with `typeof` and spread into a fresh literal: both are
+    // written out for that shape (SpreadParameters.h), so the rule below sees
+    // the constant-key reads they become. The literals a folded test drops
+    // leave the census with it.
+    {
+        llvm::SmallVector<calledFunction> called;
+        const auto row = [&](ctjs::FuncOp function, llvm::ArrayRef<closureCall> sites) {
+            calledFunction & entry = called.emplace_back();
+            entry.function = function;
+            for (const closureCall & site : sites) {
+                entry.calls.emplace_back(site.op, llvm::to_vector(site.args));
+            }
+        };
+        for (ctjs::CreateClosureOp closure : closures) {
+            const auto sites = objectArgumentCalls(closure);
+            if (!sites.empty()) { row(targetOf(closure), sites); }
+        }
+        for (const auto & [function, sites] : directCalls) {
+            row(llvm::cast<ctjs::FuncOp>(function), sites);
+        }
+        llvm::SmallVector<mlir::Operation *> erased;
+        if (rewriteSpreadParameters(called, erased) && !erased.empty()) {
+            const llvm::SmallPtrSet<mlir::Operation *, 8> gone(erased.begin(), erased.end());
+            llvm::erase_if(objects, [&](ctjs::CreateObjectOp object) {
+                return gone.contains(object.getOperation());
+            });
+        }
+    }
     const auto closedArgument = [&](mlir::Value value) {
         if (closedAfterLift(value)) { return true; }
         auto parameter = llvm::dyn_cast<mlir::BlockArgument>(value);
@@ -918,11 +972,12 @@ void closureLifter::methodCensus() {
         }
     }
     // True when no write can replace `key` on `receiver`: every set_property
-    // that may reach it has a constant key, and writes `key` only through a
-    // store `owned` accepts. Stores to other fresh literals cannot reach the
-    // receiver and are skipped; any other object, including every parameter,
-    // may alias it and counts.
-    const auto stableKey = [&](mlir::Value receiver, llvm::StringRef key, const auto & owned) {
+    // that may reach it writes `key` only through a store `owned` accepts and,
+    // when `computedKeys` is set, has a constant key. Stores to other fresh
+    // literals cannot reach the receiver and are skipped; any other object,
+    // including every parameter, may alias it and counts.
+    const auto stableKey = [&](mlir::Value receiver, llvm::StringRef key, bool computedKeys,
+                               const auto & owned) {
         bool stable = true;
         module.walk([&](ctjs::SetPropertyOp set) {
             if (set.getObject().getDefiningOp<ctjs::CreateObjectOp>() &&
@@ -930,7 +985,9 @@ void closureLifter::methodCensus() {
                 return;
             }
             const auto written = ctjs::constantKey(set.getKey());
-            if (written.empty() || (written == key && !owned(set))) { stable = false; }
+            if ((computedKeys && written.empty()) || (written == key && !owned(set))) {
+                stable = false;
+            }
         });
         return stable;
     };
@@ -954,9 +1011,9 @@ void closureLifter::methodCensus() {
             // on which store ran, which condition 2 forbids. The call through
             // it stays a ctjs.call and is refused by name later.
             if (writes[entry.first()] != 1) { continue; }
-            if (!constructed || stableKey(object, entry.first(), [&](ctjs::SetPropertyOp set) {
-                    return instanceStores.contains(set);
-                })) {
+            if (!constructed ||
+                stableKey(object, entry.first(), /*computedKeys=*/true,
+                          [&](ctjs::SetPropertyOp set) { return instanceStores.contains(set); })) {
                 into[entry.first()] = entry.second;
             }
         }
@@ -978,9 +1035,16 @@ void closureLifter::methodCensus() {
             auto method = field.getValue().getDefiningOp<ctjs::CreateClosureOp>();
             if (!method) { continue; }
             const auto key = ctjs::constantKey(field.getKey());
-            // As for methods stored after construction, every write that may
-            // reach the receiver counts.
-            if (!stableKey(origin, key, [&](ctjs::SetPropertyOp set) { return set == field; })) {
+            // A write of `key` to anything but this definition counts wherever
+            // it is: `this`, a parameter or any other value may name an
+            // instance, an instance's struct admits a constant-key write, and
+            // an own `key` would shadow the method. A write through a computed
+            // key does not count: an instance lowers to a struct that admission
+            // gives only constant-key accesses (hasClosedShape) and no delete,
+            // the prototype has no use but its definitions (immutablePrototype),
+            // and code that admission refuses never runs natively.
+            if (!stableKey(origin, key, /*computedKeys=*/false,
+                           [&](ctjs::SetPropertyOp set) { return set == field; })) {
                 continue;
             }
             methodsOf[origin][key] = methodField{field, method};
@@ -1003,10 +1067,14 @@ void closureLifter::methodCensus() {
             continue;
         }
         auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(*built.getResult().getUsers().begin());
-        llvm::SmallVector<ctjs::GetPropertyOp> reads;
-        if (!set || set.getValue() != built.getResult() || !ownsByValue(set, &reads)) { continue; }
-        for (ctjs::GetPropertyOp read : reads) { behind[read.getResult()] = {built.getResult()}; }
-        ownedStores[set.getOperation()] = std::move(reads);
+        llvm::SmallVector<mlir::Operation *> uses;
+        if (!set || set.getValue() != built.getResult() || !ownsByValue(set, &uses)) { continue; }
+        for (mlir::Operation * use : uses) {
+            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(use)) {
+                behind[read.getResult()] = {built.getResult()};
+            }
+        }
+        ownedStores[set.getOperation()] = std::move(uses);
     }
     // A record read back from a local Map keeps naming the record it got,
     // even after the entry is overwritten, deleted or cleared: the enclosing
@@ -1163,8 +1231,12 @@ std::optional<std::string> closureLifter::whyNotLiftableMethod(ctjs::CreateClosu
     // Every call of it must be one resolveMethod resolved. A method field
     // nothing calls has nowhere to move the receiver to, and an unresolved
     // call would be left dispatching through a closure that is about to lower
-    // to nothing.
+    // to nothing. One whose every call now calls a per-site copy
+    // (CallSiteCopies.cpp) has no call left to move the receiver to and needs
+    // none: its field lowers to nothing like any lifted method's.
     const auto calls = callsOfTarget.find(target.getOperation());
+    const bool copiedAway =
+        calls == callsOfTarget.end() && copiedAwayMethods.contains(target.getOperation());
     if (calls == callsOfTarget.end()) {
         // A method read as a value: `var g = o.m;` loads the field without
         // calling it, so there is no call site for the receiver to move to,
@@ -1185,10 +1257,12 @@ std::optional<std::string> closureLifter::whyNotLiftableMethod(ctjs::CreateClosu
                 }
             }
         }
-        return "nothing calls it";
+        if (!copiedAway) { return "nothing calls it"; }
     }
     const unsigned parameters = entry.getNumArguments() - ctjs::implicit_arguments;
-    for (methodCall at : calls->second) {
+    const llvm::SmallVector<methodCall> sites =
+        copiedAway ? llvm::SmallVector<methodCall>{} : calls->second;
+    for (methodCall at : sites) {
         if (auto why =
                 whyCallSiteDoesNotLift(at.call, at.call.getArgs().size(), parameters, "a call")) {
             return why;
@@ -1212,9 +1286,8 @@ std::optional<std::string> closureLifter::whyNotLiftableMethod(ctjs::CreateClosu
     // which for a method are the calls through the object, not the uses of
     // the closure value.
     return whyLiftTailFails(
-        c, target, llvm::map_range(calls->second, [](const methodCall & at) -> mlir::Operation * {
-            return at.call;
-        }));
+        c, target,
+        llvm::map_range(sites, [](const methodCall & at) -> mlir::Operation * { return at.call; }));
 }
 
 } // namespace ctcompile::ctnative::lowering_detail

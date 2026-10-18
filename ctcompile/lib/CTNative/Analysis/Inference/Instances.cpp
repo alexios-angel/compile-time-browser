@@ -609,6 +609,15 @@ mlir::Value classNamedBy(mlir::Value value, const functionIndex & functions) {
     return {};
 }
 
+/// The value `fn` returns, when it has exactly one `return`.
+mlir::Value onlyReturned(ctjs::FuncOp fn) {
+    llvm::SmallVector<ctjs::ReturnOp> exits;
+    if (fn) {
+        fn.walk([&](ctjs::ReturnOp exit) { exits.push_back(exit); });
+    }
+    return exits.size() == 1 ? exits.front().getValue() : mlir::Value{};
+}
+
 /// The string `value` always is, read through constants, concatenation and
 /// the static getters and fields of a class (Bootstrap's
 /// `static get DATA_KEY() { return `bs.${this.NAME}` }`); none otherwise.
@@ -616,6 +625,14 @@ std::optional<std::string> constantString(mlir::Value value, const functionIndex
                                           unsigned depth = 0) {
     if (depth > 8) { return std::nullopt; }
     if (auto text = ctjs::constantAttr<ctjs::StringAttr>(value)) { return text.getValue().str(); }
+    // A static getter read through the class, which the class statics
+    // rewrite (ClosureLifting/ClassStatics.cpp) made a direct call.
+    if (auto call = value.getDefiningOp<ctjs::CallDirectOp>();
+        call && call->hasAttr(kNativeStaticMemberCall)) {
+        const mlir::Value returned = onlyReturned(functions.calleeOf(call));
+        if (!returned) { return std::nullopt; }
+        return constantString(returned, functions, depth + 1);
+    }
     if (auto binary = value.getDefiningOp<ctjs::BinaryOp>()) {
         // `+` of two Strings, or the concatenation a template literal is.
         if (binary.getKind() != ctjs::BinaryKind::Add &&
@@ -638,14 +655,9 @@ std::optional<std::string> constantString(mlir::Value value, const functionIndex
             accessor && accessor.getTarget() == owner && accessor.getName() == key) {
             ++definitions;
             auto getter = accessor.getGetter().getDefiningOp<ctjs::CreateClosureOp>();
-            ctjs::FuncOp target = getter ? functions.targetOf(getter) : ctjs::FuncOp{};
-            llvm::SmallVector<ctjs::ReturnOp> exits;
-            if (target) {
-                target.walk([&](ctjs::ReturnOp exit) { exits.push_back(exit); });
-            }
-            if (exits.size() == 1) {
-                found = constantString(exits.front().getValue(), functions, depth + 1);
-            }
+            const mlir::Value returned =
+                onlyReturned(getter ? functions.targetOf(getter) : ctjs::FuncOp{});
+            if (returned) { found = constantString(returned, functions, depth + 1); }
         } else if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
                    store && store.getObject() == owner &&
                    ctjs::constantKey(store.getKey()) == key) {
@@ -686,6 +698,13 @@ class registryProof {
     // way to the Map's `set`.
     llvm::SetVector<mlir::Value> carriers;
     llvm::SmallVector<ctjs::ConstructOp> constructions;
+    // The `new this` of the family's static members once the class statics
+    // rewrite marked them (kNativeClassConstruct): each makes an instance
+    // the static member may join with one read back from the Map
+    // (Bootstrap's `getInstance(t) || new this(t, ...)`) and return. A read
+    // may be an instance of any class of the family, so the joins of every
+    // class's `new this` are followed.
+    llvm::SmallVector<ctjs::ConstructOp> freshInstances;
     llvm::SmallVector<ctjs::FuncOp> methods;
     llvm::DenseSet<llvm::StringRef> methodNames;
     // Whether the constructor or a method captures the Map: the class, read
@@ -839,6 +858,16 @@ class registryProof {
             classCaptures = classCaptures || llvm::is_contained(map.captors, method);
             methodNames.insert(key);
         }
+        llvm::DenseSet<llvm::StringRef> classes;
+        for (ctjs::CreateClosureOp owner : family.classes) {
+            if (ctjs::FuncOp constructor = functions.targetOf(owner)) {
+                classes.insert(constructor.getSymName());
+            }
+        }
+        module.walk([&](ctjs::ConstructOp made) {
+            auto mark = made->getAttrOfType<mlir::StringAttr>(kNativeClassConstruct);
+            if (mark && classes.contains(mark.getValue())) { freshInstances.push_back(made); }
+        });
         return true;
     }
 
@@ -1302,7 +1331,11 @@ public:
             return false;
         }
         // Instances read back: every flow followed, every dereference checked.
+        // A fresh instance of a static member's `new this` is followed the
+        // same way; it is never null or undefined, so its own dereferences
+        // need no check.
         for (ctjs::CallOp get : map.gets) { maybe.insert(get.getResult()); }
+        for (ctjs::ConstructOp made : freshInstances) { maybe.insert(made.getResult()); }
         for (std::size_t at = 0; at < maybe.size(); ++at) {
             if (!follow(maybe[at])) { return false; }
         }
@@ -1333,6 +1366,12 @@ public:
         if (!checkCaptors()) { return false; }
         collectFalsyYields();
         for (ctjs::ConstructOp made : constructions) { out.instances.push_back(made.getResult()); }
+        for (ctjs::ConstructOp made : freshInstances) {
+            if (made->getAttrOfType<mlir::StringAttr>(kNativeClassConstruct).getValue() ==
+                out.constructor.getSymName()) {
+                out.instances.push_back(made.getResult());
+            }
+        }
         out.methods = methods;
         llvm::append_range(out.readBack, maybe);
         // The tests against null or undefined that a null pointer answers
@@ -1526,7 +1565,17 @@ std::vector<InstanceRegistry> proveInstanceRegistries(mlir::ModuleOp module) {
         // constructor its subclasses run belong to them.
         // A class is constructed by a `new` of its closure or by a static
         // member's `new this` (which the class's proof then refuses by name).
+        // A static member's `new this` that the class statics rewrite turned
+        // into a marked construct of the class also constructs it.
+        llvm::DenseSet<llvm::StringRef> classConstructs;
+        module.walk([&](ctjs::ConstructOp made) {
+            if (auto mark = made->getAttrOfType<mlir::StringAttr>(kNativeClassConstruct)) {
+                classConstructs.insert(mark.getValue());
+            }
+        });
         const auto constructed = [&](ctjs::CreateClosureOp owner) {
+            ctjs::FuncOp constructor = functions.targetOf(owner);
+            if (constructor && classConstructs.contains(constructor.getSymName())) { return true; }
             return llvm::any_of(owner.getResult().getUsers(), [&](mlir::Operation * user) {
                 if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(user)) {
                     return made.getCallee() == owner.getResult();

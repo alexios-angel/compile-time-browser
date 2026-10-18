@@ -12,6 +12,24 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
+/// The constructor whose prototype holds method closure `m`: the closure that
+/// a `prototype` store attaches the object holding `m` to. Null for a method
+/// of an object no constructor has as its prototype.
+static ctjs::CreateClosureOp prototypeOwner(ctjs::CreateClosureOp m) {
+    for (mlir::Operation * user : m.getResult().getUsers()) {
+        auto field = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+        if (!field || field.getValue() != m.getResult()) { continue; }
+        for (mlir::Operation * holder : field.getObject().getUsers()) {
+            auto attachment = llvm::dyn_cast<ctjs::SetPropertyOp>(holder);
+            if (attachment && attachment.getValue() == field.getObject() &&
+                ctjs::constantKey(attachment.getKey()) == "prototype") {
+                return attachment.getObject().getDefiningOp<ctjs::CreateClosureOp>();
+            }
+        }
+    }
+    return {};
+}
+
 /// Lifts every admissible closure in the module and returns the counts.
 liftReport closureLifter::run() {
     liftReport out;
@@ -67,36 +85,53 @@ liftReport closureLifter::run() {
     specializeCallbacks(out);
     if (!allowSiblingCaptures && bindLocalFunctions(out, true)) {
         // Erasing a sibling's callable binding is valid only when both sides
-        // lift. Try it on a clone and adopt the clone only if every sibling
-        // target and capture holder lifted; otherwise fall back to the
-        // stricter rule below, so refused ctjs stays executable.
-        mlir::OwningOpRef<mlir::ModuleOp> prepared(module.clone());
-        closureLifter trial{*prepared, censusOn};
-        trial.allowSiblingCaptures = true;
-        trial.staticsDone = true; // The static rewrite above is already in the clone.
-        liftReport result = trial.run();
-        const bool complete =
-            llvm::all_of(trial.siblingBindingTargets, [&](mlir::Operation * target) {
+        // lift. Try it on a clone and adopt the clone if every sibling target
+        // it bound lifted with all its capture holders. A target that did not
+        // is held to the stricter rule in the next trial, which can change
+        // what the other bindings need, so the trials repeat until one is
+        // complete. After kSiblingTrials, fall back to the stricter rule
+        // below, so refused ctjs stays executable.
+        constexpr unsigned kSiblingTrials = 3;
+        llvm::StringSet<> denied;
+        for (unsigned attempt = 0; attempt < kSiblingTrials; ++attempt) {
+            mlir::OwningOpRef<mlir::ModuleOp> prepared(module.clone());
+            closureLifter trial{*prepared, censusOn};
+            trial.allowSiblingCaptures = true;
+            trial.siblingDenied = denied;
+            trial.staticsDone = true; // The static rewrite above is already in the clone.
+            liftReport result = trial.run();
+            llvm::SmallVector<std::string> incomplete;
+            for (mlir::Operation * target : trial.siblingBindingTargets) {
                 auto closure = trial.uniqueClosureByTarget.lookup(target);
-                return closure && trial.lifted.contains(closure.getOperation()) &&
-                       llvm::all_of(trial.boundCaptureCalls.lookup(target),
-                                    [&](const boundCaptureCall & site) {
-                                        return trial.lifted.contains(site.holder.operator->());
-                                    });
-            });
-        if (complete) {
-            result.calls += out.calls;
-            result.callbackCalls += out.callbackCalls;
-            result.callbackParameters += out.callbackParameters;
-            module->setAttrs((*prepared)->getAttrs());
-            module.getBodyRegion().takeBody(prepared->getBodyRegion());
-            trial.module = module;
-            trial.dominance.invalidate();
-            *this = std::move(trial);
-            return result;
+                const bool complete =
+                    closure && trial.lifted.contains(closure.getOperation()) &&
+                    llvm::all_of(trial.boundCaptureCalls.lookup(target),
+                                 [&](const boundCaptureCall & site) {
+                                     return trial.lifted.contains(site.holder.operator->());
+                                 });
+                if (!complete) {
+                    incomplete.push_back(llvm::cast<ctjs::FuncOp>(target).getSymName().str());
+                }
+            }
+            if (incomplete.empty()) {
+                result.calls += out.calls;
+                result.callbackCalls += out.callbackCalls;
+                result.callbackParameters += out.callbackParameters;
+                module->setAttrs((*prepared)->getAttrs());
+                module.getBodyRegion().takeBody(prepared->getBodyRegion());
+                trial.module = module;
+                trial.dominance.invalidate();
+                *this = std::move(trial);
+                return result;
+            }
+            for (const std::string & name : incomplete) { denied.insert(name); }
         }
     }
     bindLocalFunctions(out);
+    // Tests of a closure value, `typeof` and truthiness, are answered here
+    // (ConstantTests.cpp), so a closure that is tested and then called is only
+    // called by the time the censuses read its uses.
+    foldConstantTests();
     // A listener that removes itself through its own binding names itself
     // directly (HostCallbacks.cpp), before the censuses read the binding.
     bindSelfRemovingListeners();
@@ -192,6 +227,29 @@ liftReport closureLifter::run() {
         llvm::DenseMap<mlir::Operation *, std::string> blocked;
         reasonOf.clear();
         chainedThrough.clear();
+        // A prototype method's receiver is an instance of its class, which
+        // only the constructor lift makes, so the method lifts with its class
+        // or not at all: lifted alone, its calls would pass receivers no
+        // native code holds. A method that cannot lift keeps its own reason;
+        // one that could is refused with its class's. One verdict per class
+        // per round.
+        llvm::DenseMap<mlir::Operation *, std::optional<std::string>> classVerdicts;
+        const auto whyNotLiftableClassMethod =
+            [&](ctjs::CreateClosureOp m) -> std::optional<std::string> {
+            if (auto why = whyNotLiftableMethod(m)) { return why; }
+            ctjs::CreateClosureOp owner = prototypeOwner(m);
+            if (!owner || !constructorClosures.contains(owner.getOperation()) ||
+                lifted.contains(owner.getOperation())) {
+                return std::nullopt;
+            }
+            if (!classVerdicts.count(owner.getOperation())) {
+                classVerdicts[owner.getOperation()] = whyNotLiftableConstructor(owner);
+            }
+            if (const auto & why = classVerdicts[owner.getOperation()]) {
+                return "its class does not lift: " + *why;
+            }
+            return std::nullopt;
+        };
         for (ctjs::CreateClosureOp c : closures) {
             // A declaration is a binding, not a value, and already lowers to
             // nothing; admission::isDeclarationClosure handles it.
@@ -208,7 +266,7 @@ liftReport closureLifter::run() {
             const std::optional<std::string> why =
                 returnedClosures.contains(c.getOperation())      ? whyNotReturnedClosure(c)
                 : constructorClosures.contains(c.getOperation()) ? whyNotLiftableConstructor(c)
-                : methodClosures.contains(c.getOperation())      ? whyNotLiftableMethod(c)
+                : methodClosures.contains(c.getOperation())      ? whyNotLiftableClassMethod(c)
                 : arrayCallbacks.contains(c.getOperation())      ? whyNotArrayCallback(c)
                 : borrowedCallbacks.contains(c.getOperation())   ? whyNotBorrowedCallback(c)
                 : stringCallbacks.contains(c.getOperation())     ? whyNotStringCallback(c)
@@ -500,7 +558,9 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     const bool constructor = llvm::all_of(made, [&](ctjs::CreateClosureOp c) {
         return constructorClosures.contains(c.getOperation());
     });
-    const bool method = !constructor && callsOfTarget.count(target.getOperation()) != 0 &&
+    const bool method = !constructor &&
+                        (callsOfTarget.count(target.getOperation()) != 0 ||
+                         copiedAwayMethods.contains(target.getOperation())) &&
                         llvm::all_of(made, [&](ctjs::CreateClosureOp c) {
                             return methodClosures.contains(c.getOperation());
                         });
@@ -578,14 +638,33 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             // `produced.is_object_like() ? produced : self`, and
             // whyConstructorReturnsAnObject proved `produced` is never
             // object-like, so the answer is always `self`.
-            // A field of `this` that owns the instance by value, and its reads.
+            // A field of `this` that owns the instance by value, its reads
+            // and its null stores.
             if (built.getResult().hasOneUse()) {
                 mlir::Operation * set = *built.getResult().getUsers().begin();
                 if (const auto owned = ownedStores.find(set); owned != ownedStores.end()) {
-                    const auto mark = mlir::UnitAttr::get(context);
-                    set->setAttr(kNativeOwnedInstance, mark);
-                    for (ctjs::GetPropertyOp read : owned->second) {
-                        read->setAttr(kNativeOwnedInstance, mark);
+                    // The instance store is marked kOwnedReplaceable when a
+                    // method makes it, a store of null kOwnedNull and a read
+                    // only tested for truth kOwnedHeld (Runtime/Owned.hpp).
+                    const auto mark = [&](mlir::Operation * op, llvm::StringRef name) {
+                        if (name.empty()) {
+                            op->setAttr(kNativeOwnedInstance, mlir::UnitAttr::get(context));
+                        } else {
+                            op->setAttr(kNativeOwnedInstance, mlir::StringAttr::get(context, name));
+                        }
+                    };
+                    mark(set, replaceableStores.contains(set) ? llvm::StringRef(kOwnedReplaceable)
+                                                              : llvm::StringRef());
+                    for (mlir::Operation * use : owned->second) {
+                        const bool tested =
+                            !use->use_empty() && llvm::all_of(use->getUsers(), [](auto * user) {
+                                return llvm::isa<ctjs::TruthyOp>(user);
+                            });
+                        if (llvm::isa<ctjs::SetPropertyOp>(use)) {
+                            mark(use, kOwnedNull);
+                        } else {
+                            mark(use, tested ? llvm::StringRef(kOwnedHeld) : llvm::StringRef());
+                        }
                     }
                 }
             }
@@ -635,7 +714,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             ++out.methods;
         }
         const auto captured = liftedCaptures(made.front());
-        for (methodCall at : callsOfTarget[target.getOperation()]) {
+        for (methodCall at : callsOfTarget.lookup(target.getOperation())) {
             mlir::OpBuilder builder(at.call);
             // Constructor lifting may already have replaced and erased the
             // receiver the census recorded; the live call operand is current.

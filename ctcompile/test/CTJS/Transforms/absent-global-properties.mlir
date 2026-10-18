@@ -13,6 +13,18 @@
 // `var`, a name the host provides, and a name every object inherits from
 // Object.prototype.
 //
+// A module that can reach the run-time compiler through a function's
+// `.constructor` and call it (compiled.js) writes no global the VM can rule
+// out, so the pass folds nothing there; it marks each such read
+// `ctjs.absent_global_property` instead. Native code cannot make that call
+// (it is refused where it sits), so the native lowering folds the marked
+// reads, records the name in `ctnative.absent_globals`, and precomputation
+// drops the branch the probe guards, before the closure lift: the plugin's
+// `noConflict` arrow is created nowhere and is removed as unreachable. The
+// same module writing `window.jQuery` (compiled-written.js) gets no mark and
+// is refused as before, and with eval reachable (compiled-eval.js) the walk
+// that finds writes through the window stops early, so nothing is marked.
+//
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/plugin.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=FOLD
@@ -29,6 +41,20 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=HOST
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/inherited.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=INHERITED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compiled.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=MARK
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compiled.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=NATIVE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compiled-written.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals \
+// RUN:   | FileCheck %s --check-prefix=KEPT --implicit-check-not=ctjs.absent_global_property
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compiled-written.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=WRITTEN --implicit-check-not=ctnative.absent_globals
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compiled-eval.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals \
+// RUN:   | FileCheck %s --check-prefix=KEPT --implicit-check-not=ctjs.absent_global_property
 
 // FOLD: {name = "jQuery", reason = "absent: never stored and not provided by the native realm; 2 read(s) through the global object folded to undefined", resolved = "none", stores = 0 : i32}
 // FOLD-NOT: ctjs.constant #ctjs.string<"jQuery">
@@ -49,6 +75,20 @@
 // HOST: ctjs.constant #ctjs.string<"innerWidth">
 
 // INHERITED: ctjs.constant #ctjs.string<"hasOwnProperty">
+
+// MARK: ctjs.global_escapes = ["a value that may be the run-time compiler escapes into ctjs.call
+// MARK-COUNT-2: ctjs.get_property %{{[0-9]+}}[%{{[0-9]+}}] {ctjs.absent_global_property}
+
+// The top level, the library's closure, getjQuery, definePlugin and the
+// plugin's arrow all lower; only `build`, which calls the compiler, is refused.
+// NATIVE: ctnative.absent_globals = ["jQuery"]
+// NATIVE-SAME: ctnative.unreachable_refusals = [{function = "fn$6", reason = "removed: unreachable
+// NATIVE: emitc.func @main
+// NATIVE: ctjs.func @build$1
+// NATIVE: emitc.func @fn_3()
+
+// WRITTEN: ctjs.func private @fn$4
+// WRITTEN-SAME: ctnative.not_native = "a closure used as a value: it is stored into something that is not an object literal made here
 
 //--- plugin.js
 var registered = 0;
@@ -95,3 +135,58 @@ var wide = window.innerWidth > 0;
 
 //--- inherited.js
 var owns = window.hasOwnProperty("x");
+
+//--- compiled.js
+function build(source) { return build.constructor(source); }
+var plugins = (function () {
+    var registered = 0;
+    const getjQuery = () =>
+        window.jQuery && !document.body.hasAttribute("data-bs-no-jquery") ? window.jQuery : null;
+    const definePlugin = name => {
+        const $ = getjQuery();
+        if ($) {
+            $.fn[name] = () => 1;
+            $.fn[name].noConflict = () => $;
+            registered = registered + 1;
+        }
+        return registered;
+    };
+    return definePlugin("collapse") + definePlugin("modal");
+})();
+
+//--- compiled-written.js
+window.jQuery = {fn: {}};
+function build(source) { return build.constructor(source); }
+var plugins = (function () {
+    var registered = 0;
+    const getjQuery = () =>
+        window.jQuery && !document.body.hasAttribute("data-bs-no-jquery") ? window.jQuery : null;
+    const definePlugin = name => {
+        const $ = getjQuery();
+        if ($) {
+            $.fn[name] = () => 1;
+            $.fn[name].noConflict = () => $;
+            registered = registered + 1;
+        }
+        return registered;
+    };
+    return definePlugin("collapse") + definePlugin("modal");
+})();
+
+//--- compiled-eval.js
+var run = eval;
+var plugins = (function () {
+    var registered = 0;
+    const getjQuery = () =>
+        window.jQuery && !document.body.hasAttribute("data-bs-no-jquery") ? window.jQuery : null;
+    const definePlugin = name => {
+        const $ = getjQuery();
+        if ($) {
+            $.fn[name] = () => 1;
+            $.fn[name].noConflict = () => $;
+            registered = registered + 1;
+        }
+        return registered;
+    };
+    return definePlugin("collapse") + definePlugin("modal");
+})();

@@ -60,6 +60,13 @@ inline constexpr llvm::StringLiteral kNativeClassSetup = "ctnative.class_setup";
 /// (ClosureLifting/ClassStatics.cpp) proved that member's `this` is that class;
 /// the constructor lift builds the instance there.
 inline constexpr llvm::StringLiteral kNativeClassConstruct = "ctnative.class_construct";
+/// On each ctjs.call_direct the class statics rewrite
+/// (ClosureLifting/ClassStatics.cpp) makes of a static member, where the
+/// source read the member through the class: a refused caller may call such
+/// a member through a closure instead, as it did through the class
+/// (closeNativeSet in LowerToEmitC.cpp), and the registry proof reads a
+/// family key through such a getter (Analysis/Inference/Instances.cpp).
+inline constexpr llvm::StringLiteral kNativeStaticMemberCall = "ctnative.static_member_call";
 /// On a ctjs.cell_get of a run-once static cell written only with a class's
 /// closure, before every read, and on its ctjs.cell_set writes: the name of
 /// that class constructor's ctjs.func (a string, as above). A `new` of the
@@ -71,10 +78,17 @@ inline constexpr llvm::StringLiteral kNativeStaticClass = "ctnative.static_class
 /// before the class is written.
 inline constexpr llvm::StringLiteral kNativeStaticClassReason = "ctnative.static_class_reason";
 /// On a ctjs.set_property that stores a class instance into a field of
-/// `this` owning it by value, and on every ctjs.get_property of that field:
-/// the instance lives in the owner as a member of its class, and each read
-/// names that member (ClosureLifting/Methods.cpp, ownsByValue).
+/// `this` owning it, on every ctjs.get_property of that field and on every
+/// store of null into it (ClosureLifting/Methods.cpp, ownsByValue): the
+/// instance lives in the owner as a ctnative::owned member
+/// (Runtime/Owned.hpp), or a ctnative::replaceable one when the store is
+/// marked kOwnedReplaceable; a read names the instance the field holds, or,
+/// marked kOwnedHeld, only tests whether it holds one; a store marked
+/// kOwnedNull marks the field null.
 inline constexpr llvm::StringLiteral kNativeOwnedInstance = "ctnative.owned_instance";
+inline constexpr llvm::StringLiteral kOwnedReplaceable = "replaceable";
+inline constexpr llvm::StringLiteral kOwnedNull = "null";
+inline constexpr llvm::StringLiteral kOwnedHeld = "held";
 /// On a class constructor's closure: why the class census did not prove it.
 inline constexpr llvm::StringLiteral kNativeClassReason = "ctnative.class_reason";
 /// On the object literal that stands for an instance of a JavaScript class

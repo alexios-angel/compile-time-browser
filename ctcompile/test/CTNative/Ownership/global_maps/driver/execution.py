@@ -210,7 +210,7 @@ GROUPS = {
 }
 
 
-def setup():
+def setup(argv=None):
     """Parse the shared command line and locate the two oracles (Node and the
     reference interpreter), the two C++ compilers and nm.
 
@@ -220,7 +220,7 @@ def setup():
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--group", choices=GROUPS)
-    args = native_args(__doc__, parser=parser)
+    args = native_args(__doc__, parser=parser, argv=argv)
     compilers, nm = native_tools(args.reference)
     return args, args.node, args.reference, compilers, nm
 
