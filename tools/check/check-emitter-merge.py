@@ -124,7 +124,11 @@ def merge(fork, base, upstream):
             paths.append(str(path))
         labels = ["-L", "fork", "-L", "base", "-L", "upstream"]
         command = ["git", "merge-file", "-p", "--diff3", *labels, *paths]
-        result = subprocess.run(command, capture_output=True, text=True)
+        # merge-file needs no repository, but git still reads the one around
+        # its working directory, and a build box's copy of a worktree has a
+        # .git file naming a path that exists only on the machine it came
+        # from. The scratch directory is in no repository.
+        result = subprocess.run(command, capture_output=True, text=True, cwd=scratch)
     # git merge-file exits with the conflict count (capped at 127); higher
     # values or negatives are real errors.
     if not 0 <= result.returncode <= 127:
