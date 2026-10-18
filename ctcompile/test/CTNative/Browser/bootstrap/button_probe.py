@@ -18,6 +18,10 @@ import re
 
 from CTNative.Exports import boundary
 from CTNative.harness import native_args, node_globals, run
+from CTNative.Lowering.Objects.classes.initialization_inputs import (
+    UNREACHABLE_ROW,
+    inheritance_delta,
+)
 
 ROOT = Path(__file__).resolve().parents[5]
 VENDOR_SHA256 = "5b29f1692a632853edc37b45bc1deedd595a777c9b234e8262ccd74ebfcf3d65"
@@ -266,14 +270,18 @@ def main(argv=None):
         text = output.read_text()
         remaining = len(boundary.FUNCTION.findall(text))
         native = len(boundary.NATIVE.findall(text))
+        removed = len(UNREACHABLE_ROW.findall(text))
         reasons = boundary.REFUSAL.findall(text)
         refusals = {}
         for line in text.splitlines():
             if boundary.FUNCTION.match(line):
                 symbol = re.search(r"@([^\s(]+)\(", line).group(1)
                 refusals[symbol] = boundary.REFUSAL.search(line).group(1)
+        # Every imported function is native, refused or removed as unreachable,
+        # once class flattening's per-class copies are added and the parents it
+        # erased are taken away (Button extends BaseComponent extends Config).
         if (
-            remaining + native != functions
+            remaining + native + removed != functions + inheritance_delta(text)
             or len(reasons) != remaining
             or len(refusals) != remaining
             or not all(reasons)

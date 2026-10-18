@@ -18,7 +18,6 @@
 #include <optional>
 #include <stdexcept>
 #include <utility>
-#include <variant>
 
 namespace ctnative {
 
@@ -35,10 +34,13 @@ struct symbol_constructor;
 /// A Symbol: a primitive identity, not its description or a boxed object.
 /// Well-known symbols need no allocation, even during static initialization.
 class js_symbol_t {
-    std::variant<ctbrowser::well_known_symbol, ctbrowser::symbol_value> identity;
+    // A Symbol the program made carries its value. A well-known symbol leaves
+    // `created` empty and is named by `well_known` alone.
+    std::optional<ctbrowser::symbol_value> created;
+    ctbrowser::well_known_symbol well_known{};
 
-    explicit constexpr js_symbol_t(ctbrowser::well_known_symbol symbol) : identity(symbol) {}
-    explicit js_symbol_t(ctbrowser::symbol_value symbol) : identity(std::move(symbol)) {}
+    explicit constexpr js_symbol_t(ctbrowser::well_known_symbol symbol) : well_known(symbol) {}
+    explicit js_symbol_t(ctbrowser::symbol_value symbol) : created(std::move(symbol)) {}
     friend struct symbol_constructor;
 
 public:
@@ -48,22 +50,16 @@ public:
     js_symbol_t & operator=(const js_symbol_t &) = default;
     explicit constexpr operator bool() const noexcept { return true; }
     std::optional<js_string> description() const {
-        if (const auto * symbol = std::get_if<ctbrowser::symbol_value>(&identity)) {
-            const auto text = symbol->description_value();
+        if (created) {
+            const auto text = created->description_value();
             if (!text) { return std::nullopt; }
             return js_string{*text};
         }
-        return js_string{
-            ctbrowser::make_well_known_symbol(std::get<ctbrowser::well_known_symbol>(identity))
-                .description};
+        return js_string{ctbrowser::make_well_known_symbol(well_known).description};
     }
     js_string toString() const {
-        if (const auto * symbol = std::get_if<ctbrowser::symbol_value>(&identity)) {
-            return js_string{symbol->to_string()};
-        }
-        return js_string{
-            ctbrowser::make_well_known_symbol(std::get<ctbrowser::well_known_symbol>(identity))
-                .to_string()};
+        if (created) { return js_string{created->to_string()}; }
+        return js_string{ctbrowser::make_well_known_symbol(well_known).to_string()};
     }
     js_symbol_t valueOf() const { return *this; }
     friend bool operator==(const js_symbol_t &, const js_symbol_t &) = default;

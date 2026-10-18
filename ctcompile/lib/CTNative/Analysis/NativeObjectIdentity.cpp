@@ -4,7 +4,11 @@
 // native Map keys, as native Map values, or in `===` comparisons. Such objects
 // get ctnative.object_identity, and their scalar field accesses a shared
 // ctnative.object_field_group, so they can be lowered natively. Any other use
-// records a ctnative.object_reason instead.
+// records a ctnative.object_reason instead. For an object compared with `===`,
+// that reason is written only when one comparison is with another object and
+// the literal has no reason yet: `x === undefined` is a presence test, which
+// observes no identity, and the object-argument census's reason says why a
+// literal passed to a call stays open.
 //
 //===----------------------------------------------------------------------===//
 #include "ctcompile/CTNative/Analysis/NativeObjectIdentity.h"
@@ -32,6 +36,21 @@ bool mapKeyUse(mlir::OpOperand & use) {
 bool strictComparison(mlir::Operation * op) {
     auto compare = llvm::dyn_cast<ctjs::CompareOp>(op);
     return compare && compare.getKind() == ctjs::CompareKind::StrictEq;
+}
+
+/// True when `use` is a `===` whose other operand is a primitive constant or
+/// the global `undefined`, such as `x === void 0` or `x === undefined`: a test
+/// of presence or value, not of identity.
+bool presenceTest(mlir::OpOperand & use) {
+    if (!strictComparison(use.getOwner())) { return false; }
+    auto compare = llvm::cast<ctjs::CompareOp>(use.getOwner());
+    const mlir::Value other = use.getOperandNumber() == 0 ? compare.getRhs() : compare.getLhs();
+    if (auto global = other.getDefiningOp<ctjs::LoadGlobalOp>()) {
+        return global.getName() == "undefined";
+    }
+    auto constant = other.getDefiningOp<ctjs::ConstantOp>();
+    return constant && llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::NumberAttr,
+                                 ctjs::BooleanAttr, ctjs::StringAttr>(constant.getValue());
 }
 
 /// True when `use` is a `===` comparison, a root, or a value-carrying edge of
@@ -219,6 +238,7 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
     mlir::DominanceInfo dominance;
     for (auto & [root, family] : families) {
         bool usedAsKey = false, usedAsPayload = false, retainedRecord = false, compared = false;
+        bool identityCompared = false;
         llvm::SmallVector<ctjs::CreateObjectOp> made;
         for (mlir::Value value : family) {
             if (auto object = value.getDefiningOp<ctjs::CreateObjectOp>()) {
@@ -229,6 +249,7 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
                 usedAsPayload |= object_detail::mapPayloadUse(use);
                 retainedRecord |= isNativeMapRecordStore(use);
                 compared |= strictComparison(use.getOwner());
+                identityCompared |= strictComparison(use.getOwner()) && !presenceTest(use);
             }
         }
         // A record Map (see NativeMap.cpp's proveRecords) already holds these
@@ -327,7 +348,13 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
             if (reason.empty()) {
                 object->removeAttr("ctnative.object_reason");
                 object->setAttr(kNativeObjectIdentity, mlir::UnitAttr::get(module.getContext()));
-            } else {
+            } else if (!comparisonOnly ||
+                       (identityCompared && !object->hasAttr("ctnative.object_reason"))) {
+                // A Map key or value has no other native route, so its reason
+                // is this proof's. A compared literal keeps the reason another
+                // analysis gave (the object-argument census, when it is passed
+                // to a call), and a family compared only against primitive
+                // constants has no identity use for this reason to describe.
                 object->setAttr("ctnative.object_reason",
                                 mlir::StringAttr::get(module.getContext(), reason));
             }

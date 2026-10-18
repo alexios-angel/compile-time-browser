@@ -19,7 +19,8 @@ its case with `_` read as `-` (lit case names use hyphens, modules
 underscores): `test_reads` in Provider/reads.py is `ctcompile ::
 CTNative/HostContract/Provider/reads.test`, and `test_button_probe` is
 `.../button-probe.test`. A test parametrized over cases uses the parameter id
-as the case instead. `--lit-filter REGEX` keeps only the tests whose name it matches, so the
+as the case instead. The suffix is `.mlir` when that file exists, `.test`
+otherwise. `--lit-filter REGEX` keeps only the tests whose name it matches, so the
 `--filter` that tools/check/round-checks.py prints selects the same cases in
 both runners. Each test may run for an hour, as each lit case may
 (lit.cfg.py); pytest-timeout enforces it, and a run without that plugin stops
@@ -102,8 +103,12 @@ def pytest_pycollect_makemodule(module_path, parent):
 def lit_name(item):
     callspec = getattr(item, "callspec", None)
     case = callspec.id if callspec else item.originalname.removeprefix("test_")
-    folder = item.path.parent.relative_to(HERE).as_posix()
-    return f"ctcompile :: {folder}/{case.replace('_', '-')}.test"
+    stem = (item.path.parent / case.replace("_", "-")).relative_to(HERE).as_posix()
+    # .mlir when that file exists; .test otherwise, which also names the case
+    # once its .test file has been deleted. Appended, not with_suffix: some
+    # stems have dots (CTNative/Fixtures/ControlFlow/functions.emitc.mlir).
+    suffix = ".mlir" if (HERE / f"{stem}.mlir").is_file() else ".test"
+    return f"ctcompile :: {stem}{suffix}"
 
 
 def pytest_collection_modifyitems(config, items):
@@ -207,15 +212,17 @@ class Lit:
         )
 
     def expand(self, text):
-        """`text` with every %-substitution expanded; repeated, because some
-        expand to text holding others (%dom_driver holds %build and %t)."""
+        """`text` with every %-substitution expanded and %% read as %;
+        repeated, because some expand to text holding others (%dom_driver
+        holds %build and %t)."""
         keys = sorted(self.substitutions, key=len, reverse=True)  # %cxx_exe before %cxx
+        text = text.replace("%%", "#_MARKER_#")  # lit's own placeholder for %%
         while True:
             expanded = text
             for key in keys:
                 expanded = expanded.replace(key, self.substitutions[key])
             if expanded == text:
-                return text
+                return text.replace("#_MARKER_#", "%")
             text = expanded
 
     def args(self, text):

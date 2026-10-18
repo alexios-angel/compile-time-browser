@@ -179,8 +179,8 @@ BAD["element-inheritance"] = (
 )
 
 
-def main():
-    args = dom.parse_args(__doc__, oracles=True)
+def main(argv=None):
+    args = dom.parse_args(__doc__, oracles=True, argv=argv)
     includes, libraries = dom.link_options(args)
     executions = refusals = 0
     for name, body in CASES.items():
@@ -263,6 +263,14 @@ def main():
             refusals += 1
     print(
         f"DOM constructor publication: {len(CASES)} Node/VM sources, {executions} native executions, {refusals} refusals"
+    )
+
+
+def test_publication(lit):
+    main(
+        lit.args(
+            "--translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --nm %nm --work %t"
+        )
     )
 
 
