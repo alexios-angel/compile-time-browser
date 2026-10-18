@@ -580,14 +580,28 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             if (built.getResult().hasOneUse()) {
                 mlir::Operation * set = *built.getResult().getUsers().begin();
                 if (const auto owned = ownedStores.find(set); owned != ownedStores.end()) {
-                    const auto mark = mlir::UnitAttr::get(context);
-                    set->setAttr(kNativeOwnedInstance, mark);
-                    // A store of null is marked "null" (Runtime/Owned.hpp's disown).
-                    const auto null = mlir::StringAttr::get(context, "null");
+                    // The instance store is marked kOwnedReplaceable when a
+                    // method makes it, a store of null kOwnedNull and a read
+                    // only tested for truth kOwnedHeld (Runtime/Owned.hpp).
+                    const auto mark = [&](mlir::Operation * op, llvm::StringRef name) {
+                        if (name.empty()) {
+                            op->setAttr(kNativeOwnedInstance, mlir::UnitAttr::get(context));
+                        } else {
+                            op->setAttr(kNativeOwnedInstance, mlir::StringAttr::get(context, name));
+                        }
+                    };
+                    mark(set, replaceableStores.contains(set) ? llvm::StringRef(kOwnedReplaceable)
+                                                              : llvm::StringRef());
                     for (mlir::Operation * use : owned->second) {
-                        use->setAttr(kNativeOwnedInstance, llvm::isa<ctjs::SetPropertyOp>(use)
-                                                               ? mlir::Attribute(null)
-                                                               : mlir::Attribute(mark));
+                        const bool tested =
+                            !use->use_empty() && llvm::all_of(use->getUsers(), [](auto * user) {
+                                return llvm::isa<ctjs::TruthyOp>(user);
+                            });
+                        if (llvm::isa<ctjs::SetPropertyOp>(use)) {
+                            mark(use, kOwnedNull);
+                        } else {
+                            mark(use, tested ? llvm::StringRef(kOwnedHeld) : llvm::StringRef());
+                        }
                     }
                 }
             }

@@ -1535,6 +1535,25 @@ int main() {
         CHECK(&field.value == kept && kept->width == 0.0);
         ctnative::own(&field, helper{});
         CHECK(ctnative::reading(&field, "width")->width == 3.0);
+        CHECK(ctnative::held(&field));
+
+        // A field a method stores into keeps every instance it held alive, so
+        // a method still running on a replaced one keeps a live object.
+        ctnative::replaceable<helper> again;
+        CHECK(!ctnative::held(&again));
+        CHECK(message([&] { (void)ctnative::reading(&again, "grow"); }) ==
+              "Cannot read properties of undefined (reading 'grow')");
+        ctnative::own(&again, helper{1.0});
+        const helper * first = ctnative::reading(&again, "width");
+        ctnative::own(&again, helper{2.0});
+        CHECK(first->width == 1.0);
+        CHECK(ctnative::reading(&again, "width")->width == 2.0);
+        const ctnative::replaceable<helper> copy = again;
+        CHECK(copy.value->width == 2.0 && copy.value.get() != again.value.get());
+        ctnative::disown(&again);
+        CHECK(!ctnative::held(&again));
+        CHECK(message([&] { (void)ctnative::setting(&again, "width"); }) ==
+              "Cannot set properties of null (setting 'width')");
     }
 
     CHECK(unbound());

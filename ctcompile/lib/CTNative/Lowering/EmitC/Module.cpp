@@ -51,9 +51,9 @@ void lowering::finish() {
         // parameters listed in `ctnative.template_params`, an attribute only
         // ctcompile's patched C++ emitter reads.
         // A class whose field owns an instance of another class
-        // (ctnative::owned<C>, Runtime/Owned.hpp) holds it by value, so C is
-        // defined first: a depth-first order over those fields, otherwise the
-        // census order.
+        // (ctnative::owned<C> or ctnative::replaceable<C>, Runtime/Owned.hpp)
+        // needs C defined first: a depth-first order over those fields,
+        // otherwise the census order.
         llvm::StringMap<unsigned> byName;
         for (unsigned i = 0; i < families.size(); ++i) { byName[families[i].name] = i; }
         llvm::SmallVector<unsigned> order;
@@ -64,7 +64,9 @@ void lowering::finish() {
             for (mlir::Type type : families[i].types) {
                 auto opaque = llvm::dyn_cast_or_null<ec::OpaqueType>(type);
                 llvm::StringRef held = opaque ? opaque.getValue() : llvm::StringRef{};
-                if (!held.consume_front("ctnative::owned<") || !held.consume_back(">")) {
+                if ((!held.consume_front("ctnative::owned<") &&
+                     !held.consume_front("ctnative::replaceable<")) ||
+                    !held.consume_back(">")) {
                     continue;
                 }
                 if (const auto member = byName.find(held); member != byName.end()) {

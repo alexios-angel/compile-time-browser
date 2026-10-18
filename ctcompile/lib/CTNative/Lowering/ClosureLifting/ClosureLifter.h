@@ -877,14 +877,14 @@ struct closureLifter {
     /// Otherwise the reason goes into `why` when given.
     bool returnsAnInstance(ctjs::ReturnOp ret, std::string * why = nullptr);
     /// Whether `set` stores a `new`'s instance into a field of `this` that owns
-    /// it by value (as a ctnative::owned member, Runtime/Owned.hpp): the
-    /// instance has no other use, `set` is in a class constructor, the only
-    /// other stores of its key store null through the `this` of that
-    /// constructor or a method of its prototype, and every read of the key is
-    /// of that `this`, used only through constant keys or as a method call's
-    /// receiver. So the instance is never shared, aliased or published. The
-    /// reads and the null stores go into `uses` when given; otherwise the
-    /// reason goes into `why` when given.
+    /// it (a ctnative::owned or ctnative::replaceable member, Runtime/Owned.hpp):
+    /// the instance has no other use, `set` is in the constructor or a method
+    /// of a proved class, the only other stores of its key store null through
+    /// the `this` of that constructor or a method of its prototype, and every
+    /// read of the key is of that `this`, used only through constant keys or
+    /// as a method call's receiver, or only tested for truth. So the instance
+    /// is never shared, aliased or published. The reads and the null stores go
+    /// into `uses` when given; otherwise the reason goes into `why` when given.
     bool ownsByValue(ctjs::SetPropertyOp set,
                      llvm::SmallVectorImpl<mlir::Operation *> * uses = nullptr,
                      std::string * why = nullptr);
@@ -901,6 +901,9 @@ struct closureLifter {
     /// turned a method call through a read into a direct call, with the reads
     /// and the null stores of their keys.
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> ownedStores;
+    /// The proved stores a method of the class makes rather than its
+    /// constructor: their field is a ctnative::replaceable (Runtime/Owned.hpp).
+    llvm::DenseSet<mlir::Operation *> replaceableStores;
 
     bool retainedByLocalMap(mlir::OpOperand & use,
                             llvm::DenseMap<mlir::Value, mlir::Value> * reads = nullptr);

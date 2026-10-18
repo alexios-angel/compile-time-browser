@@ -77,6 +77,15 @@ void lowering::retype(ctjs::FuncOp fn) {
         }
     });
     const auto retypeValue = [&](mlir::Value v) {
+        // A read that only tests whether a field holds its instance is
+        // held()'s bool (Runtime/Owned.hpp), whatever the field's type.
+        if (auto get = v.getDefiningOp<ctjs::GetPropertyOp>()) {
+            const auto mark = get->getAttrOfType<mlir::StringAttr>(kNativeOwnedInstance);
+            if (mark && mark.getValue() == kOwnedHeld) {
+                v.setType(mlir::IntegerType::get(context, 1));
+                return;
+            }
+        }
         if (retypeClosureSet(v)) { return; } // ClosureSets.cpp
         if (retypeBorrowed(v)) { return; }
         // A listener's own identity, which its removals of itself name.
@@ -358,11 +367,12 @@ void lowering::retype(ctjs::FuncOp fn) {
         }
         mlir::Value(object.getResult()).setType(classType(shapeAt(object.getResult())));
     });
-    // A read of a field owning an instance by value is a pointer to the
-    // instance the member holds (Runtime/Owned.hpp's reading), as a lifted
-    // method's receiver is.
+    // A read of a field owning an instance is a pointer to the instance the
+    // member holds (Runtime/Owned.hpp's reading), as a lifted method's
+    // receiver is. A read only tested for truth was typed above.
     fn.getBody().walk([&](ctjs::GetPropertyOp get) {
-        if (get->hasAttr(kNativeOwnedInstance)) {
+        const auto mark = get->getAttrOfType<mlir::StringAttr>(kNativeOwnedInstance);
+        if (get->hasAttr(kNativeOwnedInstance) && !(mark && mark.getValue() == kOwnedHeld)) {
             mlir::Value(get.getResult()).setType(receiverType(shapeAt(get.getResult())));
         }
     });

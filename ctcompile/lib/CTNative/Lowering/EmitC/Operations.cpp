@@ -503,17 +503,27 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         eraseIfUnused(o);
         return;
     }
-    // A field that owns an instance by value is a ctnative::owned member
-    // (Runtime/Owned.hpp). A read is a pointer to the instance it holds, and
-    // throws the interpreter's TypeError, naming the property its use reaches,
-    // when the field holds undefined or null. The store owns the instance and
-    // a store of null (marked "null") marks the field null.
+    // A field that owns an instance is a ctnative::owned or
+    // ctnative::replaceable member (Runtime/Owned.hpp). A read is a pointer to
+    // the instance it holds, and throws the interpreter's TypeError, naming
+    // the property its use reaches, when the field holds undefined or null; a
+    // read only tested for truth (kOwnedHeld) is held(). The store owns the
+    // instance and a store of null (kOwnedNull) marks the field null.
     if (o->hasAttr(kNativeOwnedInstance)) {
         const mlir::Type storage = accessType.lookup(o);
         const auto field = [&](mlir::Value object) -> mlir::Value {
             return ec::AddressOfOp::create(b, where, ec::PointerType::get(storage),
                                            memberAccess(b, where, object, memberName(o), storage));
         };
+        const auto mark = o->getAttrOfType<mlir::StringAttr>(kNativeOwnedInstance);
+        if (auto get = llvm::dyn_cast<GetPropertyOp>(o);
+            get && mark && mark.getValue() == kOwnedHeld) {
+            swap(callWithConstValueOperands(b, where, get.getResult().getType(),
+                                            b.getStringAttr("ctnative::held"),
+                                            mlir::ValueRange{field(get.getObject())})
+                     .getResult(0));
+            return;
+        }
         if (auto get = llvm::dyn_cast<GetPropertyOp>(o)) {
             // The use is still a ctjs op here: replace() runs in program order.
             // A lifted method call keeps the method's name in its callee, the
@@ -551,8 +561,7 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             return;
         }
         auto set = llvm::cast<SetPropertyOp>(o);
-        const auto marked = o->getAttrOfType<mlir::StringAttr>(kNativeOwnedInstance);
-        if (marked && marked.getValue() == "null") {
+        if (mark && mark.getValue() == kOwnedNull) {
             callWithConstValueOperands(b, where, mlir::TypeRange{},
                                        b.getStringAttr("ctnative::disown"),
                                        mlir::ValueRange{field(set.getObject())});

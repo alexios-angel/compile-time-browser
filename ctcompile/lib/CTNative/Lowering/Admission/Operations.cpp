@@ -868,6 +868,12 @@ bool admission::op(mlir::Operation * o) {
         return refuse("an unknown comparison");
     }
     if (auto t = llvm::dyn_cast<TruthyOp>(o)) {
+        // A field that owns an instance, tested for truth: whether it holds
+        // the instance (kOwnedHeld, Runtime/Owned.hpp's held()).
+        mlir::Operation * tested = t.getValue().getDefiningOp();
+        const auto owned =
+            tested ? tested->getAttrOfType<mlir::StringAttr>(kNativeOwnedInstance) : nullptr;
+        if (owned && owned.getValue() == kOwnedHeld) { return true; }
         const carrier c = carrierOf(typeOf(t.getValue()));
         if (c == carrier::none) { return refuse("truthiness of " + printed(typeOf(t.getValue()))); }
         return true;

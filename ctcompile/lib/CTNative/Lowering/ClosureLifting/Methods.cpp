@@ -105,22 +105,43 @@ bool closureLifter::ownsByValue(ctjs::SetPropertyOp set,
             !self.getOwner()->isEntryBlock()) {
             return "it is stored into an object other than `this`";
         }
+        // The class whose constructor, or a method of whose prototype, makes
+        // the store.
         auto owner = llvm::dyn_cast<ctjs::FuncOp>(self.getOwner()->getParentOp());
-        const ctjs::CreateClosureOp closure = owner ? uniqueClosureByTarget.lookup(owner) : nullptr;
-        const auto prototype = closure ? immutablePrototype(closure) : std::nullopt;
+        ctjs::CreateClosureOp constructor = owner ? uniqueClosureByTarget.lookup(owner) : nullptr;
+        const bool inConstructor =
+            constructor && (constructorClosures.contains(constructor.getOperation()) ||
+                            jsClasses.count(constructor.getOperation()));
+        if (!inConstructor) {
+            constructor = nullptr;
+            for (const auto & entry : jsClasses) {
+                if (llvm::any_of(entry.second.methods, [&](const auto & method) {
+                        return targetOf(method.second) == owner;
+                    })) {
+                    constructor = entry.second.constructor;
+                    break;
+                }
+            }
+        }
+        if (!constructor) {
+            return functionOf(set) + " is neither the constructor nor a method of a class";
+        }
+        const auto prototype = immutablePrototype(constructor);
         if (!prototype) {
-            return functionOf(set) +
-                   " is not the constructor of a class whose prototype is proved immutable";
+            return "the class " + functionOf(set) +
+                   " belongs to is not proved, so its prototype is not known to be immutable";
         }
         // Only the constructor and the methods of its prototype read the
         // field, and only through their own `this`: another object has no
         // such field. A read before the store, or after a store of null,
         // finds the field undefined or null, which the member records
-        // (Runtime/Owned.hpp), and throws the interpreter's TypeError. The
-        // store itself runs only in the constructor, once per instance, so no
-        // method of an instance the field held is still running when it is
-        // replaced.
-        llvm::SmallPtrSet<mlir::Operation *, 8> readers{owner.getOperation()};
+        // (Runtime/Owned.hpp), and throws the interpreter's TypeError. A store
+        // in the constructor runs once per instance, so no method of an
+        // instance the field held is still running when it is replaced; a
+        // store in a method can replace one whose method is running, so the
+        // field keeps every instance it held alive (ctnative::replaceable).
+        if (!inConstructor) { replaceableStores.insert(set.getOperation()); }
+        llvm::SmallPtrSet<mlir::Operation *, 8> readers{targetOf(constructor).getOperation()};
         for (ctjs::SetPropertyOp field : prototype->fields) {
             if (auto method = field.getValue().getDefiningOp<ctjs::CreateClosureOp>()) {
                 if (ctjs::FuncOp target = targetOf(method)) {
@@ -162,12 +183,22 @@ bool closureLifter::ownsByValue(ctjs::SetPropertyOp set,
                            .str();
                 return mlir::WalkResult::interrupt();
             }
+            // A read only tested for truth asks whether the field holds the
+            // instance (ctnative::held); any other read reaches it only
+            // through constant keys and method calls.
+            const auto tested = [](mlir::OpOperand & use) {
+                return llvm::isa<ctjs::TruthyOp>(use.getOwner());
+            };
+            const bool test =
+                !read.getResult().use_empty() && llvm::all_of(read.getResult().getUses(), tested);
             for (mlir::OpOperand & use : read.getResult().getUses()) {
                 auto method = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-                if (!isConstantKeyAccess(use) &&
+                if (!test && !isConstantKeyAccess(use) &&
                     !(method && use.getOperandNumber() == 1 && methodCallOn(method, use.get()))) {
                     open = ("a read of field `" + key + "` in " + functionOf(op) + " is " +
-                            describeUse(use) + ", so the instance would be shared")
+                            (tested(use) ? std::string("tested for truth and also used")
+                                         : describeUse(use)) +
+                            ", so the instance would be shared")
                                .str();
                     return mlir::WalkResult::interrupt();
                 }
