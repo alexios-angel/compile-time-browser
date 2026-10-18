@@ -164,6 +164,145 @@ void eraseDeadTest(mlir::Value value) {
     for (mlir::Value operand : operands) { eraseDeadTest(operand); }
 }
 
+/// Whether every use of `value` (the tested value, or the result of an scf.if
+/// that selects it) is one the rewrite turns into constant-key reads:
+/// `typeof tested`, a constant-key read, a spread into a fresh literal, the
+/// arm an scf.if testing `typeof tested` keeps, or a use `accepted` allows.
+bool usesFit(mlir::Value value, mlir::Value tested,
+             llvm::function_ref<bool(mlir::OpOperand &)> accepted) {
+    for (mlir::OpOperand & use : value.getUses()) {
+        mlir::Operation * user = use.getOwner();
+        if (typeOf(user, tested)) { continue; }
+        if (llvm::isa<ctjs::GetPropertyOp>(user) && use.getOperandNumber() == 0 &&
+            !ctjs::constantKey(ctjs::propertyKey(user)).empty()) {
+            continue;
+        }
+        if (auto copy = llvm::dyn_cast<ctjs::CopyPropsOp>(user);
+            copy && copy.getSource() == value && copy.getTarget() != value &&
+            copy.getTarget().getDefiningOp<ctjs::CreateObjectOp>()) {
+            continue;
+        }
+        if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(user)) {
+            auto branch = llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp());
+            const std::optional<bool> arm = branch ? armOfTypeofTest(branch, tested) : std::nullopt;
+            if (!arm || !droppableArm(branch, *arm)) { return false; }
+            // The arm the test drops goes, and this use with it; the arm it
+            // keeps hands the value to the branch's result.
+            if ((yield->getParentRegion() == &branch.getThenRegion()) != *arm) { continue; }
+            if (!usesFit(branch.getResult(use.getOperandNumber()), tested, accepted)) {
+                return false;
+            }
+            continue;
+        }
+        if (accepted(use)) { continue; }
+        return false;
+    }
+    return true;
+}
+
+/// Writes out, in the function holding `value`, what `value` having the own
+/// keys `keys` decides: each scf.if testing `typeof value` keeps the arm the
+/// test selects, `typeof value` is "object", and each spread of it into a
+/// fresh literal is one read and one own-property definition per key.
+/// Returns whether anything changed.
+bool rewriteValue(mlir::Value value, const shape & keys,
+                  llvm::SmallVectorImpl<mlir::Operation *> & erasedLiterals) {
+    mlir::Operation * anchor =
+        value.getDefiningOp() ? value.getDefiningOp() : value.getParentBlock()->getParentOp();
+    auto fn = llvm::isa<ctjs::FuncOp>(anchor) ? llvm::cast<ctjs::FuncOp>(anchor)
+                                              : anchor->getParentOfType<ctjs::FuncOp>();
+    bool changed = false;
+    // The tests first, innermost first, while `typeof` still names the value.
+    llvm::SmallVector<std::pair<mlir::scf::IfOp, bool>> tests;
+    fn.walk([&](mlir::scf::IfOp branch) {
+        auto arm = armOfTypeofTest(branch, value);
+        if (arm && droppableArm(branch, *arm)) { tests.emplace_back(branch, *arm); }
+    });
+    for (auto [branch, arm] : tests) {
+        const mlir::Value condition = branch.getCondition();
+        (void)droppableArm(branch, arm, &erasedLiterals);
+        keepArm(branch, arm);
+        eraseDeadTest(condition);
+        changed = true;
+    }
+    // `typeof` of an object literal is "object".
+    llvm::SmallVector<ctjs::UnaryOp> typeofs;
+    for (mlir::Operation * user : value.getUsers()) {
+        if (auto test = typeOf(user, value)) { typeofs.push_back(test); }
+    }
+    for (ctjs::UnaryOp test : typeofs) {
+        mlir::OpBuilder at(test);
+        auto object = ctjs::ConstantOp::create(at, test.getLoc(), test.getResult().getType(),
+                                               ctjs::StringAttr::get(at.getContext(), "object"));
+        test.getResult().replaceAllUsesWith(object.getResult());
+        test.erase();
+        changed = true;
+    }
+    // Each spread into a fresh literal copies the keys in order.
+    llvm::SmallVector<ctjs::CopyPropsOp> copies;
+    for (mlir::Operation * user : value.getUsers()) {
+        if (auto copy = llvm::dyn_cast<ctjs::CopyPropsOp>(user);
+            copy && copy.getSource() == value) {
+            copies.push_back(copy);
+        }
+    }
+    for (ctjs::CopyPropsOp copy : copies) {
+        mlir::OpBuilder at(copy);
+        const mlir::Type type = value.getType();
+        for (const std::string & key : keys) {
+            const mlir::Value name = ctjs::ConstantOp::create(
+                at, copy.getLoc(), type, ctjs::StringAttr::get(at.getContext(), key));
+            const mlir::Value read =
+                ctjs::GetPropertyOp::create(at, copy.getLoc(), type, value, name);
+            ctjs::SetPropertyOp::create(at, copy.getLoc(), copy.getTarget(), name, read)
+                ->setAttr(ctjs::defineOwnMarker, at.getUnitAttr());
+        }
+        copy.erase();
+        changed = true;
+    }
+    return changed;
+}
+
+/// The own keys `literal` keeps for the rest of the function, in property
+/// order, when every write of it is a constant-key write directly in its
+/// block that comes before every other use, the first write of each key
+/// defines it, and no key is an array index or a reserved name; nullopt
+/// otherwise. `writes` receives those writes.
+std::optional<shape> fixedShape(ctjs::CreateObjectOp literal,
+                                llvm::SmallPtrSetImpl<mlir::Operation *> & writes) {
+    mlir::Block * block = literal->getBlock();
+    mlir::Operation * firstRead = nullptr;
+    llvm::SmallVector<std::pair<mlir::Operation *, bool>> ordered;
+    for (mlir::OpOperand & use : literal.getResult().getUses()) {
+        mlir::Operation * user = block->findAncestorOpInBlock(*use.getOwner());
+        if (!user) { return std::nullopt; }
+        auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
+        if (write && user == use.getOwner() && use.getOperandNumber() == 0) {
+            const mlir::Value key = write.getKey();
+            if (!ctjs::ordinaryKey(key) || arrayIndexKey(ctjs::constantKey(key))) {
+                return std::nullopt;
+            }
+            ordered.emplace_back(user, user->hasAttr(ctjs::defineOwnMarker));
+            continue;
+        }
+        if (!firstRead || user->isBeforeInBlock(firstRead)) { firstRead = user; }
+    }
+    llvm::sort(ordered,
+               [](const auto & a, const auto & b) { return a.first->isBeforeInBlock(b.first); });
+    shape keys;
+    llvm::StringSet<> seen;
+    for (const auto & [write, defines] : ordered) {
+        if (firstRead && !write->isBeforeInBlock(firstRead)) { return std::nullopt; }
+        writes.insert(write);
+        const llvm::StringRef key =
+            ctjs::constantKey(llvm::cast<ctjs::SetPropertyOp>(write).getKey());
+        if (!seen.insert(key).second) { continue; }
+        if (!defines) { return std::nullopt; }
+        keys.push_back(key.str());
+    }
+    return keys;
+}
+
 } // namespace
 
 unsigned rewriteSpreadParameters(llvm::ArrayRef<calledFunction> functions,
@@ -205,38 +344,6 @@ unsigned rewriteSpreadParameters(llvm::ArrayRef<calledFunction> functions,
         const unsigned index = ctjs::implicit_arguments + use.getOperandNumber() - first;
         return index < entry.getNumArguments() && tracked.contains(entry.getArgument(index));
     };
-    // Whether every use of `value` (the parameter, or the result of an scf.if
-    // that selects it) is one this rewrite turns into constant-key reads.
-    std::function<bool(mlir::Value, mlir::Value)> usesFit = [&](mlir::Value value,
-                                                                mlir::Value parameter) {
-        for (mlir::OpOperand & use : value.getUses()) {
-            mlir::Operation * user = use.getOwner();
-            if (typeOf(user, parameter)) { continue; }
-            if (llvm::isa<ctjs::GetPropertyOp>(user) && use.getOperandNumber() == 0 &&
-                !ctjs::constantKey(ctjs::propertyKey(user)).empty()) {
-                continue;
-            }
-            if (auto copy = llvm::dyn_cast<ctjs::CopyPropsOp>(user);
-                copy && copy.getSource() == value && copy.getTarget() != value &&
-                copy.getTarget().getDefiningOp<ctjs::CreateObjectOp>()) {
-                continue;
-            }
-            if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(user)) {
-                auto branch = llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp());
-                const std::optional<bool> arm =
-                    branch ? armOfTypeofTest(branch, parameter) : std::nullopt;
-                if (!arm || !droppableArm(branch, *arm)) { return false; }
-                // The arm the test drops goes, and this use with it; the arm
-                // it keeps hands the value to the branch's result.
-                if ((yield->getParentRegion() == &branch.getThenRegion()) != *arm) { continue; }
-                if (!usesFit(branch.getResult(use.getOperandNumber()), parameter)) { return false; }
-                continue;
-            }
-            if (forwards(use)) { continue; }
-            return false;
-        }
-        return true;
-    };
     // A greatest fixpoint: drop a parameter with a use that does not fit or a
     // call that passes something else, until nothing changes. A shape is
     // known once every call's argument has one and they all agree; a
@@ -253,7 +360,7 @@ unsigned rewriteSpreadParameters(llvm::ArrayRef<calledFunction> functions,
             const unsigned j = argument.getArgNumber() - ctjs::implicit_arguments;
             std::optional<shape> common;
             bool pending = false;
-            bool fits = usesFit(parameter, parameter);
+            bool fits = usesFit(parameter, parameter, forwards);
             for (const auto & [call, args] : row.calls) {
                 if (!fits) { break; }
                 const mlir::Value arg = j < args.size() ? args[j] : mlir::Value{};
@@ -290,61 +397,78 @@ unsigned rewriteSpreadParameters(llvm::ArrayRef<calledFunction> functions,
     unsigned rewritten = 0;
     for (mlir::Value parameter : tracked) {
         const auto known = shapes.find(parameter);
-        if (known == shapes.end()) { continue; }
-        auto fn = llvm::cast<ctjs::FuncOp>(
-            llvm::cast<mlir::BlockArgument>(parameter).getOwner()->getParentOp());
-        bool changed = false;
-        // The tests first, innermost first, while `typeof` still names the
-        // parameter.
-        llvm::SmallVector<std::pair<mlir::scf::IfOp, bool>> tests;
-        fn.walk([&](mlir::scf::IfOp branch) {
-            auto arm = armOfTypeofTest(branch, parameter);
-            if (arm && droppableArm(branch, *arm)) { tests.emplace_back(branch, *arm); }
+        if (known != shapes.end() && rewriteValue(parameter, known->second, erasedLiterals)) {
+            ++rewritten;
+        }
+    }
+    return rewritten;
+}
+
+unsigned rewriteLiteralLocals(mlir::ModuleOp module,
+                              llvm::SmallVectorImpl<mlir::Operation *> & erasedLiterals) {
+    // A candidate is used by `typeof`, by a spread, or by an scf.if arm.
+    const auto tested = [](mlir::Value value) {
+        return llvm::any_of(value.getUsers(), [&](mlir::Operation * user) {
+            return typeOf(user, value) || llvm::isa<ctjs::CopyPropsOp, mlir::scf::YieldOp>(user);
         });
-        for (auto [branch, arm] : tests) {
-            const mlir::Value condition = branch.getCondition();
-            (void)droppableArm(branch, arm, &erasedLiterals);
-            keepArm(branch, arm);
-            eraseDeadTest(condition);
-            changed = true;
+    };
+    // The shape of `op`'s result when `op` is a fresh literal that keeps its
+    // keys, or of result `k` of an scf.if whose arms each make it as a fresh
+    // literal of one shape (yielded once, complete when yielded), and the
+    // result fits the rewrite.
+    const auto candidate =
+        [&](mlir::Operation * op) -> std::optional<std::pair<mlir::Value, shape>> {
+        if (auto literal = llvm::dyn_cast<ctjs::CreateObjectOp>(op)) {
+            llvm::SmallPtrSet<mlir::Operation *, 8> writes;
+            const std::optional<shape> keys = fixedShape(literal, writes);
+            if (keys && tested(literal.getResult()) &&
+                usesFit(literal.getResult(), literal.getResult(),
+                        [&](mlir::OpOperand & use) { return writes.contains(use.getOwner()); })) {
+                return std::pair{literal.getResult(), *keys};
+            }
+            return std::nullopt;
         }
-        // `typeof` of an object literal is "object".
-        llvm::SmallVector<ctjs::UnaryOp> typeofs;
-        for (mlir::Operation * user : parameter.getUsers()) {
-            if (auto test = typeOf(user, parameter)) { typeofs.push_back(test); }
-        }
-        for (ctjs::UnaryOp test : typeofs) {
-            mlir::OpBuilder at(test);
-            auto object =
-                ctjs::ConstantOp::create(at, test.getLoc(), test.getResult().getType(),
-                                         ctjs::StringAttr::get(at.getContext(), "object"));
-            test.getResult().replaceAllUsesWith(object.getResult());
-            test.erase();
-            changed = true;
-        }
-        // Each spread into a fresh literal copies the shape's keys in order.
-        llvm::SmallVector<ctjs::CopyPropsOp> copies;
-        for (mlir::Operation * user : parameter.getUsers()) {
-            if (auto copy = llvm::dyn_cast<ctjs::CopyPropsOp>(user);
-                copy && copy.getSource() == parameter) {
-                copies.push_back(copy);
+        auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op);
+        if (!branch || branch.getElseRegion().empty()) { return std::nullopt; }
+        for (unsigned k = 0; k < branch.getNumResults(); ++k) {
+            const mlir::Value value = branch.getResult(k);
+            if (!tested(value)) { continue; }
+            std::optional<shape> common;
+            bool fits = true;
+            for (mlir::Region * arm : {&branch.getThenRegion(), &branch.getElseRegion()}) {
+                mlir::Operation * yield = arm->front().getTerminator();
+                const mlir::Value made = yield->getOperand(k);
+                auto literal = made.getDefiningOp<ctjs::CreateObjectOp>();
+                const std::optional<shape> keys =
+                    literal && literal->getBlock() == &arm->front() &&
+                            llvm::count(yield->getOperands(), made) == 1
+                        ? literalShape(literal, yield)
+                        : std::nullopt;
+                fits = fits && keys && (!common || *common == *keys);
+                if (fits) { common = keys; }
+            }
+            if (fits && common && usesFit(value, value, [](mlir::OpOperand &) { return false; })) {
+                return std::pair{value, *common};
             }
         }
-        for (ctjs::CopyPropsOp copy : copies) {
-            mlir::OpBuilder at(copy);
-            const mlir::Type type = parameter.getType();
-            for (const std::string & key : known->second) {
-                const mlir::Value name = ctjs::ConstantOp::create(
-                    at, copy.getLoc(), type, ctjs::StringAttr::get(at.getContext(), key));
-                const mlir::Value value =
-                    ctjs::GetPropertyOp::create(at, copy.getLoc(), type, parameter, name);
-                ctjs::SetPropertyOp::create(at, copy.getLoc(), copy.getTarget(), name, value)
-                    ->setAttr(ctjs::defineOwnMarker, at.getUnitAttr());
-            }
-            copy.erase();
-            changed = true;
+        return std::nullopt;
+    };
+    llvm::SmallVector<ctjs::FuncOp> functions;
+    module.walk([&](ctjs::FuncOp fn) { functions.push_back(fn); });
+    unsigned rewritten = 0;
+    for (ctjs::FuncOp fn : functions) {
+        // One at a time, found afresh each time: folding one value's test can
+        // erase another candidate. Each rewrite removes the uses that made its
+        // value a candidate, so the loop ends; the bound is a backstop.
+        for (unsigned round = 0; round < 1000; ++round) {
+            std::optional<std::pair<mlir::Value, shape>> found;
+            fn.walk([&](mlir::Operation * op) {
+                found = candidate(op);
+                return found ? mlir::WalkResult::interrupt() : mlir::WalkResult::advance();
+            });
+            if (!found || !rewriteValue(found->first, found->second, erasedLiterals)) { break; }
+            ++rewritten;
         }
-        rewritten += changed ? 1 : 0;
     }
     return rewritten;
 }

@@ -536,6 +536,12 @@ struct closureLifter {
     /// Erases the cells captureLexicalThis made once only such arrows
     /// capture them (ArrowThis.cpp).
     void releaseLexicalThisCells();
+    /// What a read of an arrow's lexical `this` stands for: its maker's
+    /// receiver, or the maker's own such read (ArrowThis.cpp).
+    mlir::Value lexicalThisMaker(mlir::Value value);
+    /// The use of `arrow`'s closure that lets it outlive its maker's call, or
+    /// null when every use calls it (ArrowThis.cpp).
+    mlir::OpOperand * useOutlivingMaker(ctjs::FuncOp arrow);
 
     void specializeCallbacks(liftReport & out);
 
@@ -594,8 +600,12 @@ struct closureLifter {
     /// that construct or call. Judged by whyNotPromiseCallback and rewritten
     /// by rewritePromiseCallback, as hostCallbacks are.
     llvm::DenseMap<mlir::Operation *, mlir::Operation *> promiseCallbacks;
+    /// The resolve parameter of each executor in promiseCallbacks, taken
+    /// before any lift moves it behind the captures.
+    llvm::DenseSet<mlir::Value> executorResolves;
     void promiseCallbackCensus();
     std::optional<std::string> whyNotPromiseCallback(ctjs::CreateClosureOp c);
+    bool resolveStaysCalled(mlir::BlockArgument resolve);
     void rewritePromiseCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
 
     /// With `cellFactsOnly`, only what isConstantCell reads: no class census

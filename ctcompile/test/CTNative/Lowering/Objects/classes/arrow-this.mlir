@@ -61,6 +61,20 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/unproved.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=UNPROVED --implicit-check-not="reads its lexical"
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/calls.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/calls.mlir
+// RUN: FileCheck %s --check-prefix=CALLS --implicit-check-not=ctnative.not_native < %t/calls.mlir
+// RUN: ctjs-opt %t/calls.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/calls.cpp
+// RUN: FileCheck %s --check-prefix=CALLSCPP < %t/calls.cpp
+// RUN: %gxx -O2 %t/calls.cpp -o %t/calls-gcc
+// RUN: %t/calls-gcc | FileCheck %s --check-prefix=CALLSOUT
+// RUN: %clangxx -O2 %t/calls.cpp -o %t/calls-clang
+// RUN: %t/calls-clang | FileCheck %s --check-prefix=CALLSOUT
+// RUN: %native_reference %t/calls.js | FileCheck %s --check-prefix=CALLSOUT
+// RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/calls.js | FileCheck %s --check-prefix=CALLSOUT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/callsstored.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=CALLSSTORED
 
 // A method makes `() => this._x` and calls it twice in its own frame. The
 // arrow lifts with the instance as an object-pointer capture, the method
@@ -125,6 +139,25 @@
 // method and the program are refused.
 // NESTEDSTORED: ctjs.func private @fn$4({{.*}}ctnative.not_native = "a closure used as a value: it is stored into something that is not an object literal made here - Phase 59 slice 2"
 // NESTEDSTORED: ctjs.func @fn$5({{.*}}ctnative.not_native = "uses its own closure"
+
+// An arrow that calls a method through the `this` it captures, directly and
+// from an arrow inside it. The method only calls them, so the call resolves
+// as the method's own `this.bump()` would (Methods.cpp methodCensus), the
+// arrows lift with the instance pointer, each passes it to `bump` as the
+// receiver, and the program is native.
+// CALLS: emitc.func @total_{{[0-9]+}}
+// CALLSCPP: ctnative::js_num fn_{{[0-9]+}}(Box* const [[SELF:v[0-9]+]]) {
+// CALLSCPP: bump_{{[0-9]+}}([[SELF]],
+// CALLSOUT: r=654
+
+// Negative: an arrow stored on the instance calls `this.bump(1)`. It can run
+// after `keep` returns, so its `this` is not the method's receiver to the
+// method census: the call stays dispatched through the closure, and `bump`,
+// which nothing else calls, is not lifted.
+// CALLSSTORED: ctjs.func @bump${{[0-9]+}}({{.*}}ctnative.not_native = "uses `this` - a method field: nothing calls it"
+// CALLSSTORED: ctjs.func @fn${{[0-9]+}}({{.*}}ctnative.lexical_this
+// CALLSSTORED-NOT: call_direct @bump
+// CALLSSTORED: ctjs.call %{{[0-9]+}}(%{{[0-9]+}}, %{{[0-9]+}})
 
 //--- direct.js
 function run() {
@@ -196,6 +229,34 @@ function run() {
         get() { return apply(() => this._x); }
     }
     const b = new Box(4);
+    return b.get();
+}
+var r = run();
+
+//--- calls.js
+function run() {
+    class Box {
+        constructor(x) { this._x = x; }
+        bump(n) { return this._x + n; }
+        total() {
+            const f = () => this.bump(1) * 10 + this._x;
+            const outer = () => { const inner = () => this.bump(2); return inner() * 100; };
+            return f() + outer();
+        }
+    }
+    return new Box(4).total();
+}
+var r = run();
+
+//--- callsstored.js
+function run() {
+    class Box {
+        constructor(x) { this._x = x; this.get = null; }
+        bump(n) { return this._x + n; }
+        keep() { this.get = () => this.bump(1); return 0; }
+    }
+    const b = new Box(4);
+    b.keep();
     return b.get();
 }
 var r = run();

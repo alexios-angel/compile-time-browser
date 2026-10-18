@@ -394,7 +394,10 @@ std::optional<std::string> closureLifter::whyConstructorSetupDoesNotLift(ctjs::C
             llvm::all_of(made.getResult().getUses(), [&](mlir::OpOperand & use) {
                 return llvm::isa<ctjs::ReturnOp>(use.getOwner()) || isConstantKeyAccess(use);
             });
-        if (!returned && !usesCloseTheShape(made.getResult())) {
+        // A registry Map's class: the registry proof (Analysis/Instances.h)
+        // followed every value a `new` of it flows into, as it follows the
+        // instances read back from the Map.
+        if (!returned && !isIdentityClass(target) && !usesCloseTheShape(made.getResult())) {
             return "the instance `new` makes does not have a closed shape - " +
                    whyUsesOpenTheShape(made.getResult());
         }

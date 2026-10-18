@@ -89,6 +89,13 @@ bool closureLifter::ownsByValue(ctjs::SetPropertyOp set,
         if (why) { *why = known->second; }
         return false;
     }
+    // The verdict methodCensus recorded stands: a lift since then reads an
+    // arrow's `this` from a capture parameter, which the walk below no longer
+    // recognises as its maker's.
+    if (const auto known = ownedStores.find(set); known != ownedStores.end()) {
+        if (uses) { uses->append(known->second.begin(), known->second.end()); }
+        return true;
+    }
     llvm::SmallVector<mlir::Operation *> found;
     const std::optional<std::string> refusal = [&]() -> std::optional<std::string> {
         const llvm::StringRef key = ctjs::constantKey(set.getKey());
@@ -133,9 +140,10 @@ bool closureLifter::ownsByValue(ctjs::SetPropertyOp set,
                    " belongs to is not proved, so its prototype is not known to be immutable";
         }
         // Only the constructor and the methods of its prototype read the
-        // field, and only through their own `this`: another object has no
-        // such field. A read before the store, or after a store of null,
-        // finds the field undefined or null, which the member records
+        // field, and only through their own `this`, or the `this` of an arrow
+        // one of them makes and only calls: another object has no such
+        // field. A read before the store, or after a store of null, finds the
+        // field undefined or null, which the member records
         // (Runtime/Owned.hpp), and throws the interpreter's TypeError. A store
         // in the constructor runs once per instance, so no method of an
         // instance the field held is still running when it is replaced; a
@@ -150,11 +158,34 @@ bool closureLifter::ownsByValue(ctjs::SetPropertyOp set,
                 }
             }
         }
+        // An arrow's `this` is its maker's (ArrowThis.cpp), and the arrow
+        // runs only while the maker's call does when every use of its closure
+        // calls it; `escape` names the arrow that could run later instead.
+        std::string escape;
         const auto readersThis = [&](mlir::Value object) {
-            auto from = llvm::dyn_cast<mlir::BlockArgument>(object);
-            return from && from.getArgNumber() == ctjs::arg_receiver &&
-                   from.getOwner()->isEntryBlock() &&
-                   readers.contains(from.getOwner()->getParentOp());
+            escape.clear();
+            // Each step moves to the function that made the arrow, so a chain
+            // longer than this is not a chain of nested arrows.
+            for (unsigned depth = 0; depth < 64; ++depth) {
+                if (auto from = llvm::dyn_cast<mlir::BlockArgument>(object)) {
+                    return from.getArgNumber() == ctjs::arg_receiver &&
+                           from.getOwner()->isEntryBlock() &&
+                           readers.contains(from.getOwner()->getParentOp());
+                }
+                const mlir::Value maker = lexicalThisMaker(object);
+                if (!maker) { return false; }
+                auto arrow = object.getDefiningOp()->getParentOfType<ctjs::FuncOp>();
+                if (mlir::OpOperand * kept = useOutlivingMaker(arrow)) {
+                    escape = ("through the `this` that arrow `" + arrow.getSymName() +
+                              "` captures, and that arrow is " + describeUse(*kept) +
+                              ", so it can run after the call that made it returns, when "
+                              "nothing holds the instance")
+                                 .str();
+                    return false;
+                }
+                object = maker;
+            }
+            return false;
         };
         std::optional<std::string> open;
         module.walk([&](mlir::Operation * op) {
@@ -178,9 +209,10 @@ bool closureLifter::ownsByValue(ctjs::SetPropertyOp set,
                 return mlir::WalkResult::interrupt();
             }
             if (!readersThis(read.getObject())) {
-                open = ("field `" + key + "` is read in " + functionOf(op) +
-                        " through something other than the `this` of the class's constructor "
-                        "or methods")
+                open = ("field `" + key + "` is read in " + functionOf(op) + " " +
+                        (escape.empty() ? "through something other than the `this` of the "
+                                          "class's constructor or methods"
+                                        : escape))
                            .str();
                 return mlir::WalkResult::interrupt();
             }
@@ -762,8 +794,9 @@ void closureLifter::argumentCensus() {
     // A parameter every call passes an object literal of one shape may also
     // be tested with `typeof` and spread into a fresh literal: both are
     // written out for that shape (SpreadParameters.h), so the rule below sees
-    // the constant-key reads they become. The literals a folded test drops
-    // leave the census with it.
+    // the constant-key reads they become, and so are a function's own
+    // literals used that way. The literals a folded test drops leave the
+    // census with it.
     {
         llvm::SmallVector<calledFunction> called;
         const auto row = [&](ctjs::FuncOp function, llvm::ArrayRef<closureCall> sites) {
@@ -781,7 +814,11 @@ void closureLifter::argumentCensus() {
             row(llvm::cast<ctjs::FuncOp>(function), sites);
         }
         llvm::SmallVector<mlir::Operation *> erased;
-        if (rewriteSpreadParameters(called, erased) && !erased.empty()) {
+        (void)rewriteSpreadParameters(called, erased);
+        // Then the values a function makes itself, such as a local tested
+        // with `typeof` before it is spread.
+        (void)rewriteLiteralLocals(module, erased);
+        if (!erased.empty()) {
             const llvm::SmallPtrSet<mlir::Operation *, 8> gone(erased.begin(), erased.end());
             llvm::erase_if(objects, [&](ctjs::CreateObjectOp object) {
                 return gone.contains(object.getOperation());
@@ -1116,6 +1153,16 @@ void closureLifter::methodCensus() {
             }
         }
     }
+    // An arrow's `this` names what its maker's receiver names when the arrow
+    // runs only during its maker's calls (ArrowThis.cpp), so `this.m()` in it
+    // resolves as it would in the maker.
+    llvm::SmallVector<std::pair<mlir::Value, mlir::Value>> lexicalThisReads;
+    module.walk([&](ctjs::LoadUpvalueOp read) {
+        const mlir::Value maker = lexicalThisMaker(read.getResult());
+        if (maker && !useOutlivingMaker(read->getParentOfType<ctjs::FuncOp>())) {
+            lexicalThisReads.emplace_back(read.getResult(), maker);
+        }
+    });
     // Fixpoint over the receiver chain. `this.other()` inside a method has
     // `%arg0` as its receiver, and `%arg0` names whatever the call sites pass,
     // which is known only once those call sites resolve. One round per link
@@ -1123,6 +1170,15 @@ void closureLifter::methodCensus() {
     // by the literals in the module.
     for (bool changed = true; changed;) {
         changed = false;
+        for (const auto & [read, maker] : lexicalThisReads) {
+            for (mlir::Value object : behind.lookup(maker)) {
+                llvm::SmallVector<mlir::Value, 2> & named = behind[read];
+                if (!llvm::is_contained(named, object)) {
+                    named.push_back(object);
+                    changed = true;
+                }
+            }
+        }
         for (ctjs::CallOp call : allCalls) {
             auto resolved = resolveMethod(call);
             if (!resolved || resolved->target.getBody().empty() ||

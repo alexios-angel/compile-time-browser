@@ -10,7 +10,9 @@
 // instead. The
 // callback's captures are copied into it (Runtime/Promise.hpp keeps a handler
 // until the microtask queue runs it), so only values with no identity to
-// share qualify, as for a host callback.
+// share qualify, as for a host callback, and an executor's resolve function,
+// whose copies share its promise (closure lifting lets a then-handler made in
+// the executor capture it only to call it).
 //
 //===----------------------------------------------------------------------===//
 
@@ -69,7 +71,8 @@ bool promiseOperation(admission & self, mlir::Operation * o) {
         case carrier::number:
         case carrier::boolean:
         case carrier::string:
-        case carrier::domElement: break;
+        case carrier::domElement:
+        case carrier::promiseResolve: break;
         default:
             return self.refuse(callback.str() + " captures " + printed(self.typeOf(capture)) +
                                " - the promise keeps a copy, which only a Number, a Boolean, a "

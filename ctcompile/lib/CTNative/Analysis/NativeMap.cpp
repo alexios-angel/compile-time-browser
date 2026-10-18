@@ -9,6 +9,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
+#include "ctcompile/CTJS/Lowering/NativeRealm.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
 #include "ctcompile/CTNative/Analysis/NativeObjectIdentity.h"
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
@@ -454,6 +455,81 @@ std::string collect(plan & out, closedValueFlow & graph,
     return {};
 }
 
+/// Whether --ctjs-resolve-globals found that the program never binds global
+/// `name`: its ctjs.globals row has host_binding (no store, no write through
+/// the global object, no dynamic global write can reach it).
+bool realmBinding(mlir::ModuleOp module, llvm::StringRef name) {
+    auto rows = module->getAttrOfType<mlir::ArrayAttr>("ctjs.globals");
+    if (!rows) { return false; }
+    for (auto row : rows.getAsRange<mlir::DictionaryAttr>()) {
+        auto bound = row.getAs<mlir::StringAttr>("name");
+        if (bound && bound.getValue() == name) { return row.contains(ctjs::kGlobalsHostBinding); }
+    }
+    return false;
+}
+
+/// Why a Map method may not run the realm's own Map.prototype method, judged
+/// without asking what the rest of the module does, or none. It is the rule
+/// arrayIterationUnproved (Lowering/ForOf.cpp) uses for Array:
+///   * `Map` is the realm's own: its ctjs.globals row has host_binding, which
+///     --ctjs-resolve-globals writes only when no store, no write through the
+///     global object and no dynamic global write (its clause 5: the global
+///     object and the run-time compiler reach no code the module cannot see)
+///     can bind it;
+///   * no read off the global object may yield `Map` (ctjs.global_map_reads,
+///     written by that clause-5 walk), and nothing reads a property named
+///     `Map`, so the constructor is reached only through `Map` loads, which
+///     prepareNativeMaps requires to be `new` callees;
+///   * no read reaches a prototype without naming it: `__proto__`,
+///     `getPrototypeOf`, `setPrototypeOf` or `constructor.prototype`, and no
+///     property or global named `Map` is written or deleted (the table can be
+///     older than the module, so the stores themselves are checked too).
+/// Then no code, known or not, can reach Map.prototype or rebind `Map`, so an
+/// unknown call elsewhere cannot change what a Map method does, and each Map
+/// family stands on its own proof. Like clause 5, this does not see a global
+/// object the host hands over (`document.defaultView`) and read with a
+/// computed key.
+std::optional<std::string> mapRealmUnproved(mlir::ModuleOp module) {
+    if (!module->hasAttr("ctjs.globals")) {
+        return "no ctjs.globals table proves the realm's `Map`";
+    }
+    if (!realmBinding(module, "Map")) { return "`Map` may be rebound"; }
+    if (auto reads = module->getAttrOfType<mlir::ArrayAttr>("ctjs.global_map_reads");
+        reads && !reads.empty()) {
+        return "a read off the global object may yield `Map`";
+    }
+    std::optional<std::string> why;
+    module.walk([&](mlir::Operation * op) {
+        llvm::StringRef key;
+        if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
+            key = ctjs::constantKey(read.getKey());
+            auto owner = read.getObject().getDefiningOp<ctjs::GetPropertyOp>();
+            if (key == "prototype" && owner && ctjs::constantKey(owner.getKey()) == "constructor") {
+                why = "the program reads `constructor.prototype`, which can be Map.prototype";
+                return mlir::WalkResult::interrupt();
+            }
+            if (key == "__proto__" || key == "getPrototypeOf" || key == "setPrototypeOf") {
+                why = ("the program reads `" + key + "`, which reaches a prototype").str();
+                return mlir::WalkResult::interrupt();
+            }
+        } else if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) {
+            key = ctjs::constantKey(write.getKey());
+        } else if (auto erase = llvm::dyn_cast<ctjs::DeleteNamedOp>(op)) {
+            key = erase.getName();
+        } else if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(op)) {
+            // The table can be older than the module (a pass or a test may
+            // add a store after --ctjs-resolve-globals ran).
+            key = store.getName();
+        }
+        if (key == "Map") {
+            why = "the program names a property `Map`, which may be the realm's constructor";
+            return mlir::WalkResult::interrupt();
+        }
+        return mlir::WalkResult::advance();
+    });
+    return why;
+}
+
 /// Refuses Maps that (transitively) store themselves, then sorts each family's
 /// `get` calls into the read lists Presence checks: reads of a Map whose values
 /// are Maps (`reads`, must be present), reads on a host-captured global Map
@@ -652,76 +728,215 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals,
         const auto found = families.find(graph.find(member));
         if (found != families.end()) { plans[found->second].members.push_back(member); }
     }
-    for (plan & candidate : plans) {
-        const std::string problem = collect(candidate, graph, sites);
-        if (reason.empty()) { reason = problem; }
+    // Each family's own proof (collect), then the identity proof. With the
+    // realm's own Map, whose prototype nothing can reach (mapRealmUnproved),
+    // each family stands on its own proofs. Without it, every family stands
+    // or falls with the whole module, as the walk below requires.
+    llvm::SmallVector<std::string> refusals(plans.size());
+    for (auto [index, candidate] : llvm::enumerate(plans)) {
+        refusals[index] = collect(candidate, graph, sites);
+    }
+    bool perFamily = reason.empty() && !mapRealmUnproved(module);
+    if (perFamily) {
+        // A `Map` load whose `new`s make Maps of two families lowers once,
+        // so a family sharing one with a refused family is refused too. A
+        // family that stores the Maps of a refused family cannot own them.
+        llvm::DenseMap<mlir::Operation *, unsigned> familyOf;
+        for (auto [index, candidate] : llvm::enumerate(plans)) {
+            for (ctjs::ConstructOp made : candidate.made) { familyOf[made] = index; }
+        }
+        for (bool changed = true; changed;) {
+            changed = false;
+            const auto refuse = [&](unsigned index, const std::string & why) {
+                if (!refusals[index].empty()) { return; }
+                refusals[index] = why;
+                changed = true;
+            };
+            for (ctjs::LoadGlobalOp load : constructors) {
+                std::optional<unsigned> boxed;
+                for (mlir::Operation * user : load.getResult().getUsers()) {
+                    const auto found = familyOf.find(user);
+                    if (found != familyOf.end() && !refusals[found->second].empty()) {
+                        boxed = found->second;
+                    }
+                }
+                if (!boxed) { continue; }
+                for (mlir::Operation * user : load.getResult().getUsers()) {
+                    const auto found = familyOf.find(user);
+                    if (found != familyOf.end()) { refuse(found->second, refusals[*boxed]); }
+                }
+            }
+            for (auto [index, candidate] : llvm::enumerate(plans)) {
+                for (ctjs::CallOp call : candidate.calls) {
+                    if (mapMethodName(call) != "set") { continue; }
+                    const auto child = families.find(graph.find(call.getArgs()[1]));
+                    if (child != families.end() && !refusals[child->second].empty()) {
+                        refuse(static_cast<unsigned>(index), refusals[child->second]);
+                    }
+                }
+            }
+        }
     }
     llvm::DenseSet<mlir::Operation *> calls;
-    for (const plan & candidate : plans) {
+    for (auto [index, candidate] : llvm::enumerate(plans)) {
+        if (perFamily && !refusals[index].empty()) { continue; }
         for (ctjs::CallOp call : candidate.calls) { calls.insert(call); }
     }
     map_detail::snapshotCopies copies;
-    if (reason.empty()) { reason = map_detail::collectSnapshotCopies(module, calls, copies); }
-    // The name `Map` alone does not prove the standard constructor: a global
-    // store, reflection on the global object or an unknown call could replace
-    // the constructor or its prototype. Any such operation anywhere in the
-    // module refuses native Maps for the whole module (a per-function proof
-    // would be finer but is not implemented).
-    module.walk([&](mlir::Operation * op) {
-        if (!reason.empty()) { return; }
-        if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(op);
-            store && store.getName() == "Map") {
-            reason = "standard Map binding is assigned in this program";
-        } else if (hostTyped && llvm::isa<ctjs::LoadGlobalOp, ctjs::CallOp>(op) &&
-                   !calls.contains(op) && hostTyped(op)) {
-            // The host contract proof typed this read or browser call.
-        } else if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
-                   load && load.getName() != "Map" && !copies.builtins.contains(op)) {
-            // Allowed only when OwnedGlobalRoots proved this load reads an
-            // owned global root or a global holding a proved Number or
-            // Boolean. Names and native attributes never authorize a read.
+    std::string copied = map_detail::collectSnapshotCopies(module, calls, copies);
+    // A read of a global the program itself binds keeps the whole-module
+    // walk's condition below: OwnedGlobalRoots must prove the value it reads
+    // (a scalar global written twice is refused there). A realm binding
+    // cannot reach Map.prototype under mapRealmUnproved's proof.
+    const auto readsProvedGlobals = [&] {
+        // The table can be older than the module, so a name stored here is
+        // the program's own whatever its row says.
+        llvm::StringSet<> stored;
+        module.walk([&](ctjs::StoreGlobalOp store) { stored.insert(store.getName()); });
+        bool proved = true;
+        module.walk([&](ctjs::LoadGlobalOp load) {
+            // An engine helper (`__ctbrowser_class_defined`) is never bound
+            // by the program either.
+            const llvm::StringRef name = load.getName();
+            if (!proved || name == "Map" || (hostTyped && hostTyped(load)) ||
+                (!stored.contains(name) &&
+                 (realmBinding(module, name) || name.starts_with("__ctbrowser_")))) {
+                return;
+            }
             if (globals && globals->proved()) {
-                if (globals->lookup(load)) { return; }
-                if (globals->objectGlobal(load)) { return; }
-                if (globals->mutableScalarRead(load)) { return; }
+                if (globals->lookup(load) || globals->objectGlobal(load) ||
+                    globals->mutableScalarRead(load)) {
+                    return;
+                }
                 const auto * scalar = globals->scalarRead(load);
                 if (scalar && !mapScalarTag(scalar->alternatives).empty()) { return; }
             }
-            if (!calleeSlotOnly(load)) {
-                reason = "standard Map identity is unproved with other host/global value reads";
-            }
-        } else if (llvm::isa<ctjs::CallOp>(op) && !calls.contains(op) &&
-                   !copies.calls.contains(op)) {
-            reason = "standard Map identity is unproved across an unknown call";
-        } else if (llvm::isa<ctjs::ConstructOp>(op) && !sites.contains(op)) {
-            reason = "standard Map identity is unproved across an unknown constructor";
-        } else if (llvm::isa<ctjs::PassNewTargetOp, ctjs::DeleteNamedOp, ctjs::CallSpreadOp,
-                             ctjs::ConstructSpreadOp, ctjs::DynamicImportOp>(op) ||
-                   op->getName().getStringRef().starts_with("ctjs.module_")) {
-            reason = "standard Map identity is unproved across dynamic invocation or deletion";
+            proved = calleeSlotOnly(load);
+        });
+        return proved;
+    };
+    // A snapshot copy calls realm built-ins (`Array.from`) that only the
+    // whole-module walk proves, so a module with one keeps that walk.
+    if (perFamily && (!copied.empty() || !copies.calls.empty() || !copies.builtins.empty() ||
+                      !readsProvedGlobals())) {
+        perFamily = false;
+        calls.clear();
+        for (const plan & candidate : plans) {
+            for (ctjs::CallOp call : candidate.calls) { calls.insert(call); }
         }
-    });
-    // Presence may keep membership facts across a snapshot copy, so it runs
-    // only after the builtin, iterator-use and whole-module identity checks
-    // above have passed.
-    if (reason.empty()) {
-        reason = provePayloads(module, plans, graph, families, copies.calls, globals, hostTyped);
+        copies = {};
+        copied = map_detail::collectSnapshotCopies(module, calls, copies);
     }
-    for (plan & candidate : plans) {
-        if (reason.empty()) { reason = proveRecords(candidate, hostRecord); }
+    if (!perFamily) {
+        for (const std::string & problem : refusals) {
+            if (reason.empty()) { reason = problem; }
+        }
+        if (reason.empty()) { reason = copied; }
+    }
+    // Without mapRealmUnproved's proof, the name `Map` alone does not prove
+    // the standard constructor: a global store, reflection on the global
+    // object or an unknown call could replace the constructor or its
+    // prototype, so any such operation anywhere in the module refuses every
+    // native Map.
+    if (!perFamily) {
+        module.walk([&](mlir::Operation * op) {
+            if (!reason.empty()) { return; }
+            if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(op);
+                store && store.getName() == "Map") {
+                reason = "standard Map binding is assigned in this program";
+            } else if (hostTyped && llvm::isa<ctjs::LoadGlobalOp, ctjs::CallOp>(op) &&
+                       !calls.contains(op) && hostTyped(op)) {
+                // The host contract proof typed this read or browser call.
+            } else if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
+                       load && load.getName() != "Map" && !copies.builtins.contains(op)) {
+                // Allowed only when OwnedGlobalRoots proved this load reads an
+                // owned global root or a global holding a proved Number or
+                // Boolean. Names and native attributes never authorize a read.
+                if (globals && globals->proved()) {
+                    if (globals->lookup(load)) { return; }
+                    if (globals->objectGlobal(load)) { return; }
+                    if (globals->mutableScalarRead(load)) { return; }
+                    const auto * scalar = globals->scalarRead(load);
+                    if (scalar && !mapScalarTag(scalar->alternatives).empty()) { return; }
+                }
+                if (!calleeSlotOnly(load)) {
+                    reason = "standard Map identity is unproved with other host/global value reads";
+                }
+            } else if (llvm::isa<ctjs::CallOp>(op) && !calls.contains(op) &&
+                       !copies.calls.contains(op)) {
+                reason = "standard Map identity is unproved across an unknown call";
+            } else if (llvm::isa<ctjs::ConstructOp>(op) && !sites.contains(op)) {
+                reason = "standard Map identity is unproved across an unknown constructor";
+            } else if (llvm::isa<ctjs::PassNewTargetOp, ctjs::DeleteNamedOp, ctjs::CallSpreadOp,
+                                 ctjs::ConstructSpreadOp, ctjs::DynamicImportOp>(op) ||
+                       op->getName().getStringRef().starts_with("ctjs.module_")) {
+                reason = "standard Map identity is unproved across dynamic invocation or deletion";
+            }
+        });
     }
     auto * context = module.getContext();
-    if (!reason.empty()) {
+    if (perFamily) {
+        // Presence may keep membership facts across a snapshot copy; there is
+        // none here. The payload proofs see the families still standing, and
+        // a failure there, which names no family, refuses them all.
+        llvm::SmallVector<plan, 4> standing;
+        llvm::DenseMap<mlir::Value, unsigned> standingFamilies;
+        llvm::SmallVector<unsigned> standingIndex;
+        for (auto [index, candidate] : llvm::enumerate(plans)) {
+            if (!refusals[index].empty()) { continue; }
+            standingFamilies[graph.find(candidate.made.front().getResult())] =
+                static_cast<unsigned>(standing.size());
+            standing.push_back(candidate);
+            standingIndex.push_back(static_cast<unsigned>(index));
+        }
+        if (!standing.empty()) {
+            const std::string payloads = provePayloads(module, standing, graph, standingFamilies,
+                                                       copies.calls, globals, hostTyped);
+            for (unsigned index : standingIndex) {
+                if (refusals[index].empty()) { refusals[index] = payloads; }
+                if (refusals[index].empty()) {
+                    refusals[index] = proveRecords(plans[index], hostRecord);
+                }
+            }
+        }
+        for (auto [index, candidate] : llvm::enumerate(plans)) {
+            if (refusals[index].empty()) { continue; }
+            for (ctjs::ConstructOp made : candidate.made) {
+                made->setAttr(kNativeMapReason, mlir::StringAttr::get(context, refusals[index]));
+                if (auto load = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>()) {
+                    load->setAttr(kNativeMapReason,
+                                  mlir::StringAttr::get(context, refusals[index]));
+                }
+            }
+        }
         for (ctjs::LoadGlobalOp load : constructors) {
-            load->setAttr(kNativeMapReason, mlir::StringAttr::get(context, reason));
+            if (!load->hasAttr(kNativeMapReason)) {
+                load->setAttr(kNativeMapConstructor, mlir::UnitAttr::get(context));
+            }
         }
-        for (ctjs::ConstructOp made : madeSites) {
-            made->setAttr(kNativeMapReason, mlir::StringAttr::get(context, reason));
+    } else {
+        // Presence may keep membership facts across a snapshot copy, so it
+        // runs only after the builtin, iterator-use and whole-module identity
+        // checks above have passed.
+        if (reason.empty()) {
+            reason =
+                provePayloads(module, plans, graph, families, copies.calls, globals, hostTyped);
         }
-        return;
-    }
-    for (ctjs::LoadGlobalOp load : constructors) {
-        load->setAttr(kNativeMapConstructor, mlir::UnitAttr::get(context));
+        for (plan & candidate : plans) {
+            if (reason.empty()) { reason = proveRecords(candidate, hostRecord); }
+        }
+        if (!reason.empty()) {
+            for (ctjs::LoadGlobalOp load : constructors) {
+                load->setAttr(kNativeMapReason, mlir::StringAttr::get(context, reason));
+            }
+            for (ctjs::ConstructOp made : madeSites) {
+                made->setAttr(kNativeMapReason, mlir::StringAttr::get(context, reason));
+            }
+            return;
+        }
+        for (ctjs::LoadGlobalOp load : constructors) {
+            load->setAttr(kNativeMapConstructor, mlir::UnitAttr::get(context));
+        }
     }
     for (mlir::Operation * builtin : copies.builtins) {
         builtin->setAttr(kNativeMapSnapshotBuiltin, mlir::UnitAttr::get(context));
@@ -732,11 +947,14 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals,
     // A proved Map held in a run-once static is read only after its one
     // write (connectRunOnceStatics), so the hoisted undefined of the
     // variable is never seen, and its type is the Map's alone.
+    // Only a family decided native has its static marked: a refused one
+    // stays a boxed value, read as it always was.
     llvm::DenseSet<mlir::Attribute> heldStatics;
     for (mlir::Operation * write : graph.staticWrites) {
         auto store = llvm::cast<ctjs::CellSetOp>(write);
         auto cell = store.getCell().getDefiningOp<ctjs::CreateCellOp>();
-        if (cell && families.contains(graph.find(store.getValue()))) {
+        const auto family = families.find(graph.find(store.getValue()));
+        if (cell && family != families.end() && (!perFamily || refusals[family->second].empty())) {
             heldStatics.insert(cell->getAttr(kNativeStaticCell));
         }
     }
@@ -747,7 +965,8 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals,
         }
     });
     int64_t group = 0;
-    for (const plan & candidate : plans) {
+    for (auto [index, candidate] : llvm::enumerate(plans)) {
+        if (perFamily && !refusals[index].empty()) { continue; }
         for (ctjs::ConstructOp made : candidate.made) {
             made->setAttr(kNativeMapSite, mlir::UnitAttr::get(context));
             if (candidate.records) {

@@ -160,6 +160,7 @@ CASES = {
         "diff %t.vm %t.gcc",
         "FileCheck %s --input-file %t.native",
         "FileCheck %s --check-prefix=SPELLING --input-file %{obj}/transitions.generated.cpp",
+        "FileCheck %s --check-prefix=QUEUED --input-file %{obj}/transitions.generated.cpp",
         '%nm -C %{obj}/ctcompile-test-transitions-native | not grep -E "ctbrowser::script::"',
         '%nm -C %{obj}/ctcompile-test-transitions-native-gcc | not grep -E "ctbrowser::script::"',
     ],
@@ -244,6 +245,8 @@ CASES = {
         "ctjs-translate --ctbrowser-js-to-ctjs %t/family-same-key.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf               --ctnative-test-instance-registries=lifted=true    | FileCheck %s --check-prefix=SAME-KEY",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/nested-unchecked.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf               --ctnative-test-instance-registries=lifted=true    | FileCheck %s --check-prefix=NESTED-UNCHECKED",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/nested-removed.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf               --ctnative-test-instance-registries=lifted=true    | FileCheck %s --check-prefix=NESTED-REMOVED",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/new-this.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf               --ctnative-test-instance-registries=lifted=true    | FileCheck %s --check-prefix=NEW-THIS",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/new-this-stored.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf               --ctnative-test-instance-registries=lifted=true    | FileCheck %s --check-prefix=NEW-THIS-STORED",
     ],
     "Precomputation/arguments": [
         "split-file %s %t",
