@@ -1185,6 +1185,12 @@ bool admission::closedObject(ctjs::CreateObjectOp object) {
                  set.getValue().getDefiningOp()->hasAttr(kNativeClosureSet))) {
                 continue;
             }
+            // A class instance the field owns by value: a member of the
+            // instance's class (ClosureLifting's ownsByValue).
+            if (set->hasAttr(kNativeOwnedInstance) &&
+                TypeInference::hasClosedShape(set.getValue())) {
+                continue;
+            }
             // A class held as a field: every read of it was resolved to the
             // class at compile time, so the field is only its empty tag.
             if (c == carrier::classTag) {

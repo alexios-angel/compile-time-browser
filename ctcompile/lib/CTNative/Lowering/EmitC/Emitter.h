@@ -235,6 +235,9 @@ struct lowering {
     /// create_object.
     llvm::DenseMap<mlir::Operation *, std::string> accessKey;
     llvm::DenseMap<mlir::Operation *, mlir::Type> accessType;
+    /// The class of each field that owns an instance by value
+    /// (kNativeOwnedInstance), by key: the member's C++ type.
+    llvm::StringMap<mlir::Type> ownedFieldTypes;
     std::set<std::string> identityFields;
     llvm::StringMap<mlir::Type> identityFieldTypes;
     llvm::DenseMap<mlir::Operation *, std::string> identityAccess;
