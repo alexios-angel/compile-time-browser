@@ -210,21 +210,25 @@ liftReport closureLifter::run() {
         // A prototype method's receiver is an instance of its class, which
         // only the constructor lift makes, so the method lifts with its class
         // or not at all: lifted alone, its calls would pass receivers no
-        // native code holds. One verdict per class per round.
+        // native code holds. A method that cannot lift keeps its own reason;
+        // one that could is refused with its class's. One verdict per class
+        // per round.
         llvm::DenseMap<mlir::Operation *, std::optional<std::string>> classVerdicts;
         const auto whyNotLiftableClassMethod =
             [&](ctjs::CreateClosureOp m) -> std::optional<std::string> {
+            if (auto why = whyNotLiftableMethod(m)) { return why; }
             ctjs::CreateClosureOp owner = prototypeOwner(m);
-            if (owner && constructorClosures.contains(owner.getOperation()) &&
-                !lifted.contains(owner.getOperation())) {
-                if (!classVerdicts.count(owner.getOperation())) {
-                    classVerdicts[owner.getOperation()] = whyNotLiftableConstructor(owner);
-                }
-                if (const auto & why = classVerdicts[owner.getOperation()]) {
-                    return "its class does not lift: " + *why;
-                }
+            if (!owner || !constructorClosures.contains(owner.getOperation()) ||
+                lifted.contains(owner.getOperation())) {
+                return std::nullopt;
             }
-            return whyNotLiftableMethod(m);
+            if (!classVerdicts.count(owner.getOperation())) {
+                classVerdicts[owner.getOperation()] = whyNotLiftableConstructor(owner);
+            }
+            if (const auto & why = classVerdicts[owner.getOperation()]) {
+                return "its class does not lift: " + *why;
+            }
+            return std::nullopt;
         };
         for (ctjs::CreateClosureOp c : closures) {
             // A declaration is a binding, not a value, and already lowers to
