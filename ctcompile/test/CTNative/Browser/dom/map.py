@@ -266,12 +266,13 @@ def execute(args, native, name, checks, includes, libraries):
             )
         source = args.work / f"{name}.{mode}.cpp"
         source.write_text(cpp + client)
+        flags = [*FLAGS, *includes]
         for index, compiler in enumerate(args.compilers):
             result = build_and_run(
                 compiler,
                 source,
                 args.work / f"{name}.{mode}.{index}",
-                flags=[*FLAGS, *includes],
+                flags=[*flags, *dom.prelude(compiler, flags, libraries, args.work)],
                 libraries=libraries,
                 nm=args.nm,
                 vm=dom.VM,
@@ -280,43 +281,51 @@ def execute(args, native, name, checks, includes, libraries):
                 raise RuntimeError(f"{name}/{mode}: real DOM observations were not completed")
 
 
+def check_entry(args, link, entry):
+    """Every provider/policy variant of one entry (side by side), its refusal
+    without Map declared and, for "keys", its step budgets. Returns
+    (executions, refusals)."""
+    label, source, parameters, checks = entry
+    ir, contract = dom.prepare(args, label, source, parameters)
+    declared = dict(contract, initial_intrinsics=["Map"])
+
+    def check_variant(variant):
+        name, optimize, manifest = variant
+        native = dom.lower(args, ir, manifest, name, optimize=optimize)
+        execute(args, native, name, checks, *link)
+
+    variants = [
+        (f"{label}-{owned}-{optimize}", optimize, manifest)
+        for owned, optimize, manifest in dom.variants(declared)
+    ]
+    dom.parallel(check_variant, variants)
+    # Without Map in initial_intrinsics the entry must be refused.
+    dom.refuse(args, ir, contract, f"{label}-undeclared", "DOM")
+    refusals = 2
+    if label == "keys":
+        for budget in (0, 1, 20):
+            dom.lower(args, ir, declared, f"budget-{budget}", max_steps=budget, success=False)
+            refusals += 1
+    return 4 * len(variants), refusals
+
+
+def check_refusal(args, row):
+    label, body, reason = row
+    source = f"function bad(element) {{ {body} }}\n"
+    ir, contract = dom.prepare(args, f"refused-{label}", source, 1, entry_name="bad")
+    dom.refuse(args, ir, dict(contract, initial_intrinsics=["Map"]), f"refused-{label}", reason)
+    return 2
+
+
 def main(argv=None):
     args = dom.parse_args(__doc__, argv=argv)
-    includes, libraries = dom.link_options(args)
-    executions = refusals = 0
-    for label, source, parameters, checks in ENTRIES:
-        ir, contract = dom.prepare(args, label, source, parameters)
-        declared = dict(contract, initial_intrinsics=["Map"])
-        for owned, optimize, manifest in dom.variants(declared):
-            name = f"{label}-{owned}-{optimize}"
-            native = dom.lower(args, ir, manifest, name, optimize=optimize)
-            execute(args, native, name, checks, includes, libraries)
-            executions += 4
-        # Without Map in initial_intrinsics the entry must be refused.
-        dom.refuse(args, ir, contract, f"{label}-undeclared", "DOM")
-        refusals += 2
-        if label == "keys":
-            for budget in (0, 1, 20):
-                dom.lower(
-                    args,
-                    ir,
-                    declared,
-                    f"budget-{budget}",
-                    max_steps=budget,
-                    success=False,
-                )
-                refusals += 1
-    for label, body, reason in REFUSALS:
-        source = f"function bad(element) {{ {body} }}\n"
-        ir, contract = dom.prepare(args, f"refused-{label}", source, 1, entry_name="bad")
-        dom.refuse(
-            args,
-            ir,
-            dict(contract, initial_intrinsics=["Map"]),
-            f"refused-{label}",
-            reason,
-        )
-        refusals += 2
+    link = dom.link_options(args)
+    # Entries and refusals are independent and each writes only files named
+    # after its own label, so they run side by side (dom.parallel).
+    executions, refusals = map(
+        sum, zip(*dom.parallel(lambda entry: check_entry(args, link, entry), ENTRIES))
+    )
+    refusals += sum(dom.parallel(lambda row: check_refusal(args, row), REFUSALS))
     # A `var Map` declaration that replaces the declared constructor must be
     # refused.
     source = "var Map = 0;\n" + FLAGS_SOURCE

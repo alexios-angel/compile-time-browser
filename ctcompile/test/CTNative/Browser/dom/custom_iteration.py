@@ -7,6 +7,8 @@ attribute writes are checked against Node and the reference VM. Sources that let
 iterator escape or change its protocol must be refused.
 """
 
+from concurrent.futures import ThreadPoolExecutor
+
 from CTNative.Browser.dom import dom
 from CTNative.Browser.dom.element_iteration import INTRINSICS as SNAPSHOT_INTRINSICS
 from CTNative.Browser.dom.json_parse import quote
@@ -7831,14 +7833,20 @@ var savedThrow, savedExhausted;
     )
 
 
-def main():
+def main(argv=None):
     """Run the oracle checks, every native execution group, and the refusal list."""
-    args = dom.parse_args(__doc__, oracles=True)
+    args = dom.parse_args(__doc__, oracles=True, argv=argv)
     observations = oracles(args) + mixed_oracles(args)
     compilers = args.compilers
     includes, libraries = dom.link_options(args)
     protected_attribute(args, compilers, includes, libraries)
-    saved_throws(args, compilers, includes, libraries)
+    # saved_throws is the longest group; it runs beside the mixed-selector and
+    # positive groups, whose files have other names (saved-throw-*, custom-*)
+    # and which print nothing, so the output order is unchanged. The
+    # compile-only and refusal lists reuse plain source names, as saved_throws'
+    # normal and historical cases do, so they start after it.
+    background = ThreadPoolExecutor(1)
+    saved = background.submit(saved_throws, args, compilers, includes, libraries)
     executions, refused = mixed_selectors(args, compilers)
     admitted = 0
 
@@ -7970,6 +7978,8 @@ def main():
     positive_executions, positive_refused = map(sum, zip(*dom.parallel(check_positive, POSITIVES)))
     executions += positive_executions
     refused += positive_refused
+    saved.result()
+    background.shutdown()
     for name, text in COMPILE_ONLY.items():
         ir, contract = dom.prepare(args, name, text, 1, entry_name="customElements")
         contract.update(initial_intrinsics=INTRINSICS)
@@ -8001,6 +8011,14 @@ def main():
         f"Closed custom DOM iteration: {executions} native executions, {refused} refusals; "
         f"{admitted} nonexecuted source admissions; "
         f"{observations} Node/VM source-double observations; public DOM/Style/Core"
+    )
+
+
+def test_custom_iteration(lit):
+    main(
+        lit.args(
+            "--translate ctjs-translate --opt ctjs-opt --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --work %t --nm %nm --node %node --reference %native_reference"
+        )
     )
 
 

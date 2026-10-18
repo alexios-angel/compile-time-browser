@@ -53,6 +53,10 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ctor-prototype-replaced.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=PROTOSET
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ctor-member.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=MEMBER
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ctor-member-prototype.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=MEMBERPROTO
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ctor-static-call.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=STATICCALL
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ctor-static-polluted.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=STATICPOLLUTED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ctor-static-realm.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=STATICREALM
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ctor-static-written.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=STATICWRITTEN
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/window-read.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=WINREAD
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/window-alias.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=WINALIAS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-read.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERREAD
@@ -191,7 +195,7 @@
 //
 // DYNAMIC: ctjs.globals = [
 // DYNAMIC-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
-// DYNAMIC-SAME: {name = "globalThis", reason = "never stored in this program - a host binding", resolved = "none", stores = 0 : i32}
+// DYNAMIC-SAME: {host_binding, name = "globalThis", reason = "never stored in this program - a host binding", resolved = "none", stores = 0 : i32}
 // DYNAMIC-SAME: {name = "x", reason = "written through the global object (ctjs.set_property at {{[^)]*}}), which binds this name", resolved = "none", stores = 0 : i32}
 // DYNAMIC-LABEL: ctjs.func @_script_$0(
 // DYNAMIC: ctjs.set_property
@@ -354,6 +358,47 @@
 // MEMBERPROTO-NOT: call_direct
 // MEMBERPROTO: ctjs.globals = [
 // MEMBERPROTO-SAME: reason = "a value that may be the run-time compiler escapes into ctjs.return{{[^"]*}}"
+
+// --- Positive: a method called off a value that may be the compiler ---------------
+//
+// `this.constructor.eventName("show")`, Bootstrap's idiom, passes the tainted
+// value as the receiver of a callee nobody can name. If the value is
+// `Function`, `Function.eventName` is undefined, since neither the realm nor
+// the program gives `Function`, Function.prototype or Object.prototype that
+// key (compiler_lacks), so the call throws before it runs any code; if it is
+// not `Function`, it is not the compiler.
+//
+// STATICCALL: ctjs.globals = [
+// STATICCALL-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
+// STATICCALL: ctjs.call_direct @add$1
+
+// --- Negative: unless the program puts the key on Object.prototype -----------------
+//
+// Here `Function.eventName` is the program's function, and `grab` calls it
+// with `this` = `Function`, which compiles source: a real escape. The key
+// itself is only ever written onto a literal made here; Object.prototype
+// handed to Object.assign is what retires the proof.
+//
+// STATICPOLLUTED-NOT: call_direct
+// STATICPOLLUTED: ctjs.globals = [
+// STATICPOLLUTED-SAME: reason = "a value that may be the run-time compiler escapes into a call whose callee this module does not name{{[^"]*}}"
+
+// --- Negative: or the key is one the realm gives functions -------------------------
+//
+// `Function.valueOf()` hands back `Function` itself.
+//
+// STATICREALM-NOT: call_direct
+// STATICREALM: ctjs.globals = [
+// STATICREALM-SAME: reason = "a value that may be the run-time compiler escapes into a call whose callee this module does not name{{[^"]*}}"
+
+// --- Negative: or the key is written onto an object not made here ------------------
+//
+// `t` could be any object, Function.prototype included, so a write of
+// `eventName` through it retires the proof for that key.
+//
+// STATICWRITTEN-NOT: call_direct
+// STATICWRITTEN: ctjs.globals = [
+// STATICWRITTEN-SAME: reason = "a value that may be the run-time compiler escapes into a call whose callee this module does not name{{[^"]*}}"
 
 // --- Positive: a named read off the global object ----------------------------------
 //
@@ -811,6 +856,40 @@ function add(a, b) { return a + b; }
 // `Function`.
 function grab(o) { return o.constructor.prototype; }
 var t = grab(1);
+var z = add(1, 2);
+
+//--- ctor-static-call.js
+function add(a, b) { return a + b; }
+// A static method called through `this.constructor` from an instance method.
+class Base {
+    static eventName(t) { return t + ".base"; }
+    fire() { return this.constructor.eventName("show"); }
+}
+var e = new Base().fire();
+var z = add(1, 2);
+
+//--- ctor-static-polluted.js
+function add(a, b) { return a + b; }
+// The key on Object.prototype, which `Function` inherits from.
+Object.assign(Object.prototype, { eventName: function () { return this("return 1"); } });
+function grab(o) { return o.constructor.eventName("show"); }
+var g = grab(function () {});
+var z = add(1, 2);
+
+//--- ctor-static-realm.js
+function add(a, b) { return a + b; }
+// `valueOf` is a realm method every function inherits.
+function grab(o) { return o.constructor.valueOf(); }
+var g = grab(function () {});
+var z = add(1, 2);
+
+//--- ctor-static-written.js
+function add(a, b) { return a + b; }
+// The key written through a parameter, which may be any object.
+function put(t, f) { t.eventName = f; }
+put({}, function () { return 1; });
+function grab(o) { return o.constructor.eventName("show"); }
+var g = grab(function () {});
 var z = add(1, 2);
 
 //--- enter-read.js

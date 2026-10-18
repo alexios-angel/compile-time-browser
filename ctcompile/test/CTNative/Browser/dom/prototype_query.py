@@ -131,8 +131,8 @@ REFUSALS = {
 }
 
 
-def main():
-    args = dom.parse_args(__doc__)
+def main(argv=None):
+    args = dom.parse_args(__doc__, argv=argv)
     compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
     cases = (
@@ -194,6 +194,10 @@ def main():
         f"{2 * len(REFUSALS) + 8 * len(cases)} refusals; "
         "DOM/Core/Style only"
     )
+
+
+def test_prototype_query(lit):
+    main(lit.args("%dom_driver"))
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@
 #include "ctcompile/CTNative/Runtime/ctnative.hpp"
 
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <span>
 #include <stdexcept>
@@ -239,6 +240,48 @@ void test_borrowed_arrays_answer_as_owned_ones() {
               .value() == "abc");
 }
 
+// Free functions shaped like lifted callbacks: the captures first, then the
+// parameters the JavaScript callback declares.
+js_boolean_t longer_than(js_num least, js_string s) {
+    return js_boolean_t{static_cast<double>(s.value().size()) > least.value()};
+}
+js_string tagged(js_string prefix, js_string s, js_num k) {
+    return prefix + s + js_string{std::to_string(static_cast<int>(k.value()))};
+}
+js_num count_in(std::span<const js_string> words, js_num acc, js_string s, js_num,
+                std::span<const js_string> self) {
+    return js_num{acc.value() + static_cast<double>(words.size() + self.size()) +
+                  static_cast<double>(s.value().size())};
+}
+js_boolean_t non_empty(js_string s) {
+    return js_boolean_t{!s.value().empty()};
+}
+
+void test_bound_functions_take_the_arguments_they_declare() {
+    // Generated code passes a lifted callback as std::bind_front(callback,
+    // captures...), or as the bare function with no captures; the runtime
+    // gives it as many of (element, index, array) as it declares.
+    const std::vector<js_string> v{js_string{"ab"}, js_string{"abcd"}, js_string{""}};
+    const std::vector<js_string> words{js_string{"x"}};
+    CHECK(Array.prototype.filter.call(v, std::bind_front(longer_than, num(2))).size() == 1);
+    CHECK(Array.prototype.filter.call(v, non_empty).size() == 2);
+    const std::vector<js_string> named =
+        Array.prototype.map.call(v, std::bind_front(tagged, js_string{"#"}));
+    CHECK(named.size() == 3 && named[1].value() == "#abcd1");
+    const std::span<const js_string> lent{words};
+    CHECK(Array.prototype.reduce.call(v, std::bind_front(count_in, lent), num(0)).value() == 18);
+}
+
+void test_includes_compares_strings() {
+    const std::vector<js_string> v{js_string{"nav"}, js_string{"card"}};
+    CHECK(static_cast<bool>(Array.prototype.includes.call(v, js_string{"card"})));
+    CHECK(!static_cast<bool>(Array.prototype.includes.call(v, js_string{"car"})));
+    const std::span<const js_string> lent{v};
+    CHECK(static_cast<bool>(Array.prototype.includes.call(lent, js_string{"nav"})));
+    CHECK(!static_cast<bool>(
+        Array.prototype.includes.call(std::span<const js_string>{}, js_string{""})));
+}
+
 } // namespace
 
 int main() {
@@ -252,5 +295,7 @@ int main() {
     test_map_and_find_refuse_a_shortened_array();
     test_reduce_threads_the_accumulator();
     test_borrowed_arrays_answer_as_owned_ones();
+    test_bound_functions_take_the_arguments_they_declare();
+    test_includes_compares_strings();
     REPORT("native_array_callbacks");
 }

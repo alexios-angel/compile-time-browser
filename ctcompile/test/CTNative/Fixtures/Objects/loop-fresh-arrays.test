@@ -1,0 +1,20 @@
+# Differential test of loop-fresh-arrays.js: an empty array literal inside a
+# loop is a new array each iteration, so the C++ declares its vector inside
+# the loop body, not in a slot at the function's entry (EmitC/Vectors.cpp,
+# replaceStringArray). The C++ is compiled against public Core, checked for
+# interpreter symbols with nm, run, and every global compared with the
+# interpreter's (compilation-unit.py). The negative prefixes the printed
+# String `a` (--mutate-as string) and requires the comparison to fail naming
+# it. string-arrays-calls.py is the generic pipeline driver for a fixture
+# that is not registered in NativeFixtures.cmake.
+
+# RUN: python3 %S/string-arrays-calls.py --translate ctjs-translate --opt ctjs-opt --js %S/loop-fresh-arrays.js --out %t/loop-fresh-arrays.emitc.mlir
+# RUN: ctjs-translate --mlir-to-cpp %t/loop-fresh-arrays.emitc.mlir | FileCheck %s
+# RUN: %compilation_unit --module %t/loop-fresh-arrays.emitc.mlir --js %S/loop-fresh-arrays.js --work %t --name loop_fresh_arrays --core-build %build
+# RUN: not %compilation_unit --module %t/loop-fresh-arrays.emitc.mlir --js %S/loop-fresh-arrays.js --work %t --name loop_fresh_arrays_negative --core-build %build --mutate a --mutate-as string 2>&1 | FileCheck %s --check-prefix=NEGATIVE
+
+# CHECK: do {
+# CHECK: if (
+# CHECK-NEXT: std::vector<ctnative::js_string> [[PAIRS:v[0-9]+]];
+# CHECK: ctnative::Array.prototype.push.call([[PAIRS]],
+# NEGATIVE: global 'a' differs

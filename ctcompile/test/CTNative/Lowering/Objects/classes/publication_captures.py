@@ -152,8 +152,8 @@ def prepared_source(args, name, text):
     return js, ir, manifest
 
 
-def main():
-    args = dom.parse_args(__doc__, oracles=True)
+def main(argv=None):
+    args = dom.parse_args(__doc__, oracles=True, argv=argv)
     executions = refusals = 0
     for label, (text, expected) in sources().items():
         name = "class-map-record-publication-captures-" + label
@@ -302,6 +302,14 @@ def main():
         classes.prepare(args, name, ir, manifest, success=False)
         refusals += 1
     print(f"Constructor publication captures: {executions} native executions, {refusals} refusals")
+
+
+def test_publication_captures(lit):
+    main(
+        lit.args(
+            "--translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --clang %dom_clang --include %{monorepo}/ctbrowser/include --build %build --nm %nm --work %t"
+        )
+    )
 
 
 if __name__ == "__main__":

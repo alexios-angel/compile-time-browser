@@ -3,14 +3,20 @@
 # each has its own dependency group, installed into /.venv at the repository root
 # and pinned by uv.lock:
 #
-# - test: lit and psutil, which lit needs to enforce the per-test time limit
-#   (ctcompile/test/lit.cfg.py). tools/remote-build.sh syncs this group on the
-#   build box, and ctcompile/test/cmake/Lit.cmake finds .venv/bin/lit. lit is
+# - test: pytest, with pytest-timeout and pytest-xdist, for the tools/ unit
+#   tests (`uv run --group test pytest <file>`), lit, and psutil, which lit needs to enforce the per-test time
+#   limit (ctcompile/test/lit.cfg.py). tools/remote-build.sh syncs this group
+#   on the build box, and ctcompile/test/cmake/Lit.cmake finds .venv/bin/lit. lit is
 #   held at 18.1.8, the version the boxes' ~/.lit-venv ran the suite with: lit
 #   23 refuses lit.cfg.py's external shell (ShTest(execute_external=True)), and
 #   moving every RUN line to lit's internal shell is a change of its own.
 # - compare: Playwright and Pillow, for tools/check/compare.py and
 #   css-parity.py (`tools/check/compare.py setup` syncs them).
+# - tools: Fabric, which tools/remote_build.py (behind tools/remote-build.sh)
+#   uses for every command it runs on a build box.
+#   Also the AWS and GCP SDKs (boto3 with its CRT extra, which `aws login`
+#   sessions need, google-cloud-compute and ibm-vpc), which `tools/devbox-pool.py status`
+#   asks for a box's power state.
 # - dev: ruff, the Python half of tools/format.sh (`uv run ruff`). uv installs
 #   this group by default.
 #
@@ -22,8 +28,9 @@ requires-python = ">=3.12"
 dependencies = []
 
 [dependency-groups]
-test = ["lit==18.1.8", "psutil"]
+test = ["lit==18.1.8", "psutil", "pytest", "pytest-timeout", "pytest-xdist"]
 compare = ["playwright>=1.40,<2", "pillow>=10,<13"]
+tools = ["fabric>=3,<4", "boto3", "botocore[crt]", "google-cloud-compute", "ibm-vpc"]
 dev = ["ruff"]
 
 # tools/format.sh runs `ruff format` over every tracked .py with this file as its

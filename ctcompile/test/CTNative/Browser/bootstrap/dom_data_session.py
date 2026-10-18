@@ -5,10 +5,9 @@ probe keys are DOM element inputs."""
 import hashlib
 import json
 import re
-import subprocess
 
 from CTNative.Browser.dom import dom
-from CTNative.harness import build_and_run, node_globals, run, threshold
+from CTNative.harness import build_and_run, node_globals, run, slotted_run, threshold
 from CTNative.HostContract import contract as host
 from CTNative.Ownership.global_maps.driver.umd import (
     observe_umd,
@@ -190,8 +189,8 @@ int main() {
 """
 
 
-def main():
-    args = dom.parse_args(__doc__, oracles=True)
+def main(argv=None):
+    args = dom.parse_args(__doc__, oracles=True, argv=argv)
     compilers = args.compilers
     source, values, prefix = umd_source()
     js, _, original, _ = prepare_umd(args)
@@ -340,7 +339,7 @@ def main():
                     "-o",
                     "/dev/null",
                 ]
-                return subprocess.run(command, text=True, capture_output=True).returncode == 0
+                return slotted_run(command, text=True, capture_output=True).returncode == 0
 
             high = threshold(lowers, high=1000000)
             refuse(subject, contract, "final-cutoff", budget=high - 1)
@@ -428,6 +427,10 @@ def main():
         "five alias partitions, recorder/payload isolation, reentry, retained/detached keys, domain-first rejection and teardown; "
         "both policies/layouts/compilers, generated-client ASan/UBSan and mutation/privacy controls passed"
     )
+
+
+def test_dom_data_session(lit):
+    main(lit.args("%dom_driver --node %node --reference %native_reference"))
 
 
 if __name__ == "__main__":

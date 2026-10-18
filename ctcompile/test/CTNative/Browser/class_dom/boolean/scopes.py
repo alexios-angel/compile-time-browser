@@ -4,7 +4,6 @@ called inside that arm, compiles natively and matches Node and the VM, and that
 callbacks used outside their arm, plus hand-mutated IR, are refused."""
 
 import re
-import subprocess
 
 from CTNative.Browser.dom import dom
 from CTNative.Browser.class_dom import callbacks
@@ -12,6 +11,7 @@ from CTNative.Browser.class_dom.boolean import branches
 from CTNative.Browser.class_dom.boolean import captures
 from CTNative.Browser.class_dom.parameter_defaults import budget_boundary
 from CTNative.Browser.dom.boolean.cells import source_operations
+from CTNative.harness import slotted_run
 
 # branches.BASE with the `mark` writer created inside the `if` arm that calls it.
 METHOD = branches.BASE.replace("    const mark = () => { seen = true; };\n", "").replace(
@@ -255,9 +255,7 @@ def main(argv=None):
         for label, changed in verifier_controls(ir.read_text()):
             path = args.work / f"verifier-{label}.mlir"
             path.write_text(changed)
-            actual = subprocess.run(
-                [args.opt, str(path)], text=True, capture_output=True, timeout=30
-            )
+            actual = slotted_run([args.opt, str(path)], text=True, capture_output=True, timeout=30)
             assert actual.returncode == 1 and "error:" in actual.stderr, actual.stderr
             refusals += 1
     for name, method in BAD.items():

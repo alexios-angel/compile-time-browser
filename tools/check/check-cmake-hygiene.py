@@ -3,14 +3,14 @@
 
 Every directory under ctbrowser/, ctcompile/, cmake/ and tools/ that holds C++
 sources must have its own CMakeLists.txt, and no CMakeLists.txt or .cmake file
-may reference `..`. Runs a self-test on a temporary tree first.
+may reference `..`. Runs its self-test (test_check_cmake_hygiene.py) on
+temporary trees first.
 """
 
 import os
 from pathlib import Path
 import re
 import sys
-import tempfile
 
 # Files whose presence requires a CMakeLists.txt in the same directory.
 CPP_SUFFIXES = {".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx"}
@@ -52,22 +52,11 @@ def check(root):
 
 
 def self_test():
-    """Assert check() reports a missing CMakeLists.txt and a `..` path, and
-    skips vendor directories."""
-    with tempfile.TemporaryDirectory() as temporary:
-        root = Path(temporary)
-        folder = root / "ctcompile/lib/Example"
-        folder.mkdir(parents=True)
-        (folder / "example.cpp").touch()
-        assert check(root) == ["ctcompile/lib/Example: missing CMakeLists.txt"]
-        cmake = folder / "CMakeLists.txt"
-        cmake.write_text("target_sources(example PRIVATE ../example.cpp)\n")
-        assert check(root) == ["ctcompile/lib/Example/CMakeLists.txt:1: parent-relative path"]
-        cmake.write_text("target_sources(example PRIVATE example.cpp)\n")
-        vendor = root / "ctbrowser/vendor/example"
-        vendor.mkdir(parents=True)
-        (vendor / "external.hpp").touch()
-        assert check(root) == []
+    """Run the checks in test_check_cmake_hygiene.py; exit if any fails."""
+    import selftest
+
+    if selftest.run(__file__):
+        sys.exit(1)
 
 
 if __name__ == "__main__":

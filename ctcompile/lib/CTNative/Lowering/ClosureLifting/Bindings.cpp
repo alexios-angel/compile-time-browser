@@ -245,6 +245,26 @@ void closureLifter::makeBoundCallDirect(ctjs::CallOp call, ctjs::FuncOp target,
     call.erase();
 }
 
+bool closureLifter::canAddSiblingCapture(ctjs::CreateClosureOp closure, unsigned index,
+                                         ctjs::CreateClosureOp holder) {
+    auto cell = closure.getUpvalues()[index].getDefiningOp<ctjs::CreateCellOp>();
+    return cell && enclosingIndex(closure, index) < 0 && targetOf(holder) &&
+           holder->getParentOfType<ctjs::FuncOp>() == cell->getParentOfType<ctjs::FuncOp>() &&
+           dominance.properlyDominates(cell.getResult(), holder.getOperation());
+}
+
+void closureLifter::addCaptureSlot(ctjs::CreateClosureOp holder, mlir::Value cell) {
+    holder.getUpvaluesMutable().append(cell);
+    if (const mlir::DenseI32ArrayAttr indices = holder.getEnclosingIndicesAttr()) {
+        llvm::SmallVector<std::int32_t> grown(indices.asArrayRef());
+        grown.push_back(-1);
+        holder->setAttr("enclosing_indices", mlir::Builder(context).getDenseI32ArrayAttr(grown));
+    }
+    ctjs::FuncOp target = targetOf(holder);
+    target->setAttr("upvalue_count", mlir::Builder(context).getI32IntegerAttr(
+                                         static_cast<std::int32_t>(target.getUpvalueCount() + 1)));
+}
+
 /// Removes the capture slots the binding occupied, in place.
 ///
 /// In place rather than rebuilt: `plans` and `bindingClosures` hold
@@ -285,6 +305,15 @@ void closureLifter::removeCaptureSlots(ctjs::CreateClosureOp c, llvm::ArrayRef<u
     }
     c->eraseOperands(drop);
     target->setAttr("upvalue_count", builder.getI32IntegerAttr(static_cast<int>(kept)));
+    // An arrow's lexical `this` slot (ArrowThis.cpp) moves with its capture.
+    if (auto slot = target->getAttrOfType<mlir::IntegerAttr>(kNativeLexicalThis)) {
+        const auto at = static_cast<unsigned>(slot.getInt());
+        if (at < captures && renumbered[at] >= 0) {
+            target->setAttr(kNativeLexicalThis, builder.getI32IntegerAttr(renumbered[at]));
+        } else {
+            target->removeAttr(kNativeLexicalThis);
+        }
+    }
     const auto move = [&](std::int32_t index) -> std::int32_t {
         if (index < 0 || static_cast<unsigned>(index) >= captures ||
             renumbered[static_cast<unsigned>(index)] < 0) {
@@ -363,7 +392,8 @@ bool closureLifter::bindLocalFunctions(liftReport & out, bool probeSiblings) {
                 if (held && taken.contains(held.getOperation())) { continue; }
                 if ((allowSiblingCaptures || probeSiblings) &&
                     llvm::all_of(plan.slots, [&](const functionBinding::capturedSlot & slot) {
-                        return siblingCaptureSlot(plan.closure, j, slot.made).has_value();
+                        return siblingCaptureSlot(plan.closure, j, slot.made).has_value() ||
+                               canAddSiblingCapture(plan.closure, j, slot.made);
                     })) {
                     continue;
                 }
@@ -392,6 +422,25 @@ bool closureLifter::bindLocalFunctions(liftReport & out, bool probeSiblings) {
         siblingBindingTargets.insert(plan.target.getOperation());
     }
     if (probeSiblings) { return false; }
+    // A frame that reads the binding but does not capture one of the
+    // closure's bindings captures it now, so the call it makes has the value
+    // to pass (canAddSiblingCapture).
+    if (allowSiblingCaptures) {
+        for (auto & entry : plans) {
+            if (!taken.contains(entry.first)) { continue; }
+            functionBinding & plan = entry.second;
+            for (const functionBinding::capturedSlot & slot : plan.slots) {
+                for (unsigned j = 0; j < plan.closure.getUpvalues().size(); ++j) {
+                    auto held = plan.closure.getUpvalues()[j].getDefiningOp<ctjs::CreateCellOp>();
+                    if ((held && taken.contains(held.getOperation())) ||
+                        siblingCaptureSlot(plan.closure, j, slot.made)) {
+                        continue;
+                    }
+                    addCaptureSlot(slot.made, plan.closure.getUpvalues()[j]);
+                }
+            }
+        }
+    }
     // Pass A: every read becomes a call of the target.
     llvm::MapVector<mlir::Operation *, slotRemoval> removals;
     for (auto & entry : plans) {

@@ -1,7 +1,8 @@
 //===- Pass.cpp - Remove unreachable private functions --------------------===//
 //
 // --ctnative-prune-unreachable: erases the functions reachability::analyze
-// proved dead, and records a summary (and any refusal reason) on the module.
+// proved dead, and records a summary, the erased functions' names and any
+// refusal reason on the module.
 //
 //===----------------------------------------------------------------------===//
 
@@ -24,13 +25,23 @@ struct CTNativePruneUnreachablePass
         auto module = getOperation();
         module->removeAttr("ctnative.reachability_summary");
         module->removeAttr("ctnative.reachability_reason");
+        module->removeAttr("ctnative.reachability_pruned");
         const auto proof = reachability::analyze(module, maxSteps);
         const auto removed = static_cast<int64_t>(proof.dead.size());
         // analyze() returns dead functions only after proving the complete
         // graph. No operation inside a surviving function is changed or
         // reordered.
-        for (ctjs::FuncOp function : proof.dead) { function.erase(); }
         mlir::Builder at(&getContext());
+        // The names let a report list what was pruned rather than only count
+        // it.
+        llvm::SmallVector<mlir::Attribute> names;
+        for (ctjs::FuncOp function : proof.dead) {
+            names.push_back(at.getStringAttr(function.getSymName()));
+            function.erase();
+        }
+        if (!names.empty()) {
+            module->setAttr("ctnative.reachability_pruned", at.getArrayAttr(names));
+        }
         module->setAttr("ctnative.reachability_summary",
                         at.getDictionaryAttr(
                             {at.getNamedAttr("removed", at.getI64IntegerAttr(removed)),

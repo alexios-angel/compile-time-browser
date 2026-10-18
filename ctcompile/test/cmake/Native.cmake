@@ -26,10 +26,27 @@ ctcompile_target(ctcompile-test-native-reference)
 # ctbrowser for its DOM section.
 ctcompile_unit_test(native-runtime LIBS ctbrowser::ctbrowser)
 
+# The tagged structs a Map stores a key or payload of two kinds in
+# (ctnative.hpp), in both storage layouts. Its source is added by
+# Runtime/CMakeLists.txt.
+ctcompile_unit_test(native-maps LIBS ctbrowser::ctbrowser)
+
 # ctnative::function_ref (CTNative/Runtime/Callable.hpp), the parameter type of
 # a borrowed callback. Header-only and library-free; its source is added by
 # Runtime/CMakeLists.txt.
 ctcompile_unit_test(native-callable)
+
+# ctnative::dictionary, ctnative::Object (CTNative/Runtime/Dictionary.hpp,
+# Object.hpp) and ctnative::callable_identity (Handlers.hpp): an object used as
+# a string-keyed table, and `===` on function values. Header-only; String.hpp
+# needs ctbrowser's headers. Its source is added by Runtime/CMakeLists.txt.
+ctcompile_unit_test(native-handlers LIBS ctbrowser::ctbrowser)
+
+# ctnative::json_record and JSON.stringify of records and dictionaries
+# (Json.hpp), replace with a String replacement (RegExp.hpp) and vec_row
+# (Array.hpp). Header-only; Json.hpp's quoting is ctbrowser core's. Its source
+# is added by Runtime/CMakeLists.txt.
+ctcompile_unit_test(native-json LIBS ctbrowser::ctbrowser)
 
 # A VM-linked negative control: the C++ of <name>-fixture.emitc.mlir, emitted at
 # build time by the same emitter the native check uses, plus one object that
@@ -162,8 +179,16 @@ ctcompile_native_fixture(numeric ControlFlow/globals.js)
 ctcompile_native_fixture(functions ControlFlow/functions.js)
 # Object literals with closed shapes, lowered to stack structs.
 ctcompile_native_fixture(structs Objects/struct.js)
+# Object spread of literals whose keys are known, written out key by key.
+ctcompile_native_fixture(spreads Objects/spread.js)
+# Fields holding a String union: String|Boolean and String|undefined.
+ctcompile_native_fixture(variant_fields Objects/variant-fields.js)
 # Object literals returned by value from the function that builds them.
 ctcompile_native_fixture(records Objects/records.js)
+# String.prototype.replace with a RegExp literal and a function.
+ctcompile_native_fixture(string_replace Objects/string-replace.js)
+# Class instances a registry Map owns, as std::shared_ptr.
+ctcompile_native_fixture(instance_registry Objects/instance-registry.js)
 # Dense, uniformly numeric array literals, as std::vector<double>.
 ctcompile_native_fixture(arrays Objects/array.js)
 # Array contents evidence currently admits only bounded local Number

@@ -16,10 +16,9 @@ import math
 from pathlib import Path
 import re
 import struct
-import subprocess
 
 from CTNative.HostContract import prefix
-from CTNative.harness import prepare_js, threshold
+from CTNative.harness import prepare_js, slotted_run, threshold
 
 host = prefix.host
 OPTIONS = "follow-publication=true follow-provider-reads=true follow-provider-mutations=true"
@@ -592,7 +591,7 @@ def budget_threshold(args, source, manifest, options, label, no_facts, complete)
 
     def valid(limit):
         output.unlink(missing_ok=True)
-        result = subprocess.run(
+        result = slotted_run(
             [
                 args.opt,
                 str(source),

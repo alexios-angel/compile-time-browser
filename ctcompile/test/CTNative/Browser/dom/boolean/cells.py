@@ -8,11 +8,10 @@ executed, and invalid variants must be refused with the source IR intact.
 
 import json
 import re
-import subprocess
 
 from CTNative.Browser.dom import dom
 from CTNative.HostContract.contract import fingerprint
-from CTNative.harness import run, threshold
+from CTNative.harness import run, slotted_run, threshold
 
 
 def function(name, body, argument="cell", private=True):
@@ -360,7 +359,7 @@ def budget_boundary(args, ir, contract):
         nonlocal refusals
         output = args.work / f"budget-boundary-{limit}.mlir"
         flags = f"host-manifest={config} optimize=false host-max-steps={limit}"
-        result = subprocess.run(
+        result = slotted_run(
             [
                 args.opt,
                 str(ir),
@@ -444,7 +443,7 @@ def main(argv=None):
     }.items():
         path = args.work / f"verifier-{name}.mlir"
         path.write_text(text)
-        result = subprocess.run([args.opt, str(path)], capture_output=True, text=True, timeout=30)
+        result = slotted_run([args.opt, str(path)], capture_output=True, text=True, timeout=30)
         assert result.returncode == 1 and "error:" in result.stderr, result.stderr
         refusals += 1
     print(

@@ -1,0 +1,94 @@
+# A cut-down Popper createPopper (bootstrap.bundle.js): three modifier objects
+# merged by name with Object.assign, ordered by phase, and run over a state
+# record through each modifier's `fn`. The interpreter and Node agree on the
+# answer. It does not lower natively yet, and the first refusal is the
+# modifier objects themselves: their `fn` is a method field of an object
+# whose shape is not closed (the objects go into arrays and Object.assign).
+# This pins that boundary; each layer of the Popper work moves it and makes
+# this a native differential at the end.
+# RUN: split-file %s %t
+# RUN: %native_reference %t/probe.js | FileCheck %s --check-prefix=ANSWER
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("placed=" + scope.placed);' %t/probe.js | FileCheck %s --check-prefix=ANSWER
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/probe.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=BOUNDARY
+
+# ANSWER: placed={{"?}}translate{{(\(|%28)}}40px{{(,|%2C)( |%20)}}58px{{(\)|%29)"?}}
+# BOUNDARY: ctjs.func @_script_$0
+# BOUNDARY-SAME: ctnative.not_native = "a closure used as a value: it is a method field of an object whose shape is not closed, so `fn` cannot become a free function taking that object"
+# BOUNDARY-COUNT-3: ctnative.closure_reason = "it is a method field of an object whose shape is not closed, so `fn` cannot become a free function taking that object"
+
+#--- probe.js
+// A cut-down createPopper: three modifiers merged by name, ordered by phase,
+// run over a state record, as Popper (bootstrap.bundle.js) runs them.
+var phases = ['read', 'main', 'write'];
+
+var popperOffsets = {
+    name: 'popperOffsets',
+    enabled: true,
+    phase: 'read',
+    fn: function (t) {
+        var e = t.state, i = t.name;
+        e.modifiersData[i] = {
+            x: e.rects.reference.x + (e.rects.reference.width - e.rects.popper.width) / 2,
+            y: e.rects.reference.y + e.rects.reference.height
+        };
+    },
+    data: {}
+};
+
+var offset = {
+    name: 'offset',
+    enabled: true,
+    phase: 'main',
+    requires: ['popperOffsets'],
+    fn: function (t) {
+        var e = t.state, i = t.options, n = i.offset === undefined ? 0 : i.offset;
+        if (e.modifiersData.popperOffsets != null) {
+            e.modifiersData.popperOffsets.y += n;
+        }
+        e.modifiersData[t.name] = { distance: n };
+    }
+};
+
+var applyStyles = {
+    name: 'applyStyles',
+    enabled: true,
+    phase: 'write',
+    fn: function (t) {
+        var e = t.state, o = e.modifiersData.popperOffsets;
+        e.styles.popper = { transform: 'translate(' + o.x + 'px, ' + o.y + 'px)' };
+    }
+};
+
+function createPopper(reference, popper, options) {
+    var state = {
+        placement: 'bottom',
+        orderedModifiers: [],
+        options: Object.assign({}, { placement: 'bottom', modifiers: [] }, options),
+        modifiersData: {},
+        rects: { reference: reference, popper: popper },
+        styles: {},
+        reset: false
+    };
+    var defaults = [popperOffsets, offset, applyStyles];
+    var merged = [].concat(defaults, state.options.modifiers).reduce(function (t, e) {
+        var i = t[e.name];
+        t[e.name] = i ? Object.assign({}, i, e, {
+            options: Object.assign({}, i.options, e.options)
+        }) : e;
+        return t;
+    }, {});
+    var list = Object.keys(merged).map(function (t) { return merged[t]; });
+    state.orderedModifiers = phases.reduce(function (t, p) {
+        return t.concat(list.filter(function (m) { return m.phase === p; }));
+    }, []).filter(function (m) { return m.enabled; });
+    for (var n = 0; n < state.orderedModifiers.length; n++) {
+        var s = state.orderedModifiers[n], o = s.fn, r = s.options;
+        if (typeof o === 'function') {
+            o({ state: state, options: r === undefined ? {} : r, name: s.name });
+        }
+    }
+    return state.styles.popper.transform;
+}
+
+var placed = createPopper({ x: 10, y: 20, width: 100, height: 30 }, { x: 0, y: 0, width: 40, height: 10 },
+    { modifiers: [{ name: 'offset', options: { offset: 8 } }] });

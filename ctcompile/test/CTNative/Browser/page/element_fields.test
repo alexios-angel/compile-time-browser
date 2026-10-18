@@ -1,0 +1,11 @@
+# A struct field holding an element or null answers natively what it answers
+# on the interpreter, with no VM linked into the native build.
+# RUN: %{obj}/ctcompile-test-element_fields %S/element_fields.html %S/element_fields.js > %t.vm
+# RUN: env CTBROWSER_TEST_ENGINE=native %{obj}/ctcompile-test-element_fields-native %S/element_fields.html %S/element_fields.js > %t.native
+# RUN: diff %t.vm %t.native
+# RUN: FileCheck %s --input-file %t.native
+# RUN: FileCheck %s --check-prefix=SPELLING --input-file %{obj}/element_fields.generated.cpp
+# RUN: %nm -C %{obj}/ctcompile-test-element_fields-native | not grep -E "ctbrowser::script::"
+# CHECK: {{^}}none,list,none,top{{$}}
+# The field is the optional element view.
+# SPELLING: std::optional<ctnative::js_element_t> parent;

@@ -1,7 +1,7 @@
 //===- Operations.cpp - Lower String-valued ctjs operations ---------------===//
 //
 // lowering::replaceStringValue: lowers ctjs operations on native String
-// carriers (`length`, concatenation, `typeof` of String unions, and loose or
+// carriers (`length`, `text[i]`, concatenation, `typeof` of String unions, and loose or
 // strict equality involving a String) to EmitC calls of ctnative runtime
 // helpers.
 //
@@ -19,6 +19,18 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
         eraseIfUnused(op);
     };
     const auto string = carrierType(context, carrier::string);
+    // `text[i]` answers a String or undefined; `text.length` a Number. The
+    // key cannot tell them apart any more: its constant is already lowered.
+    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+        read && read.getObject().getType() == string &&
+        read.getResult().getType() == carrierType(context, carrier::nullableString)) {
+        // `text[i]`: admission proved the index a Number.
+        const auto number = carrierType(context, carrier::number);
+        swap(callValue(b, where, read.getResult().getType(), "ctnative::string_at",
+                       mlir::ValueRange{convertScalar(b, where, read.getObject(), string),
+                                        convertScalar(b, where, read.getKey(), number)}));
+        return true;
+    }
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
         read && read.getObject().getType() == string) {
         // Admission proved the key is `length` before key constants were

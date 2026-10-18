@@ -21,7 +21,6 @@ import os
 from pathlib import Path
 import re
 import shutil
-import subprocess
 import threading
 
 from CTNative.harness import (
@@ -33,6 +32,7 @@ from CTNative.harness import (
     forge_module,
     prepare_js,
     run,
+    slotted_run,
 )
 from CTNative.HostContract.contract import fingerprint
 
@@ -640,7 +640,7 @@ def lower(args, ir, contract, name, *, optimize=False, success=True, max_steps=N
     if success:
         run(command)
         return output
-    result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+    result = slotted_run(command, capture_output=True, text=True, timeout=120)
     if result.returncode not in (0, 1):
         raise RuntimeError(f"{name}: refusal crashed: {result.stderr}")
     text = output.read_text() if result.returncode == 0 else result.stderr
@@ -831,6 +831,7 @@ def standalone(
             + checks
         )
     client = CLIENT.replace("@CHECKS@", checks).replace("@ENTRY@", entries[0])
+    builds = []
     for mode, ir in (("explicit", native), ("deduced", deduced)):
         cpp = run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
         if VM.search(cpp) or "ctbrowser::element_ref" not in cpp or re.search(r"\bmain\s*\(", cpp):
@@ -859,22 +860,27 @@ def standalone(
                 raise RuntimeError(f"{name}/{mode}: attribute toggle bypasses the shared DOM API")
         source = args.work / f"{name}.{mode}.cpp"
         source.write_text(cpp + client.replace("@NAME@", name))
+        flags = [*FLAGS, *includes]
         for index, compiler in enumerate(compilers):
-            binary = args.work / f"{name}.{mode}.{index}"
-            flags = [*FLAGS, *includes]
-            if not first_build(compiler, *flags, *libraries, cpp.replace(name, "@NAME@") + client):
-                continue
-            result = build_and_run(
-                compiler,
-                source,
-                binary,
-                flags=[*flags, *prelude(compiler, flags, libraries, args.work)],
-                libraries=libraries,
-                nm=args.nm,
-                vm=VM,
-            )
-            if result.stdout != f"native DOM {name}: passed\n":
-                raise RuntimeError(f"{name}/{mode}: real DOM observations were not completed")
+            if first_build(compiler, *flags, *libraries, cpp.replace(name, "@NAME@") + client):
+                builds.append((f"{name}.{mode}.{index}", mode, source, compiler))
+
+    # Both layouts' programs build and run side by side, with each compiler.
+    def build(case):
+        label, mode, source, compiler = case
+        result = build_and_run(
+            compiler,
+            source,
+            args.work / label,
+            flags=[*flags, *prelude(compiler, flags, libraries, args.work)],
+            libraries=libraries,
+            nm=args.nm,
+            vm=VM,
+        )
+        if result.stdout != f"native DOM {name}: passed\n":
+            raise RuntimeError(f"{name}/{mode}: real DOM observations were not completed")
+
+    parallel(build, builds)
 
 
 def main(argv=None):

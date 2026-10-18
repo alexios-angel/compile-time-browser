@@ -39,6 +39,11 @@ BODIES = {
     "e['2'] = 2; return e;",
     "assign_spread": f"const i = {GET}; const e = {{...('object' == typeof i ? i : {{}})}}; "
     f"e.saved = {LATER}; e['2'] = 'last index'; return e;",
+    # A spread of a literal whose keys are known is a field copy (lifted by
+    # --ctjs-lift-to-scf): the copy keeps the value the source held, and the
+    # source's later write does not reach it.
+    "copy_then_mutate": f"const e = {{}}; e.saved = {GET}; const copied = {{...e}}; "
+    "e.saved = 1; return copied;",
     # Loops that write one dynamic key per dataset entry.
     "loop_dynamic_key": "const e = {}; "
     f"for (const n of {BOOTSTRAP_FILTER}) {{ e[n] = M(t.dataset[n]); }} return e;",
@@ -214,7 +219,10 @@ REFUSALS = {
     "target_capture": f"const e = {{}}; e.saved = {GET}; return () => e;",
     "target_escape": f"const e = {{}}; e.saved = {GET}; t.saved = e; return e;",
     "source_alias_mutation": f"const saved = {GET}; const e = {{}}; e.saved = saved; saved.x = 1; return e;",
-    "copy_then_mutate": f"const e = {{}}; e.saved = {GET}; const copied = {{...e}}; e.saved = 1; return copied;",
+    # The witness copy_then_mutate used to be: a spread whose source's keys are
+    # not known (parsed JSON), and the source written after the copy.
+    "copy_unknown_then_mutate": f"const i = {GET}; "
+    "const copied = {...('object' == typeof i ? i : {})}; i.saved = 1; return copied;",
     "loop_alias": "const e = {}, result = {}; let first = true; "
     f"for (const n of {BOOTSTRAP_FILTER}) {{ e.saved = M(t.dataset[n]); "
     "if (first) { result.saved = e; first = false; } } return result;",
@@ -483,64 +491,80 @@ def main(argv=None):
     compilers = args.compilers
     includes, libraries = dom.link_options(args)
     intrinsics = PREFIX_INTRINSICS + ["Number", "JSON", "decodeURIComponent"]
-    prepared = [
-        (name, *dom.prepare(args, name, source, 1, entry_name=name))
-        for name, source in SOURCES.items()
-    ]
+
+    def manifest(contract, provider):
+        return dict(
+            contract,
+            provider=provider,
+            initial_intrinsics=intrinsics,
+            dataset_parameters=[0],
+        )
+
+    # Every source, variant, build and refusal writes only files named after
+    # itself, so they run side by side (dom.parallel).
+    prepared = dom.parallel(
+        lambda row: (row[0], *dom.prepare(args, row[0], row[1], 1, entry_name=row[0])),
+        SOURCES.items(),
+    )
+
+    def lower(task):
+        label, name, ir, contract, provider, owned, optimize = task
+        native = dom.lower(args, ir, manifest(contract, provider), label, optimize=optimize)
+        deduced = args.work / f"{label}.deduced.mlir"
+        run([args.opt, native, "--ctnative-print-deduced", "-o", deduced])
+        return name, owned, {"explicit": native, "deduced": deduced}
+
+    def emit(row):
+        """The checked C++ of one lowered module and its entry symbol."""
+        _, name, module = row
+        entries = dom.NATIVE.findall(module.read_text())
+        assert len(entries) == (
+            2
+            if name in ("assign_loop", "loop_dynamic_key", "prefix_result", "normalized_result")
+            else 1
+        ) and not dom.FUNCTION.search(module.read_text()), module.read_text()
+        symbol = next(entry for entry in entries if re.fullmatch(re.escape(name) + r"_\d+", entry))
+        cpp = run([args.translate, "--mlir-to-cpp", module]).stdout
+        assert "ctbrowser::json_value" in cpp and not dom.VM.search(cpp), cpp
+        assert not re.search(
+            r"shared_ptr|weak_ptr|std::variant|nullable_scalar|std::function|__ctbrowser_",
+            cpp,
+        ), cpp
+        if name != "assign_optional":
+            assert "ctbrowser::parse_json" in cpp and "ctbrowser::decode_uri_component" in cpp, cpp
+        if name in (
+            "loop_dynamic_key",
+            "loop_dynamic_all",
+            "prefix_result",
+            "normalized_result",
+        ):
+            assert "ctnative::dataset_value(" in cpp, cpp
+            assert "ctnative::assign_json_snapshot_property(" in cpp, cpp
+            assert "__proto__" not in cpp, cpp
+        return cpp, symbol
+
+    flags = [*FLAGS, *includes]
+    builds = []
     for optimize in (False, True):
-        modules = []
-        for provider in dom.PROVIDERS:
-            owned = "session" in provider
-            for name, ir, contract in prepared:
-                label = f"{name}-{owned}-{optimize}"
-                native = dom.lower(
-                    args,
-                    ir,
-                    dict(
-                        contract,
-                        provider=provider,
-                        initial_intrinsics=intrinsics,
-                        dataset_parameters=[0],
-                    ),
-                    label,
-                    optimize=optimize,
-                )
-                deduced = args.work / f"{label}.deduced.mlir"
-                run([args.opt, native, "--ctnative-print-deduced", "-o", deduced])
-                modules.append((name, owned, {"explicit": native, "deduced": deduced}))
+        modules = dom.parallel(
+            lower,
+            [
+                (f"{name}-{owned}-{optimize}", name, ir, contract, provider, owned, optimize)
+                for provider in dom.PROVIDERS
+                for owned in ["session" in provider]
+                for name, ir, contract in prepared
+            ],
+        )
         for layout in ("explicit", "deduced"):
             headers, bodies, clients = set(), [], []
-            for name, owned, layouts in modules:
-                module = layouts[layout]
-                entries = dom.NATIVE.findall(module.read_text())
-                assert len(entries) == (
-                    2
-                    if name
-                    in ("assign_loop", "loop_dynamic_key", "prefix_result", "normalized_result")
-                    else 1
-                ) and not dom.FUNCTION.search(module.read_text()), module.read_text()
-                symbol = next(
-                    entry for entry in entries if re.fullmatch(re.escape(name) + r"_\d+", entry)
-                )
-                cpp = run([args.translate, "--mlir-to-cpp", module]).stdout
-                assert "ctbrowser::json_value" in cpp and not dom.VM.search(cpp), cpp
-                assert not re.search(
-                    r"shared_ptr|weak_ptr|std::variant|nullable_scalar|std::function|__ctbrowser_",
-                    cpp,
-                ), cpp
-                if name != "assign_optional":
-                    assert (
-                        "ctbrowser::parse_json" in cpp and "ctbrowser::decode_uri_component" in cpp
-                    ), cpp
-                if name in (
-                    "loop_dynamic_key",
-                    "loop_dynamic_all",
-                    "prefix_result",
-                    "normalized_result",
-                ):
-                    assert "ctnative::dataset_value(" in cpp, cpp
-                    assert "ctnative::assign_json_snapshot_property(" in cpp, cpp
-                    assert "__proto__" not in cpp, cpp
+            units = dom.parallel(
+                emit,
+                [
+                    (f"{name}-{owned}-{optimize}-{layout}", name, layouts[layout])
+                    for name, owned, layouts in modules
+                ],
+            )
+            for (name, owned, _), (cpp, symbol) in zip(modules, units):
                 headers.update(re.findall(r"^#(?:include|define CTNATIVE_)[^\n]*", cpp, re.M))
                 body = re.sub(r"^#(?:include|define CTNATIVE_)[^\n]*\n?", "", cpp, flags=re.M)
                 namespace = name + ("_session" if owned else "_free")
@@ -553,27 +577,42 @@ def main(argv=None):
                 + "".join(bodies)
                 + values.CLIENT.replace("@RUNS@", "\n".join(clients))
             )
-            flags = [*FLAGS, *includes]
             for index, compiler in enumerate(compilers):
-                binary = path.with_suffix(f".{index}")
-                result = build_and_run(
-                    compiler, path, binary, flags=flags, libraries=libraries, nm=args.nm, vm=dom.VM
-                )
-                check_output(args, result.stdout, expected * 2)
+                builds.append((f"{path.stem}.{index}", path, compiler, False))
             if optimize and layout == "explicit":
-                result = build_and_run(
-                    compilers[1],
-                    path,
-                    path.with_suffix(".sanitized"),
-                    # Keep the fixtures out of line in the combined sanitizer build.
-                    flags=[*flags, "-fno-inline-functions"],
-                    libraries=libraries,
-                    sanitize=True,
-                )
-                assert not result.stderr, result.stderr
-                check_output(args, result.stdout, expected * 2)
-    refusals = 0
-    for name, body in REFUSALS.items():
+                builds.append((f"{path.stem}.sanitized", path, compilers[1], True))
+
+    def build(case):
+        """Build and run one combined program (with GCC, Clang, or Clang's
+        sanitizers) and check its observations."""
+        label, path, compiler, sanitize = case
+        if sanitize:
+            result = build_and_run(
+                compiler,
+                path,
+                path.with_suffix(".sanitized"),
+                # Keep the fixtures out of line in the combined sanitizer build.
+                flags=[*flags, "-fno-inline-functions"],
+                libraries=libraries,
+                sanitize=True,
+            )
+            assert not result.stderr, result.stderr
+        else:
+            result = build_and_run(
+                compiler,
+                path,
+                args.work / label,
+                flags=flags,
+                libraries=libraries,
+                nm=args.nm,
+                vm=dom.VM,
+            )
+        check_output(args, result.stdout, expected * 2)
+
+    dom.parallel(build, builds)
+
+    def refuse(row):
+        name, body = row
         ir, contract = dom.prepare(
             args,
             name,
@@ -582,38 +621,33 @@ def main(argv=None):
             entry_name=name,
         )
         for provider in dom.PROVIDERS:
-            dom.refuse(
-                args,
-                ir,
-                dict(
-                    contract,
-                    provider=provider,
-                    initial_intrinsics=intrinsics,
-                    dataset_parameters=[0],
-                ),
-                f"refuse-{name}-{provider}",
-            )
-            refusals += 2
-    for name in ("assign_loop", "loop_dynamic_key", "prefix_result", "normalized_result"):
-        _, ir, contract = next(row for row in prepared if row[0] == name)
-        for provider in dom.PROVIDERS:
-            for optimize in (False, True):
-                for budget in (0, 64, 256):
-                    dom.lower(
-                        args,
-                        ir,
-                        dict(
-                            contract,
-                            provider=provider,
-                            initial_intrinsics=intrinsics,
-                            dataset_parameters=[0],
-                        ),
-                        f"budget-{refusals}",
-                        optimize=optimize,
-                        max_steps=budget,
-                        success=False,
-                    )
-                    refusals += 1
+            dom.refuse(args, ir, manifest(contract, provider), f"refuse-{name}-{provider}")
+        return 2 * len(dom.PROVIDERS)
+
+    refusals = sum(dom.parallel(refuse, REFUSALS.items()))
+
+    def exhaust(task):
+        label, ir, contract, provider, optimize, budget = task
+        dom.lower(
+            args,
+            ir,
+            manifest(contract, provider),
+            label,
+            optimize=optimize,
+            max_steps=budget,
+            success=False,
+        )
+
+    budgets = [
+        (f"budget-{name}-{provider}-{optimize}-{budget}", ir, contract, provider, optimize, budget)
+        for name in ("assign_loop", "loop_dynamic_key", "prefix_result", "normalized_result")
+        for _, ir, contract in [next(row for row in prepared if row[0] == name)]
+        for provider in dom.PROVIDERS
+        for optimize in (False, True)
+        for budget in (0, 64, 256)
+    ]
+    dom.parallel(exhaust, budgets)
+    refusals += len(budgets)
     print(
         f"native DOM assignments: {len(SOURCES)} sources, {len(expected)} Node/VM source-double observations plus Node accessor traces, 8 GCC/Clang binaries, lifetime sanitizer, both providers/policies/layouts, {refusals} refusals"
     )

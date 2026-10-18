@@ -11,12 +11,11 @@ refused.
 
 import json
 import re
-import subprocess
 
 from CTNative.Browser.dom import dom
 from CTNative.Browser.class_dom import callbacks
 from CTNative.Browser.dom.boolean.cells import source_operations
-from CTNative.harness import run, threshold
+from CTNative.harness import run, slotted_run, threshold
 
 # The callback's formal `enabled` shadows the method's. The frontend's
 # conservative name analysis boxes the outer parameter, but the callback
@@ -302,7 +301,7 @@ def budget_boundary(args, ir, contract, *, subject="Class parameter-default"):
         nonlocal refusals
         output = args.work / f"budget-{limit}.mlir"
         flags = f"host-manifest={config} optimize=false host-max-steps={limit}"
-        result = subprocess.run(
+        result = slotted_run(
             [
                 args.opt,
                 str(ir),
@@ -332,8 +331,8 @@ def budget_boundary(args, ir, contract, *, subject="Class parameter-default"):
     return refusals
 
 
-def main():
-    args = dom.parse_args(__doc__, oracles=True)
+def main(argv=None):
+    args = dom.parse_args(__doc__, oracles=True, argv=argv)
     includes, libraries = dom.link_options(args)
     executions = refusals = 0
     for name, method in CASES.items():
@@ -387,6 +386,10 @@ def main():
     print(
         f"DOM class parameter defaults: {len(CASES)} Node/VM sources, {executions} native executions, {refusals} refusals"
     )
+
+
+def test_parameter_defaults(lit):
+    main(lit.args("%dom_driver --node %node --reference %native_reference"))
 
 
 if __name__ == "__main__":

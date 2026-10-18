@@ -10,6 +10,7 @@
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/StringSet.h"
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -41,6 +42,26 @@ bool prototype_replaced(mlir::ModuleOp module);
 bool hands_back_the_global_object(llvm::StringRef key);
 /// Whether reading \p key off `Function` can yield it (or a caller of it).
 bool hands_back_the_compiler(llvm::StringRef key);
+/// What decides whether `Function` can have a property the program named:
+/// whether the program may write through Object.prototype or
+/// Function.prototype, which `Function` inherits from, and which keys it may
+/// write onto an object it did not create. Read once per module.
+struct compiler_keys {
+    /// Why a prototype table `Function` inherits from may be written; empty
+    /// when no constant-key path reaches one other than to read it.
+    std::string prototypes;
+    /// Why any key at all may be written onto such an object; empty if none.
+    std::string any_key;
+    /// The keys the program may write onto an object it did not create.
+    llvm::StringSet<> written;
+};
+/// Reads \p module's compiler_keys.
+compiler_keys read_compiler_keys(mlir::ModuleOp module);
+/// Whether reading \p key off `Function`, or off any other function the
+/// realm or the program has, answers undefined however the program runs:
+/// \p key is no property the realm gives functions, Function.prototype or
+/// Object.prototype, and \p keys show the program cannot add it to them.
+bool compiler_lacks(const compiler_keys & keys, llvm::StringRef key);
 /// What the importer's ctjs.skipped rows say about the bodies it refused.
 struct skipped_summary {
     /// Set when some refused body may store any global; the reason text.

@@ -28,6 +28,7 @@ from Target.Cpp.harness import (
     FLAGS,
     RUNTIME_INCLUDE,
     find_compilers,
+    slotted_run,
 )  # noqa: F401  (re-exported)
 
 # What follows ctnative-lower-to-emitc in every native pipeline.
@@ -76,9 +77,10 @@ def forge_module(text, attributes):
 
 
 def run(command, *, success=True, environment=None, input_text=None):
-    """Run `command` with a 120 s timeout and return the result; raise unless it
-    exited 0 (or, with `success=False`, unless it failed)."""
-    result = subprocess.run(
+    """Run `command` in a job slot (Target/Cpp/harness.py) with a 120 s timeout
+    and return the result; raise unless it exited 0 (or, with `success=False`,
+    unless it failed)."""
+    result = slotted_run(
         command, capture_output=True, text=True, timeout=120, env=environment, input=input_text
     )
     if (result.returncode == 0) != success:

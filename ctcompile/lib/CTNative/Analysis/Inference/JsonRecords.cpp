@@ -1,0 +1,83 @@
+//===- JsonRecords.cpp - Object literals JSON.stringify serializes ---------===//
+//
+// `JSON.stringify({v: a, n: b})`: the literal stays a closed-shape C++ struct,
+// and the call serializes its fields in the order the literal defined them
+// (ctnative::json_record, Runtime/Json.hpp). That order is the object's own
+// key order only when every key was defined before the call and none is an
+// array index, which this file checks.
+//
+//===----------------------------------------------------------------------===//
+
+#include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "ctcompile/CTNative/Analysis/TypeInference.h"
+
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringExtras.h"
+
+namespace ctcompile::ctnative {
+
+namespace {
+
+/// Whether `key` is an array index (ECMA-262 6.1.7): the canonical decimal
+/// spelling of an integer below 2^32 - 1. Such keys are enumerated first, in
+/// numeric order, whatever order they were defined in.
+bool isArrayIndex(llvm::StringRef key) {
+    if (key.empty() || key.size() > 10 || !llvm::all_of(key, llvm::isDigit)) { return false; }
+    if (key.size() > 1 && key.front() == '0') { return false; }
+    unsigned long long value = 0;
+    return !key.getAsInteger(10, value) && value < 4294967295ULL;
+}
+
+} // namespace
+
+bool TypeInference::passesARecord(mlir::OpOperand & use) {
+    // A ctjs.call's operands are the callee, the receiver, then the arguments.
+    const BuiltinStatic * row = builtinStaticOf(use.getOwner());
+    const unsigned index = use.getOperandNumber();
+    return row && index >= 2 && index - 2 < row->arity &&
+           row->params[index - 2] == BuiltinStatic::Param::record;
+}
+
+std::string TypeInference::stringifiedRecordProblem(mlir::Value object, mlir::Operation * call) {
+    auto literal = object.getDefiningOp<ctjs::CreateObjectOp>();
+    if (!literal) { return "it is not an object literal"; }
+    for (mlir::OpOperand & use : object.getUses()) {
+        mlir::Operation * user = use.getOwner();
+        if (user == call || llvm::isa<ctjs::GetPropertyOp>(user)) { continue; }
+        auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+        if (!write || use.getOperandNumber() != 0) {
+            return ("it is also used by `" + user->getName().getStringRef() + "`").str();
+        }
+        const llvm::StringRef key = ctjs::constantKey(write.getKey());
+        if (key.empty() || isArrayIndex(key)) {
+            return "a field is written under a key that is not constant or is an array index - "
+                   "such keys are enumerated first";
+        }
+        if (write->getBlock() != literal->getBlock() || !write->isBeforeInBlock(call)) {
+            return ("its field `" + key + "` is not written in its own block before the call")
+                .str();
+        }
+    }
+    if (call->getBlock() != literal->getBlock()) {
+        return "the call is not in the literal's own block";
+    }
+    return {};
+}
+
+llvm::SmallVector<llvm::StringRef> TypeInference::recordKeys(mlir::Value object) {
+    llvm::SmallVector<ctjs::SetPropertyOp> writes;
+    for (mlir::Operation * user : object.getUsers()) {
+        if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) { writes.push_back(write); }
+    }
+    // Use lists are not in program order; the block order is.
+    llvm::sort(writes,
+               [](ctjs::SetPropertyOp a, ctjs::SetPropertyOp b) { return a->isBeforeInBlock(b); });
+    llvm::SmallVector<llvm::StringRef> keys;
+    for (ctjs::SetPropertyOp write : writes) {
+        const llvm::StringRef key = ctjs::constantKey(write.getKey());
+        if (!llvm::is_contained(keys, key)) { keys.push_back(key); }
+    }
+    return keys;
+}
+
+} // namespace ctcompile::ctnative

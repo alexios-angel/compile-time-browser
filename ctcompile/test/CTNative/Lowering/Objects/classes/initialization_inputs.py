@@ -12,11 +12,18 @@ import argparse
 import json
 from pathlib import Path
 import re
-import subprocess
 
 from CTNative.Exports.boundary import FUNCTION, NATIVE, REFUSAL
 from CTNative.HostContract import contract as host
-from CTNative.harness import CLEANUP, FLAGS, find_compilers, run, threshold, without_intrinsic
+from CTNative.harness import (
+    CLEANUP,
+    FLAGS,
+    find_compilers,
+    run,
+    slotted_run,
+    threshold,
+    without_intrinsic,
+)
 from CTNative.Lowering.Objects.constructor_refusals import NODE, check_mutable_helper, check_native
 
 # Fixture name -> expected `a=<value>` output as (under Node, under the
@@ -891,6 +898,9 @@ POSITIVES = GLOBAL_HOLDERS | {
     "class-map-inherited-base-overwrite",
     "class-map-inherited-base-delete",
     "class-map-inherited-base-constant-overwrite",
+    # `label` may be read before the leaf writes it, so it is a String or
+    # undefined: an optional String member (ObjectValues/VariantFields.cpp).
+    "class-map-inherited-base-string",
     "class-map-inherited-base-arithmetic",
     "class-map-inherited-base-numeric-arguments",
     "class-map-inherited-base-numeric-special",
@@ -1125,7 +1135,6 @@ POSITIVES = GLOBAL_HOLDERS | {
 }
 PREPARATION = "--ctnative-specialize-class-initialization="
 PREPARED_ONLY = {
-    "class-map-inherited-base-string",
     "class-map-optional-key-mixed-string",
     "class-map-optional-key-object",
     "inherited-own-fields-iterate-borrow-mixed-literal",
@@ -1147,9 +1156,13 @@ def check_constructed_methods(args):
     """Check the plain-* fixtures, whose methods are assigned in the constructor.
 
     Each must print its expected value under Node and the reference interpreter
-    (None: both must throw). plain-method and plain-prototype must run natively;
-    the rest must be refused by native lowering under both optimization
-    settings. Returns (native runs, refusals).
+    (None: both must throw). plain-method, plain-prototype and
+    plain-borrowed-write must run natively: in plain-borrowed-write every call
+    of `replace` passes the instance, so the method it writes through its
+    parameter joins the instance's `read` as one closure set. The rest must be
+    refused by native lowering under both optimization settings, among them
+    plain-borrowed-write-unknown, where `replace` is called through an array,
+    so not every call of it is known. Returns (native runs, refusals).
     """
     checked = refused = 0
     for name, expected in {
@@ -1157,6 +1170,7 @@ def check_constructed_methods(args):
         "plain-before-store": None,
         "plain-constructor-before-store": None,
         "plain-borrowed-write": 9,
+        "plain-borrowed-write-unknown": 9,
         "plain-self-replace": 79,
         "plain-constructor-write": 7,
         "plain-detached": 1,
@@ -1171,7 +1185,7 @@ def check_constructed_methods(args):
             result = run(command, success=expected is not None)
             if expected is not None and result.stdout != f"a={expected}\n":
                 raise RuntimeError(f"{name}: constructed method observation changed")
-        if name in ("plain-method", "plain-prototype"):
+        if name in ("plain-method", "plain-prototype", "plain-borrowed-write"):
             checked += check_native(args, source, name, expected)
             continue
         raw = args.work / f"{name}.raw.mlir"
@@ -1192,15 +1206,32 @@ def check_constructed_methods(args):
     return checked, refused
 
 
+def inheritance_delta(text):
+    """Functions the inheritance rewrite added (per-class copies) less those
+    it erased (unreachable parents), from the module's
+    ctnative.inheritance_summary; 0 when it changed nothing."""
+    found = re.search(
+        r"ctnative\.inheritance_summary = \{copies = (\d+) : i64, erased = (\d+) : i64\}", text
+    )
+    return int(found.group(1)) - int(found.group(2)) if found else 0
+
+
+# A function the removal pass erased as unreachable, listed on the module in
+# ctnative.unreachable_refusals with its earlier refusal.
+UNREACHABLE_ROW = re.compile(r'\{function = "[^"]+", reason = "removed: unreachable')
+
+
 def check_refusal(name, text, functions):
-    """Assert that every one of `functions` in `text` is native or a named refusal.
+    """Assert that every one of `functions` in `text` is native, a named refusal
+    or removed as unreachable, counting flattening's copies and erasures.
 
     The script entry must stay refused and no emitc main may be emitted.
     """
     remaining = len(FUNCTION.findall(text))
     reasons = REFUSAL.findall(text)
     if (
-        remaining + len(NATIVE.findall(text)) != functions
+        remaining + len(NATIVE.findall(text)) + len(UNREACHABLE_ROW.findall(text))
+        != functions + inheritance_delta(text)
         or len(reasons) != remaining
         or not all(reasons)
         or not re.search(r"ctjs.func @_script_\$0\(.*ctnative.not_native", text)
@@ -1484,7 +1515,7 @@ def check_proof_budget(args, source, manifest, prepared, name):
 
     def complete(limit):
         output = args.work / f"cutoff-{limit}.mlir"
-        result = subprocess.run(
+        result = slotted_run(
             [
                 args.opt,
                 str(source),
@@ -1717,10 +1748,12 @@ def check_class_capture_inputs(args, source, manifest):
     return len(variants)
 
 
-def check_executable(args, name, native, expected):
+def check_executable(args, name, native, expected, reference=None):
     """Compile fully lowered `native` to C++ with every compiler and run it.
 
-    Both the explicit and the deduced-type layouts must print `a=<expected>`
+    Both the explicit and the deduced-type layouts must print what the
+    reference interpreter printed for the fixture (`reference`, its stdout),
+    or `a=<expected>` when there is no interpreter output to compare,
     and keep no ctbrowser runtime or prototype storage. Returns the number of
     binaries run.
     """
@@ -1763,7 +1796,7 @@ def check_executable(args, name, native, expected):
         for index, compiler in enumerate(find_compilers()):
             binary = file.with_suffix(f".{index}")
             run([compiler, *FLAGS, str(file), "-o", str(binary)])
-            if run([str(binary.resolve())]).stdout != f"a={expected}\n":
+            if run([str(binary.resolve())]).stdout != (reference or f"a={expected}\n"):
                 raise RuntimeError(f"{name}/{layout}: native class observations differ")
             checked += 1
     return checked

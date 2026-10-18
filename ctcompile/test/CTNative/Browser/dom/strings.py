@@ -91,8 +91,10 @@ function makeElement(value) {
         raise RuntimeError(f"VM optional String observations disagree with Node: {reference}")
     compilers = args.compilers
     includes, libraries = dom.link_options(args)
-    prepared = [
-        (
+
+    def prepare(row):
+        name, source, count = row
+        return (
             name,
             *dom.prepare(
                 args,
@@ -108,8 +110,8 @@ function makeElement(value) {
                 ),
             ),
         )
-        for name, source, count in SOURCES + BOOLEAN_SOURCES
-    ]
+
+    prepared = dom.parallel(prepare, SOURCES + BOOLEAN_SOURCES)
     local_copy = (args.work / "host_local_function_copy.raw.mlir").read_text()
     assert local_copy.count('ctjs.store_global "host_refusal"') == 1, local_copy
     prepared.extend(number_conversion.prepare(args))
@@ -118,29 +120,50 @@ function makeElement(value) {
     # Lower every case for each provider, with and without optimization, in
     # both the explicit and deduced layouts; then link all of them into one
     # combined C++ client per configuration and compare its output with Node.
+    combined = []
     for optimize in (False, True):
-        modules = {}
-        for provider in dom.PROVIDERS:
-            owned = "session" in provider
-            for name, ir, contract in prepared:
-                label = f"{name}-{owned}-{optimize}"
-                native = dom.lower(
-                    args, ir, dict(contract, provider=provider), label, optimize=optimize
-                )
-                deduced = args.work / f"{label}.deduced.mlir"
-                run([args.opt, str(native), "--ctnative-print-deduced", "-o", str(deduced)])
-                modules[name, owned] = {"explicit": native, "deduced": deduced}
+
+        def lower(task, optimize=optimize):
+            label, name, ir, contract, provider = task
+            native = dom.lower(
+                args, ir, dict(contract, provider=provider), label, optimize=optimize
+            )
+            deduced = args.work / f"{label}.deduced.mlir"
+            run([args.opt, str(native), "--ctnative-print-deduced", "-o", str(deduced)])
+            return (name, "session" in provider), {"explicit": native, "deduced": deduced}
+
+        modules = dict(
+            dom.parallel(
+                lower,
+                [
+                    (f"{name}-{'session' in provider}-{optimize}", name, ir, contract, provider)
+                    for provider in dom.PROVIDERS
+                    for name, ir, contract in prepared
+                ],
+            )
+        )
         for layout in ("explicit", "deduced"):
             headers, bodies, runs = set(), [], []
-            for (name, owned), layouts in modules.items():
-                namespace = f"{name}_{'session' if owned else 'free'}"
-                cpp, symbol = emitted(
+
+            def emit(row):
+                namespace, name, module = row
+                return emitted(
                     args,
-                    layouts[layout],
+                    module,
                     namespace,
                     optional_read=name != "helper_branch" and name not in uri.CASES,
                     uri_call=name in uri.CASES or name in nullable_uri.CASES,
                 )
+
+            units = dom.parallel(
+                emit,
+                [
+                    (f"{name}_{'session' if owned else 'free'}", name, layouts[layout])
+                    for (name, owned), layouts in modules.items()
+                ],
+            )
+            for (name, owned), (cpp, symbol) in zip(modules, units):
+                namespace = f"{name}_{'session' if owned else 'free'}"
                 # Hoist the includes and the runtime's defines (CTNATIVE_DOM,
                 # CTNATIVE_ORDERED_MAPS), which must precede its include, out of
                 # each unit before wrapping it in a namespace; sorted() puts
@@ -224,21 +247,30 @@ function makeElement(value) {
                 + nullable_uri.CLIENT
                 + CLIENT.replace("@RUNS@", "\n".join(runs))
             )
-            flags = [*FLAGS, *includes]
-            for index, compiler in enumerate(compilers):
-                binary = path.with_suffix(f".{index}")
-                result = build_and_run(
-                    compiler, path, binary, flags=flags, libraries=libraries, nm=args.nm, vm=dom.VM
-                )
-                if (
-                    result.stdout
-                    != (
-                        expected + number_conversion.EXPECTED + uri.EXPECTED + nullable_uri.EXPECTED
-                    )
-                    * 2
-                ):
-                    raise RuntimeError("native optional String observations disagree with source")
-    for name, body in REFUSALS.items():
+            combined.append(path)
+    # The eight combined programs (two policies, two layouts, two compilers)
+    # build and run side by side.
+    flags = [*FLAGS, *includes]
+
+    def build(case):
+        _, path, index, compiler = case
+        binary = path.with_suffix(f".{index}")
+        return build_and_run(
+            compiler, path, binary, flags=flags, libraries=libraries, nm=args.nm, vm=dom.VM
+        )
+
+    builds = [
+        (f"{path.stem}.{index}", path, index, compiler)
+        for path in combined
+        for index, compiler in enumerate(compilers)
+    ]
+    observations = expected + number_conversion.EXPECTED + uri.EXPECTED + nullable_uri.EXPECTED
+    for result in dom.parallel(build, builds):
+        if result.stdout != observations * 2:
+            raise RuntimeError("native optional String observations disagree with source")
+
+    def refuse(row):
+        name, body = row
         ir, contract = dom.prepare(
             args,
             name,
@@ -249,7 +281,9 @@ function makeElement(value) {
         for owned in (False, True):
             provider = "ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
             dom.refuse(args, ir, dict(contract, provider=provider), f"{name}-{owned}", "DOM")
-    for name, source in HOST_REFUSALS.items():
+
+    def refuse_host(row):
+        name, source = row
         ir, contract = dom.prepare(
             args, name, "{\n" + source + "\n}\n", 1, entry_name="host_refusal"
         )
@@ -258,6 +292,9 @@ function makeElement(value) {
             assert raw.count('ctjs.store_global "host_refusal"') == 2, raw
         for provider in dom.PROVIDERS:
             dom.refuse(args, ir, dict(contract, provider=provider), f"{name}-{provider}", "DOM")
+
+    dom.parallel(refuse, REFUSALS.items())
+    dom.parallel(refuse_host, HOST_REFUSALS.items())
     _, completion_ir, completion_contract = next(
         row for row in prepared if row[0] == "helper_branch_completion_dispatch"
     )

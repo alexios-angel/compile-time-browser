@@ -1,0 +1,221 @@
+# Object.prototype.toString.call(x) of a primitive is a built-in row
+# (Inference/BuiltinStatics.cpp) that lowers to
+# ctnative::Object.prototype.toString.call (Runtime/Object.hpp): Bootstrap's
+# toType reads a value's type name out of "[object Number]". Each kind the
+# row takes prints the same `r` with both compilers, the interpreter and
+# Node.
+#
+# RUN: split-file %s %t
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/tags.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/tags.mlir
+# RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/tags.mlir
+# RUN: ctjs-opt %t/tags.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/tags.cpp
+# RUN: FileCheck %s --check-prefix=CPP < %t/tags.cpp
+# RUN: %gxx -O2 %t/tags.cpp -o %t/tags-gcc && %t/tags-gcc | FileCheck %s --check-prefix=TAGS
+# RUN: %clangxx -O2 %t/tags.cpp -o %t/tags-clang && %t/tags-clang | FileCheck %s --check-prefix=TAGS
+# RUN: %native_reference %t/tags.js | FileCheck %s --check-prefix=TAGS
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/tags.js | FileCheck %s --check-prefix=TAGS-NODE
+#
+# Bootstrap's toType reads the name out of that text:
+# `Object.prototype.toString.call(x).match(/\s([a-z]+)/i)[1].toLowerCase()`.
+# The text is ASCII, so std::regex reads `\s` and `i` as JavaScript does, and
+# the group takes part in every match; `[1]` lowers to
+# ctnative::String.prototype.match.call(text, re).group(1) (Runtime/RegExp.hpp).
+# A group that may not take part stays refused.
+#
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/totype.js -o %t/totype-input.mlir
+# RUN: ctjs-opt %t/totype-input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/totype.mlir
+# RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/totype.mlir
+# RUN: ctjs-translate --mlir-to-cpp %t/totype.mlir | FileCheck %s --check-prefix=TOTYPE-CPP
+# RUN: %compilation_unit --cxx g++ --module %t/totype.mlir --js %t/totype.js --work %t --name totype_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/totype.mlir --js %t/totype.js --work %t --name totype_clang --core-build %build
+# RUN: %native_reference %t/totype.js | FileCheck %s --check-prefix=TOTYPE
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/totype.js | FileCheck %s --check-prefix=TOTYPE-NODE
+#
+# toType as a closure called with several kinds, one exact kind per call:
+# the closure is copied once per kind (ArgumentTypeCopies.cpp), each copy's
+# parameter has that kind's own carrier, and no union carrier is left.
+#
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js -o %t/mixed-input.mlir
+# RUN: ctjs-opt %t/mixed-input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/mixed.mlir
+# RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/mixed.mlir
+# RUN: FileCheck %s --check-prefix=COPIES < %t/mixed.mlir
+# RUN: ctjs-translate --mlir-to-cpp %t/mixed.mlir | FileCheck %s --check-prefix=MIXED-CPP --implicit-check-not=number_string --implicit-check-not=boolean_string
+# RUN: %compilation_unit --cxx g++ --module %t/mixed.mlir --js %t/mixed.js --work %t --name mixed_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/mixed.mlir --js %t/mixed.js --work %t --name mixed_clang --core-build %build
+# RUN: %native_reference %t/mixed.js | FileCheck %s --check-prefix=MIXED
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/mixed.js | FileCheck %s --check-prefix=MIXED-NODE
+#
+# One toType called with a Number, a String, a Boolean, null and undefined:
+# three copies (null and undefined share the nullable carrier), all native.
+#
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/primitive.js -o %t/primitive-input.mlir
+# RUN: ctjs-opt %t/primitive-input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/primitive.mlir
+# RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/primitive.mlir
+# RUN: FileCheck %s --check-prefix=PRIMITIVE-COPIES < %t/primitive.mlir
+# RUN: ctjs-translate --mlir-to-cpp %t/primitive.mlir | FileCheck %s --check-prefix=CPP --implicit-check-not=number_string --implicit-check-not=boolean_string --implicit-check-not=std::variant
+# RUN: %compilation_unit --cxx g++ --module %t/primitive.mlir --js %t/primitive.js --work %t --name primitive_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/primitive.mlir --js %t/primitive.js --work %t --name primitive_clang --core-build %build
+# RUN: %native_reference %t/primitive.js | FileCheck %s --check-prefix=PRIMITIVE
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/primitive.js | FileCheck %s --check-prefix=PRIMITIVE-NODE
+#
+# Bootstrap's own toType tests `null == t` first and answers `${t}` for null
+# and undefined. In each copy that test has one answer, so only the arm it
+# selects is left (ArgumentTypeCopies.cpp's foldTypeTests and the guard
+# precompute): the Number, String and Boolean copies keep the toString arm,
+# the nullable one keeps `${t}`. All of them lower.
+#
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/bootstrap.js -o %t/bootstrap-input.mlir
+# RUN: ctjs-opt %t/bootstrap-input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/bootstrap.mlir
+# RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/bootstrap.mlir
+# RUN: FileCheck %s --check-prefix=PRIMITIVE-COPIES < %t/bootstrap.mlir
+# RUN: ctjs-translate --mlir-to-cpp %t/bootstrap.mlir | FileCheck %s --check-prefix=CPP --implicit-check-not=number_string --implicit-check-not=boolean_string --implicit-check-not=std::variant
+# RUN: %compilation_unit --cxx g++ --module %t/bootstrap.mlir --js %t/bootstrap.js --work %t --name bootstrap_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/bootstrap.mlir --js %t/bootstrap.js --work %t --name bootstrap_clang --core-build %build
+# RUN: %native_reference %t/bootstrap.js | FileCheck %s --check-prefix=PRIMITIVE
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/bootstrap.js | FileCheck %s --check-prefix=PRIMITIVE-NODE
+#
+# kinds.js tests `typeof t === "string"` and calls toLowerCase in that arm.
+# Unfolded, the Number and Boolean copies keep a String narrowing of their
+# parameter in the arm no call reaches, which admission refuses ("a value
+# narrowed by `string` from !ctnative.num<i32>"); folded, all of them lower.
+#
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/kinds.js -o %t/kinds-input.mlir
+# RUN: ctjs-opt %t/kinds-input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/kinds.mlir
+# RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/kinds.mlir
+# RUN: FileCheck %s --check-prefix=KINDS-COPIES < %t/kinds.mlir
+# RUN: %compilation_unit --cxx g++ --module %t/kinds.mlir --js %t/kinds.js --work %t --name kinds_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/kinds.mlir --js %t/kinds.js --work %t --name kinds_clang --core-build %build
+# RUN: %native_reference %t/kinds.js | FileCheck %s --check-prefix=KINDS
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/kinds.js | FileCheck %s --check-prefix=KINDS-NODE
+#
+# A call that passes a union itself is a real merge, so its function is not
+# copied, and Object.prototype.toString takes no union (that would need
+# std::visit). union.js's only call passes a Number|String: no copy, and
+# toType is refused at the toString call. In merged.js the merge meets a
+# Boolean call too: still no copy, and the Boolean|Number|String parameter
+# has no carrier, so toType stays refused.
+#
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/union.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+# RUN:   | FileCheck %s --check-prefix=UNION-REFUSED --implicit-check-not=ctnative.copies
+# RUN: %native_reference %t/union.js | FileCheck %s --check-prefix=UNION
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/union.js | FileCheck %s --check-prefix=UNION-NODE
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/merged.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+# RUN:   | FileCheck %s --check-prefix=MERGED --implicit-check-not=ctnative.copies
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+# RUN:   | FileCheck %s --check-prefix=OPTIONAL
+
+# NATIVE: emitc.func @main
+# CPP: #include "ctcompile/CTNative/Runtime/Object.hpp"
+# CPP: ctnative::Object.prototype.toString.call(
+# TAGS: r="%5Bobject%20Number%5D%7C%5Bobject%20String%5D%7C%5Bobject%20Boolean%5D%7C%5Bobject%20Null%5D%7C%5Bobject%20Undefined%5D"
+# TAGS-NODE: r=[object Number]|[object String]|[object Boolean]|[object Null]|[object Undefined]
+# TOTYPE-CPP: ctnative::String.prototype.match.call(
+# TOTYPE-CPP: .group(1)
+# TOTYPE: r="number%7Cstring%7Cboolean%7Cnull%7Cundefined"
+# TOTYPE-NODE: r=number|string|boolean|null|undefined
+# COPIES: ctnative.copies = {
+# MIXED-CPP: ctnative::Object.prototype.toString.call(
+# MIXED: r="number%7Cstring%7Cnull%7Cboolean%7Cstring%7Cundefined"
+# MIXED-NODE: r=number|string|null|boolean|string|undefined
+# PRIMITIVE-COPIES: ctnative.copies = {[[COPY1:[^ ]+]] = "[[SOURCE:[^"]+]]", [[COPY2:[^ ]+]] = "[[SOURCE]]", [[COPY3:[^ ]+]] = "[[SOURCE]]"}
+# PRIMITIVE: r="number%7Cstring%7Cboolean%7Cnull%7Cundefined"
+# PRIMITIVE-NODE: r=number|string|boolean|null|undefined
+# KINDS-COPIES: ctnative.copies = {[[COPY1:[^ ]+]] = "[[SOURCE:[^"]+]]", [[COPY2:[^ ]+]] = "[[SOURCE]]"}
+# KINDS: r="abc%7CNumber%7CBoolean"
+# KINDS-NODE: r=abc|Number|Boolean
+# UNION-REFUSED: Object.prototype.toString's argument 0 is {{.*}}, not a String, Number, Boolean, null or undefined
+# UNION: r="number%7Cstring"
+# UNION-NODE: r=number|string
+# MERGED: has no native carrier yet
+# OPTIONAL: String.prototype.match with `?` - a group may not take part in a match
+
+#--- tags.js
+var r = (function () {
+    var none;
+    var empty = null;
+    return Object.prototype.toString.call(5) + "|" + Object.prototype.toString.call("x") + "|" +
+        Object.prototype.toString.call(true) + "|" + Object.prototype.toString.call(empty) + "|" +
+        Object.prototype.toString.call(none);
+})();
+
+#--- totype.js
+var r = (function () {
+    var none;
+    var empty = null;
+    return Object.prototype.toString.call(5).match(/\s([a-z]+)/i)[1].toLowerCase() + "|" +
+        Object.prototype.toString.call("x").match(/\s([a-z]+)/i)[1].toLowerCase() + "|" +
+        Object.prototype.toString.call(true).match(/\s([a-z]+)/i)[1].toLowerCase() + "|" +
+        Object.prototype.toString.call(empty).match(/\s([a-z]+)/i)[1].toLowerCase() + "|" +
+        Object.prototype.toString.call(none).match(/\s([a-z]+)/i)[1].toLowerCase();
+})();
+
+#--- mixed.js
+var r = (function () {
+    function toType(x) {
+        return Object.prototype.toString.call(x).match(/\s([a-z]+)/i)[1].toLowerCase();
+    }
+    function kind(x) {
+        return Object.prototype.toString.call(x).match(/\s([a-z]+)/i)[1].toLowerCase();
+    }
+    var empty = null;
+    var none;
+    return toType(5) + "|" + toType("x") + "|" + toType(empty) + "|" +
+        kind(true) + "|" + kind("y") + "|" + kind(none);
+})();
+
+#--- primitive.js
+var r = (function () {
+    function toType(x) {
+        return Object.prototype.toString.call(x).match(/\s([a-z]+)/i)[1].toLowerCase();
+    }
+    var empty = null;
+    var none;
+    return toType(5) + "|" + toType("x") + "|" + toType(true) + "|" + toType(empty) + "|" +
+        toType(none);
+})();
+
+#--- bootstrap.js
+var r = (function () {
+    const toType = t => null == t ? `${t}` : Object.prototype.toString.call(t).match(/\s([a-z]+)/i)[1].toLowerCase();
+    var empty = null;
+    var none;
+    return toType(5) + "|" + toType("x") + "|" + toType(true) + "|" + toType(empty) + "|" +
+        toType(none);
+})();
+
+#--- kinds.js
+var r = (function () {
+    const kind = t => typeof t === "string" ? t.toLowerCase() : Object.prototype.toString.call(t).match(/\s([a-z]+)/i)[1];
+    return kind("ABC") + "|" + kind(5) + "|" + kind(true);
+})();
+
+#--- union.js
+var r = (function () {
+    function toType(x) {
+        return Object.prototype.toString.call(x).match(/\s([a-z]+)/i)[1].toLowerCase();
+    }
+    function pick(c) {
+        return toType(c ? 1 : "x");
+    }
+    return pick(true) + "|" + pick(false);
+})();
+
+#--- merged.js
+var r = (function () {
+    function toType(x) {
+        return Object.prototype.toString.call(x).match(/\s([a-z]+)/i)[1].toLowerCase();
+    }
+    function pick(c) {
+        return toType(c ? 1 : "x");
+    }
+    return pick(true) + "|" + pick(false) + "|" + toType(true);
+})();
+
+#--- optional.js
+var r = (function () {
+    return Object.prototype.toString.call(5).match(/\s([a-z]+)?/i)[1];
+})();

@@ -1,8 +1,14 @@
 # The CTNative-to-EmitC lowering, one file per concern. Emitter.h declares the
 # shared `lowering` state they all extend.
 target_sources(ctcompile-ctnative-lowering PRIVATE
+  ArrayCallbacks.cpp
+  Dictionaries.cpp
+  HostCallbacks.cpp
+  Promises.cpp
+  Elements.cpp
   Shapes.cpp
   Records.cpp
+  StringCallbacks.cpp
   OwnedGlobals.cpp
   Module.cpp
   DOM.cpp
@@ -18,7 +24,11 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   SymbolTransport.cpp
   SymbolTransport.h
   Environments.cpp
+  ClosureSets.cpp
   MethodTables.cpp
+  StaticTables.cpp
+  Instances.cpp
+  VariantFields.cpp
   Emitter.h
   Runtime.h
 )
