@@ -61,6 +61,9 @@ liftReport closureLifter::run() {
         makeRunOnceCellsStatic(out, /*functions=*/false);
         makeRunOnceCellsStatic(out, /*functions=*/true);
     }
+    // A capture of a binding that no write can change once the closure exists
+    // takes a cell of its own, which the by-value rules below accept.
+    snapshotSettledCaptures();
     specializeCallbacks(out);
     if (!allowSiblingCaptures && bindLocalFunctions(out, true)) {
         // Erasing a sibling's callable binding is valid only when both sides

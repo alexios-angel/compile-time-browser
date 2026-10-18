@@ -16,6 +16,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/EquivalenceClasses.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
@@ -118,6 +119,98 @@ struct closedValueFlow {
                 if (reads) { reads->insert(read); }
             }
         });
+    }
+    /// The reads and the writes connectRunOnceStatics joined.
+    llvm::DenseSet<mlir::Value> staticReads;
+    llvm::DenseSet<mlir::Operation *> staticWrites;
+    /// Joins the one write of each run-once static (the variable a binding
+    /// of a function that runs once becomes, RunOnce.cpp) to every read of
+    /// it, when every read runs after that write: a read that could run first
+    /// finds the undefined the binding was hoisted with. A read runs after the
+    /// write when it sits after the write in the write's block, or in a
+    /// function that only operations running after the write can start: a
+    /// creation of one of its closures, or a use of its symbol, climbed the
+    /// same way. A function nothing in the module starts (the script entry,
+    /// one the host calls) never qualifies. Opt-in, like the storage edges
+    /// above: only the native Map proof asks for it.
+    void connectRunOnceStatics(mlir::ModuleOp module) {
+        llvm::MapVector<mlir::Attribute, llvm::SmallVector<ctjs::CreateCellOp>> statics;
+        module.walk([&](ctjs::CreateCellOp cell) {
+            if (auto name = cell->getAttr(kNativeStaticCell)) { statics[name].push_back(cell); }
+        });
+        if (statics.empty()) { return; }
+        llvm::DenseMap<unsigned, mlir::Operation *> byIndex;
+        module.walk([&](ctjs::FuncOp fn) {
+            if (const auto index = ctjs::functionIndex(fn)) { byIndex[*index] = fn; }
+        });
+        llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> starters;
+        module.walk([&](ctjs::CreateClosureOp made) {
+            const auto index = ctjs::closureFunction(made);
+            if (mlir::Operation * fn = index ? byIndex.lookup(*index) : nullptr) {
+                starters[fn].push_back(made);
+            }
+        });
+        if (auto uses = mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())) {
+            for (const mlir::SymbolTable::SymbolUse & use : *uses) {
+                if (mlir::Operation * fn = mlir::SymbolTable::lookupNearestSymbolFrom(
+                        module.getOperation(), use.getSymbolRef())) {
+                    starters[fn].push_back(use.getUser());
+                }
+            }
+        }
+        const auto runsAfter = [&](mlir::Operation * op, mlir::Operation * write) {
+            mlir::Block * body = write->getBlock();
+            auto owner = write->getParentOfType<ctjs::FuncOp>();
+            llvm::SmallVector<mlir::Operation *> pending{op};
+            llvm::DenseSet<mlir::Operation *> seen;
+            while (!pending.empty()) {
+                mlir::Operation * at = pending.pop_back_val();
+                if (!seen.insert(at).second) { continue; }
+                if (seen.size() > 256) { return false; }
+                auto holder = at->getParentOfType<ctjs::FuncOp>();
+                if (!holder) { return false; }
+                if (holder == owner) {
+                    mlir::Operation * level = at;
+                    while (level && level->getBlock() != body) { level = level->getParentOp(); }
+                    if (!level || level == write || !write->isBeforeInBlock(level)) {
+                        return false;
+                    }
+                    continue;
+                }
+                const auto found = starters.find(holder.getOperation());
+                if (found == starters.end()) { return false; }
+                pending.append(found->second.begin(), found->second.end());
+            }
+            return true;
+        };
+        for (auto & [name, cells] : statics) {
+            ctjs::CellSetOp write;
+            llvm::SmallVector<ctjs::CellGetOp> reads;
+            const auto owners = llvm::count_if(cells, [](ctjs::CreateCellOp cell) {
+                return !cell->hasAttr(kNativeStaticReference);
+            });
+            bool usable = owners == 1;
+            for (ctjs::CreateCellOp cell : cells) {
+                for (mlir::OpOperand & use : cell.getResult().getUses()) {
+                    if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(use.getOwner())) {
+                        reads.push_back(read);
+                    } else if (auto set = llvm::dyn_cast<ctjs::CellSetOp>(use.getOwner());
+                               set && use.getOperandNumber() == 0 && !write &&
+                               !cell->hasAttr(kNativeStaticReference)) {
+                        write = set;
+                    } else if (!llvm::isa<ctjs::RootOp>(use.getOwner())) {
+                        usable = false;
+                    }
+                }
+            }
+            const auto afterWrite = [&](ctjs::CellGetOp read) { return runsAfter(read, write); };
+            if (!usable || !write || !llvm::all_of(reads, afterWrite)) { continue; }
+            staticWrites.insert(write);
+            for (ctjs::CellGetOp read : reads) {
+                join(write.getValue(), read.getResult());
+                staticReads.insert(read.getResult());
+            }
+        }
     }
     /// Records every function's returns and every direct call's edges.
     void build(mlir::ModuleOp module) {

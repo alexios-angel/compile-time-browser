@@ -552,6 +552,9 @@ std::string dictionarySpelling(mlir::Type type) {
 }
 
 mlir::Type valueCarrierType(mlir::MLIRContext * context, mlir::Type type) {
+    if (auto map = llvm::dyn_cast_or_null<MapType>(type); map && carrierOf(type) == carrier::map) {
+        return mapCarrierType(map);
+    }
     return carrierOf(type) == carrier::dictionary
                ? mlir::Type(ec::OpaqueType::get(context, dictionarySpelling(type)))
                : carrierType(context, carrierOf(type));
