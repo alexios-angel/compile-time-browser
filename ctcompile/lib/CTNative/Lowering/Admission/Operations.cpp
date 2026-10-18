@@ -775,9 +775,18 @@ bool admission::op(mlir::Operation * o) {
             }
             return numeric(b.getLhs(), "binary") && numeric(b.getRhs(), "binary");
         }
-        case BinaryKind::Concat:
+        case BinaryKind::Concat: {
+            // A template substitution is ToString of its value (ECMA-262
+            // 13.2.8.6). For a Number, a Boolean, null or undefined that is the
+            // text `+` gives it, and the lowering spells both alike.
+            const carrier left = carrierOf(typeOf(b.getLhs()));
+            const carrier right = carrierOf(typeOf(b.getRhs()));
             return stringConcatenation(typeOf(b.getLhs()), typeOf(b.getRhs())) ||
-                   refuse("concatenation requires two proved owning UTF-8 strings");
+                   (left == carrier::string && isScalarCarrier(right)) ||
+                   (right == carrier::string && isScalarCarrier(left)) ||
+                   refuse("concatenation requires a proved owning UTF-8 string and a string, "
+                          "number, boolean, null or undefined");
+        }
         case BinaryKind::Sub:
         case BinaryKind::Mul:
         case BinaryKind::Div:
@@ -1183,6 +1192,12 @@ bool admission::closedObject(ctjs::CreateObjectOp object) {
             if ((c == carrier::closureSet && isProvedClosureSet(set, typeOf(set.getValue()))) ||
                 (c == carrier::closure && set.getValue().getDefiningOp() &&
                  set.getValue().getDefiningOp()->hasAttr(kNativeClosureSet))) {
+                continue;
+            }
+            // A class instance the field owns by value: a member of the
+            // instance's class (ClosureLifting's ownsByValue).
+            if (set->hasAttr(kNativeOwnedInstance) &&
+                TypeInference::hasClosedShape(set.getValue())) {
                 continue;
             }
             // A class held as a field: every read of it was resolved to the

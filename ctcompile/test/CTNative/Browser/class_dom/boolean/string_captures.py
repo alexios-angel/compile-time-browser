@@ -109,8 +109,8 @@ def mutations(text):
     )
 
 
-def main():
-    args = dom.parse_args(__doc__, oracles=True)
+def main(argv=None):
+    args = dom.parse_args(__doc__, oracles=True, argv=argv)
     includes, libraries = dom.link_options(args)
     executions = refusals = verifier_controls = 0
     for name, method in CASES.items():
@@ -222,6 +222,10 @@ def main():
         f"DOM class fixed String captures: {len(CASES)} Node/VM sources, "
         f"{executions} native executions, {refusals} refusals, {verifier_controls} verifier controls"
     )
+
+
+def test_string_captures(lit):
+    main(lit.args("%dom_driver --node %node --reference %native_reference"))
 
 
 if __name__ == "__main__":

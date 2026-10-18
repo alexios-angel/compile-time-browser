@@ -85,8 +85,8 @@ UNGUARDED_DEFAULT = {
 }
 
 
-def main():
-    args = dom.parse_args(__doc__)
+def main(argv=None):
+    args = dom.parse_args(__doc__, argv=argv)
     vendor = dom.BOOTSTRAP
     if indexed.FIND + "," not in vendor.read_text():
         raise RuntimeError("Bootstrap R.find source pin changed")
@@ -156,6 +156,10 @@ def main():
     refusals += sum(dom.parallel(refuse, REFUSALS.items()))
     indexed.unguarded_default(args, UNGUARDED_DEFAULT, INTRINSICS, compilers, includes, libraries)
     print(f"Element for-of: 72 native executions, {refusals} refusals; DOM/Core/Style only")
+
+
+def test_element_iteration(lit):
+    main(lit.args("%dom_driver"))
 
 
 if __name__ == "__main__":

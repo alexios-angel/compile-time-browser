@@ -469,8 +469,8 @@ REFUSALS = {
 }
 
 
-def main():
-    args = dom.parse_args(__doc__, oracles=True)
+def main(argv=None):
+    args = dom.parse_args(__doc__, oracles=True, argv=argv)
     if not args.nm:
         raise RuntimeError("native DOM JSON gate requires nm")
     vendor = dom.BOOTSTRAP
@@ -669,6 +669,10 @@ def main():
         f"native DOM JSON: {len(SOURCES)} sources, {len(expected)} Node/VM observations, "
         f"8 GCC/Clang binaries, lifetime sanitizer, both providers/policies/layouts, {refusals} refusals"
     )
+
+
+def test_json_parse(lit):
+    main(lit.args("%dom_driver --node %node --reference %native_reference"))
 
 
 if __name__ == "__main__":

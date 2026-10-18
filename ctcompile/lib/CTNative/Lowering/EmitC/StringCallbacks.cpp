@@ -7,8 +7,8 @@
 //   ctnative::String.prototype.replace.call(text, ctnative::RegExp("[A-Z]", "g"),
 //                                           std::bind_front(callback, c))
 //
-// `text.toLowerCase()` and `text.trim()` on a String become
-// `ctnative::String.prototype.toLowerCase.call(text)` and its trim.
+// `text.toLowerCase()`, `text.toUpperCase()` and `text.trim()` on a String
+// become `ctnative::String.prototype.toLowerCase.call(text)` and the like.
 //
 // The method read and the RegExp literal the call consumed lower to nothing:
 // replace() skips them, and they are erased here once the call is rewritten.

@@ -118,8 +118,8 @@ CLIENT = (
 )
 
 
-def main():
-    args = dom.parse_args(__doc__, oracles=True)
+def main(argv=None):
+    args = dom.parse_args(__doc__, oracles=True, argv=argv)
     compilers = args.compilers
     read_client = (
         CLIENT.replace(
@@ -280,6 +280,10 @@ def main():
         "domain-first validation, retained/detached keys and teardown; both policies/layouts/"
         "compilers, ASan/UBSan and mutation/privacy controls passed"
     )
+
+
+def test_data_session(lit):
+    main(lit.args("%dom_driver --node %node --reference %native_reference"))
 
 
 if __name__ == "__main__":

@@ -661,7 +661,7 @@ def controls(args, prepared):
     )
 
 
-def parse_args(parser=None):
+def parse_args(parser=None, argv=None):
     """The Node-checked provider command line; `parser` may carry extra options."""
     parser = parser or argparse.ArgumentParser()
     parser.add_argument("--translate")
@@ -670,15 +670,15 @@ def parse_args(parser=None):
     parser.add_argument("--reference", type=Path)
     parser.add_argument("--oracle-only", action="store_true")
     parser.add_argument("--work", type=Path, required=True)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not args.oracle_only and not (args.translate and args.opt and args.reference):
         parser.error("compiler checks require --translate, --opt and --reference")
     args.work.mkdir(parents=True, exist_ok=True)
     return args
 
 
-def main():
-    args = parse_args()
+def main(argv=None):
+    args = parse_args(argv=argv)
     node, reference = args.node, args.reference
     prepared, evidence = {}, {}
     for case in cases():
@@ -713,6 +713,14 @@ def main():
         else "source cases, runtime bodies, callbacks and rollback controls"
     )
     print(f"host provider diagnostics: {len(cases())} {mode} passed")
+
+
+def test_diagnostics(lit):
+    main(
+        lit.args(
+            "--translate ctjs-translate --opt ctjs-opt --work %t --node %node --reference %native_reference"
+        )
+    )
 
 
 if __name__ == "__main__":
