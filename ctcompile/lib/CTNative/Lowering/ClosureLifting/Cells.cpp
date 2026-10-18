@@ -292,6 +292,101 @@ bool closureLifter::isCarried(ctjs::CreateCellOp cell) const {
     return carriedCells.contains(cell.getOperation());
 }
 
+/// A closure that takes its captures by value can still capture a binding its
+/// frame writes, when no write can run once the closure exists: every call
+/// then sees the value the binding had when the closure was made. A defaulted
+/// parameter is the common case: `function L(t, e, i = null)` writes `i`
+/// under a test, then makes a find callback that reads it. Each such capture
+/// gets a cell of its own, made from a read of the binding just before the
+/// closure and never written, which singleWriteCensus finds constant, so the
+/// by-value rules take it.
+///
+/// No write can run after the closure is made when the closure sits in the
+/// cell's own block (a loop around both makes a new cell each time round),
+/// every write is inside an operation of that block before the closure, every
+/// other use of the cell is a read or a capture, and no function that
+/// captures the cell can write an upvalue: none stores one, and none makes a
+/// closure that relays one of its slots (`enclosing_indices`), since a captor
+/// may run after the closure is made. Static cells (RunOnce.cpp) are
+/// variables other functions name, and are left alone; so is a cell that is
+/// constant already (nothing writes it, or one write in its own block comes
+/// before every read and capture: singleWriteCensus takes it), and one that
+/// holds a closure, which bindLocalFunctions judges by its writes.
+void closureLifter::snapshotSettledCaptures() {
+    const auto writesNoUpvalue = [&](ctjs::CreateClosureOp captor) {
+        ctjs::FuncOp target = targetOf(captor);
+        if (!target || target.getBody().empty()) { return false; }
+        return !target.getBody()
+                    .walk([](mlir::Operation * op) {
+                        auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(op);
+                        return llvm::isa<ctjs::StoreUpvalueOp>(op) ||
+                                       (made && made.getEnclosingIndicesAttr())
+                                   ? mlir::WalkResult::interrupt()
+                                   : mlir::WalkResult::advance();
+                    })
+                    .wasInterrupted();
+    };
+    const auto settledBefore = [&](ctjs::CreateCellOp cell, ctjs::CreateClosureOp c) {
+        if (cell->hasAttr(kNativeStaticCell) || cell->getBlock() != c->getBlock() ||
+            cell.getInitial().getDefiningOp<ctjs::CreateClosureOp>()) {
+            return false;
+        }
+        // The operation of the closure's block that holds `op`, or null.
+        const auto levelOf = [&](mlir::Operation * op) {
+            while (op && op->getBlock() != c->getBlock()) { op = op->getParentOp(); }
+            return op;
+        };
+        unsigned writes = 0;
+        mlir::Operation * direct = nullptr;
+        llvm::SmallVector<mlir::Operation *> others;
+        for (mlir::OpOperand & use : cell.getResult().getUses()) {
+            switch (classify(use)) {
+            case cellUse::read: others.push_back(levelOf(use.getOwner())); break;
+            case cellUse::write: {
+                mlir::Operation * level = levelOf(use.getOwner());
+                if (!level || !level->isBeforeInBlock(c) ||
+                    llvm::cast<ctjs::CellSetOp>(use.getOwner())
+                        .getValue()
+                        .getDefiningOp<ctjs::CreateClosureOp>()) {
+                    return false;
+                }
+                ++writes;
+                if (level == use.getOwner()) { direct = level; }
+                break;
+            }
+            case cellUse::capture:
+                if (!writesNoUpvalue(llvm::cast<ctjs::CreateClosureOp>(use.getOwner()))) {
+                    return false;
+                }
+                others.push_back(levelOf(use.getOwner()));
+                break;
+            default: return false;
+            }
+        }
+        if (writes == 0) { return false; }
+        // One write in the block before every read and capture: the cell is
+        // constant already.
+        const auto after = [&](mlir::Operation * level) {
+            return level && direct->isBeforeInBlock(level);
+        };
+        return writes != 1 || !direct || !llvm::all_of(others, after);
+    };
+    llvm::SmallVector<std::pair<ctjs::CreateClosureOp, unsigned>> settled;
+    module.walk([&](ctjs::CreateClosureOp c) {
+        for (unsigned i = 0; i < static_cast<unsigned>(c.getUpvalues().size()); ++i) {
+            auto cell = c.getUpvalues()[i].getDefiningOp<ctjs::CreateCellOp>();
+            if (cell && settledBefore(cell, c)) { settled.emplace_back(c, i); }
+        }
+    });
+    const auto valueType = ctjs::ValueType::get(context);
+    for (auto [c, i] : settled) {
+        mlir::OpBuilder at(c);
+        auto read = ctjs::CellGetOp::create(at, c.getLoc(), valueType, c.getUpvalues()[i]);
+        auto own = ctjs::CreateCellOp::create(at, c.getLoc(), valueType, read.getResult());
+        c.getUpvaluesMutable()[i].set(own.getResult());
+    }
+}
+
 /// Finds the carried cells a kept callback captures directly (rule 2b in
 /// ClosureLifter.h). Runs after the host-callback and promise-callback
 /// censuses, which say which closures the runtime keeps, and before any
