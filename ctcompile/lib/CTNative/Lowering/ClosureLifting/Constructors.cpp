@@ -225,17 +225,33 @@ std::optional<std::string> closureLifter::whyPrototypeIsTouched(ctjs::CreateClos
 std::optional<std::string> closureLifter::whyNotLiftableConstructor(ctjs::CreateClosureOp c) {
     if (auto why = whyConstructorSetupDoesNotLift(c)) { return why; }
     if (auto prototype = immutablePrototype(c)) {
-        // Closed instance uses cannot store, return or merge the receiver;
-        // only method/borrowed parameters can alias it. ponytail: a complete
-        // per-receiver proof could narrow this further; keep all formals
-        // conservative. Prototype observations retain the whole-module
-        // census, including aliases derived from those observations.
-        bool prototypeObserved = false;
-        module.walk([&](ctjs::GetPropertyOp read) {
-            const auto key = ctjs::constantKey(read.getKey());
-            prototypeObserved |= key == "__proto__" || key == "constructor" || key == "prototype";
-        });
+        // The reads that could observe a method as a value. In code that runs
+        // natively an instance is a struct, reached only through a `new` of
+        // this class and the values `behind` names, a parameter (`this`, an
+        // object argument), a call that returns it by value, or an arrow's
+        // captured `this` (a ctjs.load_upvalue until the arrow lifts): closed
+        // instance uses cannot store or merge it. Admission gives a struct
+        // only constant-key reads (hasClosedShape), so a read through a
+        // computed key cannot observe the method. The prototype is never a
+        // value there: only its definitions use it, only the setup uses the
+        // class, and admission refuses the reads that would reach it from an
+        // instance (`__proto__`, and `constructor` on a struct that does not
+        // own one). Code that admission refuses never runs natively.
+        // ponytail: every parameter, capture and call result counts; a
+        // per-receiver proof could narrow this further.
         const auto constructSites = constructsOfTarget.lookup(targetOf(c));
+        const auto mayNameAnInstance = [&](mlir::Value object) {
+            if (llvm::isa<mlir::BlockArgument>(object) ||
+                object == prototype->attachment.getValue() ||
+                llvm::isa_and_nonnull<ctjs::LoadUpvalueOp, ctjs::CallOp, ctjs::CallDirectOp>(
+                    object.getDefiningOp())) {
+                return true;
+            }
+            return llvm::any_of(constructSites, [&](ctjs::ConstructOp made) {
+                return made.getResult() == object ||
+                       llvm::is_contained(behind.lookup(object), made.getResult());
+            });
+        };
         for (ctjs::SetPropertyOp field : prototype->fields) {
             auto method = field.getValue().getDefiningOp<ctjs::CreateClosureOp>();
             if (!method) { continue; }
@@ -244,28 +260,19 @@ std::optional<std::string> closureLifter::whyNotLiftableConstructor(ctjs::Create
             }
             bool calledOnly = true;
             module.walk([&](ctjs::GetPropertyOp read) {
-                const auto object = read.getObject();
-                if (!prototypeObserved && !llvm::isa<mlir::BlockArgument>(object) &&
-                    object != prototype->attachment.getValue() &&
-                    llvm::none_of(constructSites, [&](ctjs::ConstructOp made) {
-                        return made.getResult() == object ||
-                               llvm::is_contained(behind.lookup(object), made.getResult());
-                    })) {
+                auto constant = read.getKey().getDefiningOp<ctjs::ConstantOp>();
+                if (!constant || !mayNameAnInstance(read.getObject())) { return; }
+                const auto key = ctjs::constantKey(field.getKey());
+                if (auto text = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue());
+                    text && text.getValue() != key) {
                     return;
                 }
-                const auto key = ctjs::constantKey(field.getKey());
-                if (auto constant = read.getKey().getDefiningOp<ctjs::ConstantOp>()) {
-                    if (auto text = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue());
-                        text && text.getValue() != key) {
-                        return;
-                    }
-                    // ponytail: keep large/nonfinite keys conservative until
-                    // the shared formatter guards its int64 fast-path cast.
-                    if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(constant.getValue());
-                        number && std::fabs(number.getDouble()) < 1e15 &&
-                        ctbrowser::number_to_string(number.getDouble()) != key) {
-                        return;
-                    }
+                // ponytail: keep large/nonfinite keys conservative until
+                // the shared formatter guards its int64 fast-path cast.
+                if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(constant.getValue());
+                    number && std::fabs(number.getDouble()) < 1e15 &&
+                    ctbrowser::number_to_string(number.getDouble()) != key) {
+                    return;
                 }
                 auto call = read.getResult().hasOneUse()
                                 ? llvm::dyn_cast<ctjs::CallOp>(*read.getResult().getUsers().begin())
