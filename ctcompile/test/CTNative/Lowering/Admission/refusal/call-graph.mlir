@@ -40,6 +40,9 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=LEAF --implicit-check-not=ctjs.call_direct \
 // RUN:       --implicit-check-not=ctnative.not_native
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/restored.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=RESTORED --implicit-check-not="ctjs.call_direct @leaf"
 
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed-calledby.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
@@ -102,6 +105,17 @@
 // LEAF-NEXT: ctjs.call %[[CLOSURE]](
 // LEAF: emitc.func @leaf_1()
 
+// A refused function whose body the lowering replaced (here the for-of
+// folded to its index loop, ForOf.cpp) gets its own body back after the
+// fixpoint. That body calls `leaf` by symbol again, so it is given the same
+// call through a closure; otherwise a ctjs.call_direct would name a function
+// that has been lowered.
+// RESTORED: ctjs.func {{.*}}@_script_$0
+// RESTORED: emitc.func @leaf_1()
+// RESTORED: ctjs.func private @sum$2
+// RESTORED-SAME: ctnative.not_native = "parameter 0 is !ctnative.boxed
+// RESTORED: ctjs.create_closure %arg2[1] this
+
 //--- calls.js
 function bad(x) { return this ? x * 2 : x * 4; }
 function good(x) { return bad(x) + 1; }
@@ -134,3 +148,14 @@ function leaf() { return 2; }
 var t = "text";
 t = 1n;
 var r = leaf();
+
+//--- restored.js
+function leaf() { return 2; }
+function sum(xs) {
+    var s = 0;
+    for (const x of xs) { s = s + x + leaf(); }
+    return s;
+}
+var t = "text";
+t = 1n;
+var r = sum([1, 2]);

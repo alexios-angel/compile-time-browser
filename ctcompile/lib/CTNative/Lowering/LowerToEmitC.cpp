@@ -732,6 +732,39 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // a callee that a refused caller can call through a closure. The global
         // census below can refuse the script entry after this has run, so it
         // runs again then.
+        //
+        // A refused caller of a native function that takes no parameters and
+        // reads neither new.target nor its own closure (a static getter, which
+        // the class statics rewrite turned into a direct call) calls it through
+        // a closure instead, as it did through the class before that rewrite.
+        // A closure names its function by index, not by symbol, so the callee
+        // stays native for its native callers, and the call means the same.
+        const auto callThroughClosure = [&](ctjs::FuncOp fn, ctjs::CallDirectOp call) {
+            auto callee = llvm::dyn_cast_or_null<ctjs::FuncOp>(symbols.lookup(call.getCallee()));
+            mlir::Block * entry =
+                callee && !callee.getBody().empty() ? &callee.getBody().front() : nullptr;
+            const std::optional<unsigned> index =
+                entry ? ctjs::functionIndex(callee) : std::nullopt;
+            if (!index || !nativeSet.contains(callee.getOperation()) ||
+                entry->getNumArguments() != ctjs::implicit_arguments ||
+                !entry->getArgument(ctjs::arg_new_target).use_empty() ||
+                !entry->getArgument(ctjs::arg_callee).use_empty()) {
+                return false;
+            }
+            mlir::OpBuilder at(call);
+            const mlir::Type type = call.getResult().getType();
+            auto undefined = ctjs::ConstantOp::create(at, call.getLoc(), type,
+                                                      ctjs::UndefinedAttr::get(&getContext()));
+            auto closure = ctjs::CreateClosureOp::create(
+                at, call.getLoc(), type, fn.getBody().front().getArgument(ctjs::arg_callee),
+                undefined, at.getI32IntegerAttr(static_cast<std::int32_t>(*index)),
+                mlir::ValueRange{}, mlir::DenseI32ArrayAttr{});
+            auto through = ctjs::CallOp::create(at, call.getLoc(), type, closure,
+                                                call.getReceiver(), call.getArgs());
+            call.getResult().replaceAllUsesWith(through.getResult());
+            call.erase();
+            return true;
+        };
         const auto closeNativeSet = [&] {
             for (bool changed = true; changed;) {
                 changed = false;
@@ -768,40 +801,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                              "retained by `" + fn.getSymName() + "`, which is not native");
                     });
                     fn.getBody().walk([&](ctjs::CallDirectOp call) {
-                        // A refused caller of a native function that takes no
-                        // parameters and reads neither new.target nor its own
-                        // closure (a static getter, which the class statics
-                        // rewrite turned into a direct call) calls it through a
-                        // closure instead, as it did through the class before
-                        // that rewrite. A closure names its function by index,
-                        // not by symbol, so the callee stays native for its
-                        // native callers, and the call means the same.
-                        auto callee =
-                            llvm::dyn_cast_or_null<ctjs::FuncOp>(symbols.lookup(call.getCallee()));
-                        mlir::Block * entry = callee && !callee.getBody().empty()
-                                                  ? &callee.getBody().front()
-                                                  : nullptr;
-                        const std::optional<unsigned> index =
-                            entry ? ctjs::functionIndex(callee) : std::nullopt;
-                        if (!native && index && nativeSet.contains(callee.getOperation()) &&
-                            entry->getNumArguments() == ctjs::implicit_arguments &&
-                            entry->getArgument(ctjs::arg_new_target).use_empty() &&
-                            entry->getArgument(ctjs::arg_callee).use_empty()) {
-                            mlir::OpBuilder at(call);
-                            const mlir::Type type = call.getResult().getType();
-                            auto undefined = ctjs::ConstantOp::create(
-                                at, call.getLoc(), type, ctjs::UndefinedAttr::get(&getContext()));
-                            auto closure = ctjs::CreateClosureOp::create(
-                                at, call.getLoc(), type,
-                                fn.getBody().front().getArgument(ctjs::arg_callee), undefined,
-                                at.getI32IntegerAttr(static_cast<std::int32_t>(*index)),
-                                mlir::ValueRange{}, mlir::DenseI32ArrayAttr{});
-                            auto through = ctjs::CallOp::create(at, call.getLoc(), type, closure,
-                                                                call.getReceiver(), call.getArgs());
-                            call.getResult().replaceAllUsesWith(through.getResult());
-                            call.erase();
-                            return;
-                        }
+                        if (!native && callThroughClosure(fn, call)) { return; }
                         edge(symbols.lookup(call.getCallee()),
                              "calls `" + call.getCallee() + "`, which is not native",
                              "called by `" + fn.getSymName() + "`, which is not native");
@@ -999,6 +999,12 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // After recovery's, which may hold the folded body.
         for (auto & [fn, original] : forOfOriginals) {
             if (!llvm::is_contained(accepted, fn)) { fn.getBody().takeBody(original->getBody()); }
+        }
+        // A body put back still calls a native callee by symbol where the body
+        // it replaced was given a call through a closure.
+        for (ctjs::FuncOp fn : functions) {
+            if (nativeSet.contains(fn.getOperation())) { continue; }
+            fn.getBody().walk([&](ctjs::CallDirectOp call) { callThroughClosure(fn, call); });
         }
         if (admittedDOM && llvm::is_contained(accepted, admittedDOM->entry())) {
             lower.censusDOM(*admittedDOM,
