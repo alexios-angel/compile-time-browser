@@ -72,7 +72,10 @@
 // RUN:   | FileCheck %s --check-prefix=BOUNDVALUE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/bounddata.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
-// RUN:   | FileCheck %s --check-prefix=BOUNDDATA
+// RUN:   | FileCheck %s --check-prefix=BOUNDDATA --implicit-check-not=ctnative.not_native
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/bounddeep.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=BOUNDDEEP
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/deepwrite.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=DEEPWRITE
@@ -352,14 +355,25 @@
 // --- Binding clause 5: a name whose function closes over a data binding -----
 //
 // `f` closes over `step`, a number in `data_capture`'s frame, and the call of
-// `f` is inside `use`, a different ctjs.func, where `step` does not exist.
-// Lifting prepends the captured value at the call and there is nothing to
-// prepend it at, which is the METHODCAP argument one binding along. A capture
-// that is itself a binding this rewrite erases is fine (`chain27` and `recur15`
-// in Fixtures/Closures/local-function.js); a capture that carries a value is not.
+// `f` is inside `use`, a different ctjs.func. Lifting prepends the captured
+// value at the call, so `use`, made in the frame `step` belongs to, captures
+// `step` as well (canAddSiblingCapture) and passes it on: `use` takes `step`
+// and calls `f` with it. A capture that is itself a binding this rewrite
+// erases needs nothing (`chain27` and `recur15` in
+// Fixtures/Closures/local-function.js).
 //
-// BOUNDDATA: ctjs.func {{.*}}@data_capture$1
-// BOUNDDATA-SAME: ctnative.not_native = "a closure used as a value: it is the value of a local binding this tier cannot call directly: it is read from inside another function, and capture 0 of the function it holds is not a binding this step erases - a call out there has nothing to prepend the capture at"
+// BOUNDDATA: emitc.func @data_capture_{{[0-9]+}}(
+// BOUNDDATA: call @fn_[[USE:[0-9]+]](%{{[0-9]+}}, %{{[0-9]+}})
+// BOUNDDATA: emitc.func @fn_[[F:[0-9]+]](%arg0: !emitc.opaque<"ctnative::js_num">, %arg1: !emitc.opaque<"ctnative::js_num">)
+// BOUNDDATA: emitc.func @fn_[[USE]](%arg0: !emitc.opaque<"ctnative::js_num">, %arg1: !emitc.opaque<"ctnative::js_num">)
+// BOUNDDATA: call @fn_[[F]](%arg0, %arg1)
+//
+// When the call is a frame further in, inside `use` made by `mid`, `step` is
+// not in scope where `use` is made, so there is still nothing to prepend it
+// at.
+//
+// BOUNDDEEP: ctjs.func {{.*}}@data_deep$1
+// BOUNDDEEP-SAME: ctnative.not_native = "a closure used as a value: it is the value of a local binding this tier cannot call directly: it is read from inside another function, and capture 0 of the function it holds is not a binding this step erases - a call out there has nothing to prepend the capture at"
 
 // --- The slot clause inward: an inner level that fails ----------------------
 //
@@ -612,6 +626,18 @@ function data_capture(k) {
     return use(1);
 }
 var r = data_capture(3);
+
+//--- bounddeep.js
+function data_deep(k) {
+    var step = k * 2;
+    var f = function (n) { return n + step; };
+    var mid = function () {
+        var use = function (n) { return f(n); };
+        return use(1);
+    };
+    return mid();
+}
+var r = data_deep(3);
 
 //--- deepwrite.js
 function deep_assigns() {
