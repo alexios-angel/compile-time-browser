@@ -1,7 +1,7 @@
 //===- Error.hpp - Errors native code throws --------------------*- C++ -*-===//
 //
-// ctnative::type_error, the TypeError native code throws where the
-// interpreter throws one. Its what() is the error's `message`, worded as the
+// ctnative::type_error and range_error, the TypeError and RangeError native
+// code throws where the interpreter throws one. Its what() is the error's `message`, worded as the
 // interpreter words it, so a caller that reports `e.message` (the engine seam
 // answers "threw: <message>") reports the same text from either engine.
 //
@@ -26,6 +26,11 @@ struct type_error : std::invalid_argument {
     using std::invalid_argument::invalid_argument;
 };
 
+/// A JavaScript RangeError (ECMA-262 20.5.5.2), with V8's message.
+struct range_error : std::range_error {
+    using std::range_error::range_error;
+};
+
 /// `throw new TypeError(message)` (ECMA-262 20.5.6.1.1) where the program uses
 /// the new object for nothing but the throw, so its message is all that can
 /// be observed.
@@ -44,6 +49,10 @@ namespace detail {
         } catch (const type_error & error) {
             std::fflush(stdout);
             std::fprintf(stderr, "threw: uncaught TypeError: %s\n", error.what());
+            std::_Exit(1);
+        } catch (const range_error & error) {
+            std::fflush(stdout);
+            std::fprintf(stderr, "threw: uncaught RangeError: %s\n", error.what());
             std::_Exit(1);
         } catch (...) {}
     }

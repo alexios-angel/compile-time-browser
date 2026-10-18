@@ -21,6 +21,20 @@
 // used only as a development-time reference to compare against, and a native
 // program must not depend on it.
 //
+// Generated code reads like the JavaScript it came from. A JavaScript
+// operator is the C++ operator where the C++ one does exactly what the
+// JavaScript one does: `a === b` is `==` on every carrier, `<` and the other
+// relational operators come from `<=>` (NaN is unordered, so each of them is
+// false, and Strings order by UTF-16 code unit), `a % b` on Numbers is fmod,
+// and `a[i]` past the end reads undefined. Loose `a == b` is the named
+// ctnative::loose_equals, never an operator, and the other coercions keep
+// named helpers too. A JavaScript method is a member of the same name called
+// with `.` (`s.toUpperCase()`, `v.push(x)`). C++ has no properties, so a
+// property JavaScript computes (`length`, `classList`) is a member function
+// of that name with no arguments (`v.length()`), and a real field stays a
+// field. Nothing converts implicitly: there are no new converting
+// constructors, and every new conversion operator is explicit.
+//
 //===----------------------------------------------------------------------===//
 
 #pragma once
@@ -34,6 +48,7 @@
 #include <ctbrowser/core/algorithms.hpp>
 
 #include <cmath>
+#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -109,6 +124,8 @@ public:
     explicit constexpr js_boolean_t(T boolean) : value(boolean) {}
     explicit constexpr operator bool() const { return value; }
     constexpr js_num to_number() const { return js_num{value ? 1.0 : 0.0}; }
+    /// Boolean.prototype.toString (ECMA-262 20.3.3.3): "true" or "false".
+    js_string toString() const { return value ? js_string{"true"} : js_string{"false"}; }
     friend constexpr bool operator==(js_boolean_t, js_boolean_t) = default;
 };
 inline constexpr js_num to_number(js_boolean_t value) {
@@ -143,6 +160,17 @@ struct nullable_scalar {
         std::terminate();
     }
     static nullable_scalar null() { return js_null_t{}; }
+    /// ToBoolean (ECMA-262 7.1.2): false for undefined, null, +0, -0, NaN and
+    /// false.
+    explicit operator bool() const {
+        return (tag == kind::number || tag == kind::boolean) && value != 0.0 && !std::isnan(value);
+    }
+    /// `a === b` (ECMA-262 7.2.15, IsStrictlyEqual): the same kind, and for a
+    /// Number or a Boolean the same value, so NaN !== NaN and -0 === +0.
+    friend bool operator==(const nullable_scalar & a, const nullable_scalar & b) {
+        if (a.tag != b.tag) { return false; }
+        return a.tag == kind::undefined || a.tag == kind::null || a.value == b.value;
+    }
 };
 inline nullable_scalar to_nullable(nullable_scalar value) {
     return value;
@@ -176,16 +204,10 @@ inline void print_scalar(const char * name, nullable_scalar value) {
     std::terminate();
 }
 inline bool scalar_truthy(nullable_scalar value) {
-    return (value.tag == nullable_scalar::kind::number ||
-            value.tag == nullable_scalar::kind::boolean) &&
-           value.value != 0.0 && !std::isnan(value.value);
+    return static_cast<bool>(value);
 }
 inline js_boolean_t scalar_strict_equal(nullable_scalar left, nullable_scalar right) {
-    if (left.tag != right.tag) { return js_boolean_t{false}; }
-    if (left.tag == nullable_scalar::kind::undefined || left.tag == nullable_scalar::kind::null) {
-        return js_boolean_t{true};
-    }
-    return js_boolean_t{left.value == right.value};
+    return js_boolean_t{left == right};
 }
 inline js_boolean_t scalar_equal(nullable_scalar left, nullable_scalar right) {
     const bool lnull =
@@ -218,6 +240,8 @@ struct nullable_string {
     std::string value;
     nullable_string() = default;
     nullable_string(const std::string & text) : tag(kind::string), value(text) {}
+    /// ToBoolean (ECMA-262 7.1.2): only a non-empty String is true.
+    explicit operator bool() const { return tag == kind::string && !value.empty(); }
     js_num to_number() const {
         switch (tag) {
         case kind::undefined: return js_num{js_nan_t{}};
@@ -263,8 +287,13 @@ inline nullable_string string_at(const js_string & text, js_num index) {
     return ctbrowser::utf16_to_wtf8(
         std::u16string_view{units}.substr(static_cast<std::size_t>(at), 1));
 }
+template <class T>
+requires std::is_same_v<T, char>
+nullable_string js_basic_string<T>::operator[](js_num index) const {
+    return string_at(*this, index);
+}
 inline bool string_truthy(const nullable_string & value) {
-    return value.tag == nullable_string::kind::string && !value.value.empty();
+    return static_cast<bool>(value);
 }
 inline std::string string_typeof(const nullable_string & value) {
     return value.tag == nullable_string::kind::undefined    ? "undefined"
@@ -378,7 +407,10 @@ template <class Scalar, bool Nullable> struct string_union {
             return tag == union_kind::string;
         }
     }
-    /// Equal when both hold the same kind with equal values.
+    /// ToBoolean (ECMA-262 7.1.2) of the kind it holds; defined below, after
+    /// detail::union_truthy.
+    explicit operator bool() const;
+    /// `a === b`: equal when both hold the same kind with equal values.
     friend bool operator==(const string_union & a, const string_union & b) {
         if (a.tag != b.tag) { return false; }
         switch (a.tag) {
@@ -417,6 +449,11 @@ template <class S, bool N> bool union_truthy(const string_union<S, N> & value) {
     return visit_carrier(
         value, [](const std::string & text) { return !text.empty(); }, scalar_truthy);
 }
+} // namespace detail
+template <class S, bool N> string_union<S, N>::operator bool() const {
+    return detail::union_truthy(*this);
+}
+namespace detail {
 template <class S, bool N> std::string union_typeof(const string_union<S, N> & value) {
     return visit_carrier(
         value, [](const std::string &) { return std::string{"string"}; }, scalar_typeof);
@@ -741,6 +778,132 @@ js_boolean_t primitive_equal(const L & left, const R & right) {
     });
 }
 
+// --- ToString and the mixed-kind operators --------------------------------
+//
+// ToString of every primitive carrier, which String(x) (String.hpp) calls,
+// and the arithmetic and relational operators on two primitives of different
+// kinds, which convert through ToNumber (Number(x), Number.hpp) exactly as
+// JavaScript does: `"3" * 2` is 6, `"10" < 9` is false, `null + 1` is 1 and
+// `true - "1"` is 0. None takes an object or a Symbol, whose ToPrimitive
+// could run JavaScript or throw, and none converts implicitly: each operand
+// is a carrier of its own kind.
+
+template <class T>
+requires std::is_same_v<T, double>
+js_string js_basic_num<T>::toFixed(js_basic_num digits) const {
+    // ToIntegerOrInfinity: NaN is 0, and the rest truncate toward zero.
+    const double places = std::isnan(digits.number) ? 0.0 : std::trunc(digits.number);
+    if (!(places >= 0.0 && places <= 100.0)) {
+        throw range_error("toFixed() digits argument must be between 0 and 100");
+    }
+    return js_string{ctbrowser::number_to_fixed(number, static_cast<int>(places))};
+}
+
+inline js_string to_js_string(js_num value) {
+    return value.toString();
+}
+inline js_string to_js_string(js_boolean_t value) {
+    return value.toString();
+}
+inline js_string to_js_string(undefined_t) {
+    return js_string{"undefined"};
+}
+inline js_string to_js_string(js_null_t) {
+    return js_string{"null"};
+}
+inline js_string to_js_string(nullable_scalar value) {
+    return value.to_string();
+}
+inline js_string to_js_string(const nullable_string & value) {
+    return js_string{string_text(value)};
+}
+template <class S, bool N> js_string to_js_string(const string_union<S, N> & value) {
+    return detail::union_text(value);
+}
+inline js_num to_number(const nullable_string & value) {
+    return value.to_number();
+}
+
+namespace detail {
+/// The carriers whose ToNumber runs no JavaScript.
+template <class T>
+concept number_operand = one_of<T, js_num, js_boolean_t, js_string, nullable_scalar,
+                                nullable_string, undefined_t, js_null_t> ||
+                         primitive_union<T>;
+/// The carriers that may or may not hold a String, where the kind of `+` and of
+/// a relational comparison is only known at run time.
+template <class T>
+concept maybe_string = std::is_same_v<T, nullable_string> || primitive_union<T>;
+/// Two primitive carriers that are not both Numbers, whose operator applies
+/// ToNumber to each.
+template <class L, class R>
+concept mixed_numbers = number_operand<L> && number_operand<R> &&
+                        !(std::is_same_v<L, js_num> && std::is_same_v<R, js_num>);
+/// The same, for `+` and the relational operators: neither may be or hold a
+/// String, which selects concatenation or String order instead.
+template <class L, class R>
+concept mixed_definite_numbers =
+    mixed_numbers<L, R> && !std::is_same_v<L, js_string> && !std::is_same_v<R, js_string> &&
+    !maybe_string<L> && !maybe_string<R>;
+/// The values `+` with a String turns into text: absence, and the optional and
+/// union carriers.
+template <class T>
+concept concatenated = one_of<T, undefined_t, js_null_t, nullable_scalar> || maybe_string<T>;
+} // namespace detail
+
+/// `a - b`, `a * b`, `a / b` and `a % b` (ECMA-262 13.7 and 13.8,
+/// ApplyStringOrNumericBinaryOperator) on primitives of different kinds:
+/// ToNumber of each, then the Number operator.
+template <class L, class R>
+requires detail::mixed_numbers<L, R>
+js_num operator-(const L & left, const R & right) {
+    return Number(left) - Number(right);
+}
+template <class L, class R>
+requires detail::mixed_numbers<L, R>
+js_num operator*(const L & left, const R & right) {
+    return Number(left) * Number(right);
+}
+template <class L, class R>
+requires detail::mixed_numbers<L, R>
+js_num operator/(const L & left, const R & right) {
+    return Number(left) / Number(right);
+}
+template <class L, class R>
+requires detail::mixed_numbers<L, R>
+js_num operator%(const L & left, const R & right) {
+    return Number(left) % Number(right);
+}
+/// `a + b` where neither operand is or may hold a String: ToNumber of each,
+/// then addition (`true + 1` is 2, `null + 1` is 1, `undefined + 1` is NaN).
+template <class L, class R>
+requires detail::mixed_definite_numbers<L, R>
+js_num operator+(const L & left, const R & right) {
+    return Number(left) + Number(right);
+}
+/// `a + b` where one operand is a String: concatenation with ToString of the
+/// other (`"a" + null` is "anull", `"a" + undefined` is "aundefined").
+template <class T>
+requires detail::concatenated<T>
+js_string operator+(const js_string & left, const T & right) {
+    return left + to_js_string(right);
+}
+template <class T>
+requires detail::concatenated<T>
+js_string operator+(const T & left, const js_string & right) {
+    return to_js_string(left) + right;
+}
+/// `a < b` and the other relational operators (ECMA-262 7.2.13, IsLessThan)
+/// on primitives of different kinds that are not two Strings: ToNumber of
+/// each, so NaN (from undefined or a non-numeric String) is unordered and
+/// every comparison with it is false (`"10" < 9` is false, `null < 1` true).
+template <class L, class R>
+requires(detail::mixed_numbers<L, R> && !detail::maybe_string<L> && !detail::maybe_string<R> &&
+         !(std::is_same_v<L, js_string> && std::is_same_v<R, js_string>))
+std::partial_ordering operator<=>(const L & left, const R & right) {
+    return Number(left).value() <=> Number(right).value();
+}
+
 // --- dense arrays ------------------------------------------------------------
 //
 // Three helpers: vec_push, vec_length and vec_at. vec_at exists instead of
@@ -797,6 +960,41 @@ inline void vec_push(std::vector<double> & v, js_num x) {
     v.push_back(x.value());
 }
 
+/// A JavaScript Array of one proved element type, stored densely. It is a
+/// std::vector, so range-for and the C++ algorithms see its elements, and it
+/// adds the members JavaScript calls on an Array. Its `[]` is JavaScript's,
+/// so it hides std::vector's unchecked one.
+template <class T> class js_array : public std::vector<T> {
+public:
+    js_array() = default;
+    /// Adopts `values`; explicit, so a std::vector never becomes an Array by
+    /// accident.
+    explicit js_array(std::vector<T> values) : std::vector<T>(std::move(values)) {}
+
+    /// `a.length` (ECMA-262 10.4.2): the element count, since a dense array
+    /// has no holes.
+    js_num length() const { return js_num{static_cast<double>(this->size())}; }
+    /// Array.prototype.push with one argument (ECMA-262 23.1.3.23): appends
+    /// the element and returns the new length.
+    js_num push(T value) {
+        this->push_back(std::move(value));
+        return length();
+    }
+    /// The same for an array of Numbers stored as double.
+    js_num push(js_num value)
+    requires std::is_same_v<T, double>
+    {
+        this->push_back(value.value());
+        return length();
+    }
+    /// `a[i]` (ECMA-262 10.4.2, [[Get]] of an array index): the element at an
+    /// integral index below the length, else undefined (never NaN). -0 names
+    /// index 0; NaN, fractions and negative indices name no element.
+    auto operator[](nullable_scalar key) const {
+        return vec_at(static_cast<const std::vector<T> &>(*this), key);
+    }
+};
+
 // --- object values -----------------------------------------------------------
 
 /// Defined by each generated program; its fields are the program's proved
@@ -814,6 +1012,15 @@ struct object_value {
     object_value(js_boolean_t value) : scalar(value) {}
     object_value(bool value) : object_value(js_boolean_t{value}) {}
     object_value(std::shared_ptr<identity_object> value) : object(std::move(value)) {}
+    /// ToBoolean (ECMA-262 7.1.2): an object is true, a scalar is its own
+    /// ToBoolean.
+    explicit operator bool() const { return object || static_cast<bool>(scalar); }
+    /// `a === b` (ECMA-262 7.2.15, IsStrictlyEqual): the same object, or two
+    /// strictly equal scalars.
+    friend bool operator==(const object_value & a, const object_value & b) {
+        if (a.object || b.object) { return a.object == b.object; }
+        return a.scalar == b.scalar;
+    }
 };
 template <> struct read_carrier<object_value> {
     using type = object_value;
@@ -835,17 +1042,29 @@ inline object_value to_object_value(object_value value) {
     return value;
 }
 inline bool object_truthy(const object_value & value) {
-    return value.object || scalar_truthy(value.scalar);
+    return static_cast<bool>(value);
 }
 inline js_boolean_t object_strict_equal(const object_value & left, const object_value & right) {
-    if (left.object || right.object) { return js_boolean_t{left.object == right.object}; }
-    return scalar_strict_equal(left.scalar, right.scalar);
+    return js_boolean_t{left == right};
 }
 inline js_boolean_t object_equal(const object_value & left, const object_value & right) {
     // The admission check excludes any pair that could invoke an
     // object-to-primitive conversion.
     if (left.object || right.object) { return js_boolean_t{left.object == right.object}; }
     return scalar_equal(left.scalar, right.scalar);
+}
+
+/// JavaScript's loose `a == b` (ECMA-262 7.2.14, IsLooselyEqual) on two
+/// primitive carriers. It is a named function and never an operator: loose
+/// equality is not an equivalence (`'0' == 0` and `0 == ''`, yet
+/// `'0' != ''`), and the C++ library assumes `==` is one.
+template <primitive_equality_operand L, primitive_equality_operand R>
+js_boolean_t loose_equals(const L & left, const R & right) {
+    return primitive_equal(left, right);
+}
+/// The same on object values: the same object, or loosely equal scalars.
+inline js_boolean_t loose_equals(const object_value & left, const object_value & right) {
+    return object_equal(left, right);
 }
 inline std::string object_typeof(const object_value & value) {
     return value.object ? "object" : scalar_typeof(value.scalar);
