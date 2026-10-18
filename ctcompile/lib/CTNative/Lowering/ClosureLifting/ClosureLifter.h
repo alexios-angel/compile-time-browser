@@ -563,6 +563,9 @@ struct closureLifter {
     /// Turns a listener that removes itself through its own binding into a
     /// listener the census takes, before any census reads the binding.
     void bindSelfRemovingListeners();
+    /// Rewrites each call of Bootstrap's execute helper with a function and
+    /// nothing else into a call of that function (ExecuteCalls.cpp).
+    void callExecutedFunctions();
     void hostCallbackCensus();
     std::optional<std::string> whyNotHostCallback(ctjs::CreateClosureOp c);
     void rewriteHostCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
@@ -652,6 +655,15 @@ struct closureLifter {
 
     mlir::Value siblingCapturedValue(ctjs::CreateClosureOp closure, unsigned index,
                                      ctjs::CreateClosureOp holder);
+
+    /// Whether `holder`, made in the frame of `closure`, can capture the cell
+    /// in slot `index` of `closure` as well: the cell is a binding of that
+    /// frame in scope where `holder` is made.
+    bool canAddSiblingCapture(ctjs::CreateClosureOp closure, unsigned index,
+                              ctjs::CreateClosureOp holder);
+    /// Appends `cell` to `holder`'s captures, with its `enclosing_indices`
+    /// entry and its target's `upvalue_count`.
+    void addCaptureSlot(ctjs::CreateClosureOp holder, mlir::Value cell);
 
     void removeCaptureSlots(ctjs::CreateClosureOp c, llvm::ArrayRef<unsigned> slots);
 
@@ -851,6 +863,43 @@ struct closureLifter {
     bool makesAnInstance(mlir::Value object);
 
     bool usesCloseTheShape(mlir::Value object);
+
+    /// The `new` whose instance `value` is when `value` is the result of a
+    /// direct call of a function that returns that instance by value: the
+    /// function is called only by name, has one return, of an instance it
+    /// constructs, and every symbol use of it is a direct call whose result is
+    /// used only through constant keys or as a method call's receiver
+    /// (Methods.cpp). Null otherwise. markRecordReturns
+    /// (Analysis/Inference/Records.cpp) later returns the class by value.
+    ctjs::ConstructOp returnedInstance(mlir::Value value);
+    /// Whether `ret` returns the instance a `new` in its function made, and
+    /// every call of that function keeps the result as returnedInstance says.
+    /// Otherwise the reason goes into `why` when given.
+    bool returnsAnInstance(ctjs::ReturnOp ret, std::string * why = nullptr);
+    /// Whether `set` stores a `new`'s instance into a field of `this` that owns
+    /// it by value: the instance has no other use, `set` is the only store of
+    /// its key in the module and runs unconditionally in a class constructor
+    /// before anything but other keys' reads and writes uses `this`, and every
+    /// read of that key is of `this` in that constructor or a method of its
+    /// prototype, used only through constant keys or as a method call's
+    /// receiver. So the instance is never shared, aliased or published, and no
+    /// read can run before the store. The reads go into `reads` when given;
+    /// otherwise the reason goes into `why` when given.
+    bool ownsByValue(ctjs::SetPropertyOp set,
+                     llvm::SmallVectorImpl<ctjs::GetPropertyOp> * reads = nullptr,
+                     std::string * why = nullptr);
+    /// Why `object`'s uses do not close its shape: the first store of it into
+    /// a field, or return of it, that ownsByValue or returnsAnInstance refuses,
+    /// with that refusal's reason; otherwise the general rule.
+    std::string whyUsesOpenTheShape(mlir::Value object);
+    /// The first reason ownsByValue or returnsAnInstance gave for refusing each
+    /// store or return. A later round of the lift asks again after rewrites
+    /// that erase an owner's prototype or make a method call direct, and gets
+    /// the reason the unrewritten IR gave.
+    llvm::DenseMap<mlir::Operation *, std::string> refusedInstanceUses;
+    /// The stores ownsByValue proved during methodCensus, before any rewrite
+    /// turned a method call through a read into a direct call, with the reads.
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::GetPropertyOp>> ownedStores;
 
     bool retainedByLocalMap(mlir::OpOperand & use,
                             llvm::DenseMap<mlir::Value, mlir::Value> * reads = nullptr);

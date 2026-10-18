@@ -76,7 +76,53 @@ var ends = 0;
         }, 40);
     }
 
-    // The body's children are `box` and `other`.
+    // Bootstrap's execute (`_`) and the callback executeAfterTransition runs
+    // through it: from the listener once the transition ends, or at once when
+    // there is none to wait for. Each callback is a closure of the frame, so
+    // the listener that runs it later takes what the callback captures.
+    const execute = (possibleCallback, args = [], defaultValue = possibleCallback) => {
+        return typeof possibleCallback === 'function' ? possibleCallback.call(...args) :
+            defaultValue;
+    };
+
+    function afterTransition(element, label, duration, waits) {
+        const callback = () => {
+            log = log + 'done:' + label + ';';
+        };
+        if (!waits) {
+            execute(callback);
+            return;
+        }
+        let called = false;
+        const handler = ({
+            target
+        }) => {
+            if (target !== element) {
+                return;
+            }
+            called = true;
+            element.removeEventListener('transitionend', handler);
+            execute(callback);
+        };
+        element.addEventListener('transitionend', handler);
+        setTimeout(() => {
+            if (!called) {
+                triggerTransitionEnd(element);
+            }
+        }, duration);
+    }
+
+    // `third` runs one callback at once and one when its timer ends the
+    // transition at 15 ms; the end at 40 ms finds the listener gone.
+    function thirds(third) {
+        afterTransition(third, 'x', 15, true);
+        afterTransition(third, 'y', 15, false);
+        setTimeout(() => {
+            triggerTransitionEnd(third);
+        }, 40);
+    }
+
+    // The body's children are `box`, `other` and `third`.
     const kids = document.documentElement.children;
     for (let k = 0; k < kids.length; k++) {
         const kid = kids[k];
@@ -86,8 +132,10 @@ var ends = 0;
                 const part = parts[j];
                 if (part.id === 'box') {
                     boxes(part);
-                } else {
+                } else if (part.id === 'other') {
                     others(part);
+                } else {
+                    thirds(part);
                 }
             }
         }

@@ -1,6 +1,7 @@
 # A transitionend listener that removes itself, with the timer that dispatches
-# the end when no transition ended, runs natively as it runs on the
-# interpreter, with no VM linked into the native builds (clang and GCC).
+# the end when no transition ended, and the callback it runs through Bootstrap's
+# execute, run natively as they run on the interpreter, with no VM linked into
+# the native builds (clang and GCC).
 # RUN: %{obj}/ctcompile-test-transitions %S/transitions.html %S/transitions.js > %t.vm
 # RUN: env CTBROWSER_TEST_ENGINE=native %{obj}/ctcompile-test-transitions-native %S/transitions.html %S/transitions.js > %t.native
 # RUN: diff %t.vm %t.native
@@ -10,12 +11,14 @@
 # RUN: FileCheck %s --check-prefix=SPELLING --input-file %{obj}/transitions.generated.cpp
 # RUN: %nm -C %{obj}/ctcompile-test-transitions-native | not grep -E "ctbrowser::script::"
 # RUN: %nm -C %{obj}/ctcompile-test-transitions-native-gcc | not grep -E "ctbrowser::script::"
-# CHECK: {{^}}log= ends=0{{$}}
-# CHECK-NEXT: {{^}}+5: log=skip:a;skip:c;end:b; ends=1{{$}}
-# CHECK-NEXT: {{^}}+5: log=skip:a;skip:c;end:b;end:a;end:c; ends=1{{$}}
-# CHECK-NEXT: {{^}}+10: log=skip:a;skip:c;end:b;end:a;end:c; ends=1{{$}}
-# CHECK-NEXT: {{^}}+10: log=skip:a;skip:c;end:b;end:a;end:c; ends=1{{$}}
-# CHECK-NEXT: {{^}}+10: log=skip:a;skip:c;end:b;end:a;end:c; ends=2{{$}}
+# `y` runs at once; `x` runs from its listener when its timer ends the
+# transition at 15 ms, and the end at 40 ms finds that listener gone.
+# CHECK: {{^}}log=done:y; ends=0{{$}}
+# CHECK-NEXT: {{^}}+5: log=done:y;skip:a;skip:c;end:b; ends=1{{$}}
+# CHECK-NEXT: {{^}}+5: log=done:y;skip:a;skip:c;end:b;end:a;end:c; ends=1{{$}}
+# CHECK-NEXT: {{^}}+10: log=done:y;skip:a;skip:c;end:b;end:a;end:c;done:x; ends=1{{$}}
+# CHECK-NEXT: {{^}}+10: log=done:y;skip:a;skip:c;end:b;end:a;end:c;done:x; ends=1{{$}}
+# CHECK-NEXT: {{^}}+10: log=done:y;skip:a;skip:c;end:b;end:a;end:c;done:x; ends=2{{$}}
 # The listener is registered under a fresh identity, which it also receives
 # among its captures and removes itself by; the element it compares with the
 # event's target is a copy, though the listener writes `called`.

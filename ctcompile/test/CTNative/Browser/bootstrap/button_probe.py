@@ -203,8 +203,8 @@ def observe(args, name, program, expected):
     )
 
 
-def main():
-    args = native_args(__doc__)
+def main(argv=None):
+    args = native_args(__doc__, argv=argv)
     program, provenance = source()
     js = args.work / "bootstrap-button.js"
     js.write_text(program)
@@ -303,6 +303,14 @@ def main():
     print(
         f"Original Bootstrap Button: {len(EXPECTED)} Node/VM lifecycle observations agree; "
         "static inheritance agrees; native refusals retained"
+    )
+
+
+def test_button_probe(lit):
+    main(
+        lit.args(
+            "--translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --work %t"
+        )
     )
 
 

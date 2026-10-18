@@ -215,7 +215,7 @@ def check_pins(corpus):
             sys.exit(f"{name}: pinned source changed; preserve or remeasure its evidence")
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--oracle", required=True, help="ctcompile-test-type-oracle")
     parser.add_argument("--claims", required=True, help="ctcompile-test-escape-claims")
@@ -225,7 +225,7 @@ def main():
     parser.add_argument("--name", required=True)
     parser.add_argument("--budget", help="checks per function before the recorder stops")
     parser.add_argument("--strict", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     args.work.mkdir(parents=True, exist_ok=True)
     name = args.name
 
@@ -412,6 +412,22 @@ def main():
         f"escape claims ({name}): {observed} sites observed (unclaimed {unclaimed}), {violations} "
         f"violations, sound {sound}, partial {partial}, pending {pending}, precision "
         f"{precision.group(1)}; {reasons.group(0) if reasons else ''}"
+    )
+
+
+def test_p5(lit):
+    main(
+        lit.args(
+            "--oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %{monorepo}/ctbrowser/vendor/p5/p5.js --work %t --name p5 --budget 8"
+        )
+    )
+
+
+def test_phaser(lit):
+    main(
+        lit.args(
+            "--oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %{monorepo}/ctbrowser/vendor/phaser/phaser.js --work %t --name phaser --budget 4"
+        )
     )
 
 

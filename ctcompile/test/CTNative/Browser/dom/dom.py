@@ -541,7 +541,7 @@ INVALID_SELECTOR_CHECKS = r"""
 """
 
 
-def parse_args(description, *, oracles=False, switches=()):
+def parse_args(description, *, oracles=False, switches=(), argv=None):
     """Parse the Browser drivers' command line.
 
     args.compilers is the host compiler pair with --clang (the compiler the
@@ -555,7 +555,7 @@ def parse_args(description, *, oracles=False, switches=()):
     parser.add_argument("--nm", default=shutil.which("nm"))
     for name in switches:
         parser.add_argument("--" + name, action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     args.work = args.work.resolve()
     args.work.mkdir(parents=True, exist_ok=True)
     args.compilers = find_compilers()

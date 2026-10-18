@@ -7833,9 +7833,9 @@ var savedThrow, savedExhausted;
     )
 
 
-def main():
+def main(argv=None):
     """Run the oracle checks, every native execution group, and the refusal list."""
-    args = dom.parse_args(__doc__, oracles=True)
+    args = dom.parse_args(__doc__, oracles=True, argv=argv)
     observations = oracles(args) + mixed_oracles(args)
     compilers = args.compilers
     includes, libraries = dom.link_options(args)
@@ -8011,6 +8011,14 @@ def main():
         f"Closed custom DOM iteration: {executions} native executions, {refused} refusals; "
         f"{admitted} nonexecuted source admissions; "
         f"{observations} Node/VM source-double observations; public DOM/Style/Core"
+    )
+
+
+def test_custom_iteration(lit):
+    main(
+        lit.args(
+            "--translate ctjs-translate --opt ctjs-opt --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --work %t --nm %nm --node %node --reference %native_reference"
+        )
     )
 
 

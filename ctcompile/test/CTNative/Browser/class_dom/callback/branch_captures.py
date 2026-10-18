@@ -107,8 +107,8 @@ BAD["default-parameter"] = METHOD.replace("run(target)", "run(target, enabled = 
 ) + callbacks.CALLS.replace("item.run(element)", "item.run(element, false)")
 
 
-def main():
-    args = dom.parse_args(__doc__, oracles=True)
+def main(argv=None):
+    args = dom.parse_args(__doc__, oracles=True, argv=argv)
     includes, libraries = dom.link_options(args)
     checks = (
         callbacks.CHECKS.replace("@STEPS@", "1")
@@ -183,6 +183,10 @@ def main():
         f"DOM class branch captures: {len(CASES)} Node/VM sources, "
         f"{executions} native executions, {refusals} refusals"
     )
+
+
+def test_branch_captures(lit):
+    main(lit.args("%dom_driver --node %node --reference %native_reference"))
 
 
 if __name__ == "__main__":

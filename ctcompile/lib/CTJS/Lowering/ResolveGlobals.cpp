@@ -859,6 +859,9 @@ std::optional<std::string> dynamic_global_writes(
     // Computed once: it is a question about the whole module, and
     // may_be_function() is asked once per `.constructor` read.
     const bool super_is_open = prototype_replaced(module);
+    // Asked once per call of a method read off a value that may be the
+    // compiler (`this.constructor.eventName(t)`).
+    const compiler_keys compiler = read_compiler_keys(module);
     llvm::DenseMap<mlir::Value, watched> marked;
     llvm::SmallVector<mlir::Value> work;
     llvm::DenseMap<mlir::Operation *, bool> raw_arguments;
@@ -1096,11 +1099,22 @@ std::optional<std::string> dynamic_global_writes(
                     auto read = originOp<GetPropertyOp>(call.getCallee());
                     const llvm::StringRef key = read ? constantKey(read.getKey()) : "";
                     const mlir::Value receiver = registerFlowOrigin(call.getReceiver());
-                    if (kind != watched::compiler && read &&
-                        (read.getObject() == call.getReceiver() ||
-                         (receiver && registerFlowOrigin(read.getObject()) == receiver)) &&
+                    const bool readOffReceiver =
+                        read && (read.getObject() == call.getReceiver() ||
+                                 (receiver && registerFlowOrigin(read.getObject()) == receiver));
+                    if (kind != watched::compiler && readOffReceiver &&
                         nativeHostMethodKeepsGlobals(key)) {
                         inert.push_back({mlir::StringAttr::get(module.getContext(), key), op});
+                        continue;
+                    }
+                    // A method read off the same value that may be the
+                    // compiler, as Bootstrap calls `this.constructor.eventName(t)`.
+                    // If the value is `Function`, compiler_lacks proves the read
+                    // answers undefined, so the call throws before it runs any
+                    // code; if it is not, it is not the compiler. Either way it
+                    // reaches no code as the compiler.
+                    if (kind == watched::compiler && readOffReceiver &&
+                        compiler_lacks(compiler, key)) {
                         continue;
                     }
                 }

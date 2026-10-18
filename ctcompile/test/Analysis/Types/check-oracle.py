@@ -32,14 +32,14 @@ ESCAPE_FIELDS = (
 ).split()
 
 
-def main():
+def main(argv=None):
     """Run the self-test executable, then the Python checker against its counters."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--exe", required=True, help="ctcompile-test-type-oracle")
     parser.add_argument("--script", required=True, help="tools/check/*-oracle.py")
     parser.add_argument("--recording", required=True)
     parser.add_argument("--escape", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     selftest = run([args.exe, *(["--escape"] if args.escape else []), "--out", args.recording])
     out = selftest.stdout
@@ -151,6 +151,14 @@ def main():
         f"escape oracle: {confined['observed']} observed sites, {confined['unobserved']} "
         f"unobserved claims, all-confined {confined['violations']} violations, all-escapes 0, "
         f"{confined['unclaimed']} unclaimed"
+    )
+
+
+def test_oracle_checker(lit):
+    main(
+        lit.args(
+            "--exe ctcompile-test-type-oracle --script %{monorepo}/tools/check/type-oracle.py --recording %t.rec"
+        )
     )
 
 
