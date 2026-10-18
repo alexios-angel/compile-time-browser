@@ -80,7 +80,7 @@ def normalise(lines):
     return out
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--translate", required=True)
     parser.add_argument("--plain", required=True)
@@ -89,7 +89,7 @@ def main():
     parser.add_argument("--cxx", required=True)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--name", required=True)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     def fail(message):
         sys.exit(f"print-deduced ({args.name}): {message}")

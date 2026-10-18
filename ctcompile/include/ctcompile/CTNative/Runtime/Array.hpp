@@ -6,8 +6,8 @@
 // helpers the emitter uses for such arrays. Only programs that build one
 // include this header. T is js_string or a std::pair row today for the literal
 // and index helpers; the callback methods (forEach, map, filter, some, every,
-// find, reduce) take any element type and any callable the compiler
-// specialised for the call.
+// find, reduce, and sort with a comparator) take any element type and any
+// callable the compiler specialised for the call.
 //
 //===----------------------------------------------------------------------===//
 
@@ -160,6 +160,17 @@ decltype(auto) call_back(Callback & callback, const T & element, std::size_t ind
         return std::invoke(callback, element, k);
     } else {
         return std::invoke(callback, element);
+    }
+}
+
+/// ToNumber of a sort comparator's answer for (x, y) (CompareArrayElements,
+/// ECMA-262 23.1.3.30.2), calling it with as many of the two as it declares.
+template <class Compare, class T>
+double compare_order(Compare & compare, const T & x, const T & y) {
+    if constexpr (std::invocable<Compare &, const T &, const T &>) {
+        return to_number(std::invoke(compare, x, y)).value();
+    } else {
+        return to_number(std::invoke(compare, x)).value();
     }
 }
 
@@ -386,12 +397,46 @@ struct join_method {
     }
 };
 
-/// Array.prototype.sort (ECMA-262 23.1.3.30) of Strings with no comparator:
-/// SortCompare's String order (UTF-16 code units), stable as the spec
-/// requires. Sorts in place and answers the array, as `a.sort()` answers `a`.
+/// Array.prototype.sort (ECMA-262 23.1.3.30). Sorts in place and answers the
+/// array, as `a.sort()` answers `a`.
 struct sort_method {
+    /// Strings with no comparator: SortCompare's String order (UTF-16 code
+    /// units), stable as the spec requires.
     std::vector<js_string> & call(std::vector<js_string> & self) const {
         std::ranges::stable_sort(self, detail::string_less);
+        return self;
+    }
+
+    /// Any element array with a comparator the compiler specialised for the
+    /// call. CompareArrayElements (23.1.3.30.2) takes ToNumber of
+    /// `compare(x, y)`, a NaN counting as +0. The sort is the interpreter's
+    /// (ctbrowser/lib/Script/builtins/collections/array_iteration.cpp): a
+    /// bottom-up merge sort of a copy that takes the left element unless the
+    /// answer is greater than 0. So the comparator sees the same calls in the
+    /// same order as there, every comparator, consistent or not, gives a
+    /// defined order (std::sort's would be undefined behaviour), and equal
+    /// elements keep their order. The copy is assigned back only once it is
+    /// sorted, so a comparator that throws leaves the array as it was.
+    template <class T, class Compare>
+    std::vector<T> & call(std::vector<T> & self, Compare compare) const {
+        std::vector<T> work = self;
+        std::vector<T> spare = work;
+        const std::size_t n = work.size();
+        for (std::size_t width = 1; width < n; width *= 2) {
+            for (std::size_t lo = 0; lo < n; lo += 2 * width) {
+                const std::size_t mid = std::min(lo + width, n);
+                const std::size_t hi = std::min(lo + 2 * width, n);
+                std::size_t left = lo, right = mid, out = lo;
+                while (left < mid && right < hi) {
+                    const double order = detail::compare_order(compare, work[left], work[right]);
+                    spare[out++] = !(order > 0) ? work[left++] : work[right++];
+                }
+                while (left < mid) { spare[out++] = work[left++]; }
+                while (right < hi) { spare[out++] = work[right++]; }
+            }
+            work.swap(spare);
+        }
+        self = std::move(work);
         return self;
     }
 };

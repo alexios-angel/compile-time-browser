@@ -1,0 +1,103 @@
+# A parameter that receives an object literal becomes a pointer to the
+# caller's struct when the function reads it only through constant keys. A
+# configuration parameter is often also spread into a fresh literal and
+# tested first, as Bootstrap's Config does in _mergeConfigObj:
+# `{...defaults, ...(typeof config === "object" ? config : {})}`. When every
+# call passes a literal of one shape, `typeof` answers "object" and the spread
+# copies that shape's keys, so both are written out that way
+# (Lowering/ClosureLifting/SpreadParameters.h) and the parameter is read
+# through constant keys again.
+#
+# one.js passes one shape from a top-level function; forwarded.js passes it
+# to a local function that forwards it, and tests it with `!==`. Both lower
+# completely, the merged literal returns by value, and GCC, Clang, the
+# interpreter and Node print the same r.
+#
+# RUN: split-file %s %t
+# RUN: for name in one forwarded; do \
+# RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/$name.mlir; \
+# RUN:   ctjs-opt %t/$name.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/$name.cpp; done
+# RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/one.mlir
+# RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/forwarded.mlir
+# RUN: FileCheck %s --check-prefix=CPP < %t/one.cpp
+# RUN: %gxx -O2 %t/one.cpp -o %t/one-gcc && %t/one-gcc | FileCheck %s --check-prefix=ONE
+# RUN: %clangxx -O2 %t/one.cpp -o %t/one-clang && %t/one-clang | FileCheck %s --check-prefix=ONE
+# RUN: %native_reference %t/one.js | FileCheck %s --check-prefix=ONE
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/one.js | FileCheck %s --check-prefix=ONE-NODE
+# RUN: %gxx -O2 %t/forwarded.cpp -o %t/forwarded-gcc && %t/forwarded-gcc | FileCheck %s --check-prefix=FORWARDED
+# RUN: %clangxx -O2 %t/forwarded.cpp -o %t/forwarded-clang && %t/forwarded-clang | FileCheck %s --check-prefix=FORWARDED
+# RUN: %native_reference %t/forwarded.js | FileCheck %s --check-prefix=FORWARDED
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/forwarded.js | FileCheck %s --check-prefix=FORWARDED-NODE
+#
+# Anything else keeps today's refusal, with the spread and the test left as
+# they are: two.js passes two shapes, assigned.js adds a key to the literal by
+# plain assignment before the call (which asks the prototype chain, so the key
+# may not become an own property), and written.js writes the parameter.
+# RUN: for name in two assigned written; do \
+# RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+# RUN:   | FileCheck %s --check-prefix=KEPT; done
+
+# NATIVE: emitc.func @main
+# NATIVE: emitc.func @merge_{{[0-9]+}}
+# CPP: ctn_a_b_c merge_{{[0-9]+}}(ctn_b_c* const
+# ONE: r=13
+# ONE-NODE: r=13
+# FORWARDED: r=157
+# FORWARDED-NODE: r=157
+# KEPT-DAG: ctjs.func private @merge${{[0-9]+}}({{.*}}ctnative.not_native = "parameter 0 is !ctnative.boxed
+# KEPT-DAG: ctnative.object_reason = "it is passed to a parameter that reaches it through something other than a constant key
+# KEPT-DAG: ctjs.unary typeof
+# KEPT-DAG: ctjs.copy_props
+
+#--- one.js
+function merge(config) {
+    return { a: 1, b: 2, ...(typeof config === "object" ? config : {}) };
+}
+function make() {
+    var merged = merge({ b: 5, c: 7 });
+    return merged.a + merged.b + merged.c;
+}
+var r = make();
+
+#--- forwarded.js
+var r = (function () {
+    function merge(config) {
+        return { a: 1, b: 2, ...(typeof config !== "object" ? {} : config) };
+    }
+    function settle(config) {
+        var merged = merge(config);
+        return merged.a * 100 + merged.b * 10 + merged.c;
+    }
+    return settle({ b: 5, c: 7 });
+})();
+
+#--- two.js
+function merge(config) {
+    return { a: 1, ...(typeof config === "object" ? config : {}) };
+}
+var r = merge({ b: 5 }).a + merge({ c: 7 }).a;
+
+#--- assigned.js
+function merge(config) {
+    return { a: 1, b: 2, ...(typeof config === "object" ? config : {}) };
+}
+function make() {
+    var config = { b: 5 };
+    config.c = 7;
+    var merged = merge(config);
+    return merged.a + merged.b;
+}
+var r = make();
+
+#--- written.js
+function merge(config) {
+    config.d = 9;
+    return { a: 1, b: 2, ...(typeof config === "object" ? config : {}) };
+}
+function make() {
+    var merged = merge({ b: 5, c: 7 });
+    return merged.a + merged.b;
+}
+var r = make();

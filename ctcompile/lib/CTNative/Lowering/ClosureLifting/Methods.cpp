@@ -18,6 +18,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "ClosureLifter.h"
+#include "SpreadParameters.h"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/Instances.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -755,6 +756,35 @@ void closureLifter::argumentCensus() {
             }
         }
     }
+    // A parameter every call passes an object literal of one shape may also
+    // be tested with `typeof` and spread into a fresh literal: both are
+    // written out for that shape (SpreadParameters.h), so the rule below sees
+    // the constant-key reads they become. The literals a folded test drops
+    // leave the census with it.
+    {
+        llvm::SmallVector<calledFunction> called;
+        const auto row = [&](ctjs::FuncOp function, llvm::ArrayRef<closureCall> sites) {
+            calledFunction & entry = called.emplace_back();
+            entry.function = function;
+            for (const closureCall & site : sites) {
+                entry.calls.emplace_back(site.op, llvm::to_vector(site.args));
+            }
+        };
+        for (ctjs::CreateClosureOp closure : closures) {
+            const auto sites = objectArgumentCalls(closure);
+            if (!sites.empty()) { row(targetOf(closure), sites); }
+        }
+        for (const auto & [function, sites] : directCalls) {
+            row(llvm::cast<ctjs::FuncOp>(function), sites);
+        }
+        llvm::SmallVector<mlir::Operation *> erased;
+        if (rewriteSpreadParameters(called, erased) && !erased.empty()) {
+            const llvm::SmallPtrSet<mlir::Operation *, 8> gone(erased.begin(), erased.end());
+            llvm::erase_if(objects, [&](ctjs::CreateObjectOp object) {
+                return gone.contains(object.getOperation());
+            });
+        }
+    }
     const auto closedArgument = [&](mlir::Value value) {
         if (closedAfterLift(value)) { return true; }
         auto parameter = llvm::dyn_cast<mlir::BlockArgument>(value);
@@ -1201,8 +1231,12 @@ std::optional<std::string> closureLifter::whyNotLiftableMethod(ctjs::CreateClosu
     // Every call of it must be one resolveMethod resolved. A method field
     // nothing calls has nowhere to move the receiver to, and an unresolved
     // call would be left dispatching through a closure that is about to lower
-    // to nothing.
+    // to nothing. One whose every call now calls a per-site copy
+    // (CallSiteCopies.cpp) has no call left to move the receiver to and needs
+    // none: its field lowers to nothing like any lifted method's.
     const auto calls = callsOfTarget.find(target.getOperation());
+    const bool copiedAway =
+        calls == callsOfTarget.end() && copiedAwayMethods.contains(target.getOperation());
     if (calls == callsOfTarget.end()) {
         // A method read as a value: `var g = o.m;` loads the field without
         // calling it, so there is no call site for the receiver to move to,
@@ -1223,10 +1257,12 @@ std::optional<std::string> closureLifter::whyNotLiftableMethod(ctjs::CreateClosu
                 }
             }
         }
-        return "nothing calls it";
+        if (!copiedAway) { return "nothing calls it"; }
     }
     const unsigned parameters = entry.getNumArguments() - ctjs::implicit_arguments;
-    for (methodCall at : calls->second) {
+    const llvm::SmallVector<methodCall> sites =
+        copiedAway ? llvm::SmallVector<methodCall>{} : calls->second;
+    for (methodCall at : sites) {
         if (auto why =
                 whyCallSiteDoesNotLift(at.call, at.call.getArgs().size(), parameters, "a call")) {
             return why;
@@ -1250,9 +1286,8 @@ std::optional<std::string> closureLifter::whyNotLiftableMethod(ctjs::CreateClosu
     // which for a method are the calls through the object, not the uses of
     // the closure value.
     return whyLiftTailFails(
-        c, target, llvm::map_range(calls->second, [](const methodCall & at) -> mlir::Operation * {
-            return at.call;
-        }));
+        c, target,
+        llvm::map_range(sites, [](const methodCall & at) -> mlir::Operation * { return at.call; }));
 }
 
 } // namespace ctcompile::ctnative::lowering_detail

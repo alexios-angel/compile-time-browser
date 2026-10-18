@@ -682,6 +682,11 @@ struct closureLifter {
     /// Appends `cell` to `holder`'s captures, with its `enclosing_indices`
     /// entry and its target's `upvalue_count`.
     void addCaptureSlot(ctjs::CreateClosureOp holder, mlir::Value cell);
+    /// Answers `typeof` and truthiness of a closure, folds what the answers
+    /// meet (a compare with a constant, a negation), and replaces an scf.if
+    /// they decide by the branch it takes when the branch it drops only
+    /// computes values (ConstantTests.cpp).
+    void foldConstantTests();
     /// Whether `holder`, made one frame further in than `closure`, can take
     /// the cell in slot `index` of `closure` relayed from its enclosing
     /// closure, which is made in `closure`'s frame and captures the cell or
@@ -772,9 +777,10 @@ struct closureLifter {
 
     bool bindLocalFunctions(liftReport & out, bool probeSiblings = false);
 
-    /// Turns calls of methods of an object literal held in a static variable
-    /// into direct calls when nothing else reads it (Singletons.cpp). Returns
-    /// whether it changed the module.
+    /// Turns calls of methods of an object literal held in a static variable,
+    /// and calls through a static variable holding one function, into direct
+    /// calls when nothing else reads it (Singletons.cpp). Returns whether it
+    /// changed the module.
     bool bindSingletonMethods(liftReport & out);
     /// Marks the reads and writes of a static variable that holds one class
     /// and is read only by `new`s that run after its last write
@@ -1062,6 +1068,21 @@ struct closureLifter {
     // A closure passed down a chain of functions to where it is stored is made
     // there, in a copy of the chain for that call.
     bool copyCallSitesForClosures();
+    /// The function each method call that passes a closure made for it
+    /// reaches, where the copies may treat it as a direct call of that function.
+    llvm::DenseMap<mlir::Operation *, ctjs::FuncOp> methodSitesForCopies();
+    /// Whether every object the receiver of `call` may name is known (after
+    /// methodCensus).
+    bool knowsEveryReceiver(ctjs::CallOp call);
+    /// The calls a closure passed to `first` at parameter `at` is handed on
+    /// through, with the position each passes it at, when copies of that chain
+    /// would let the closure lift where the last one uses it.
+    std::optional<llvm::SmallVector<std::pair<ctjs::CallDirectOp, unsigned>>> copyChain(
+        ctjs::FuncOp first, unsigned at);
+    /// The methods whose resolved calls copyCallSitesForClosures turned into
+    /// calls of per-site copies. One left with no call lifts with none
+    /// (whyNotLiftableMethod), so its class is not refused for it.
+    llvm::DenseSet<mlir::Operation *> copiedAwayMethods;
     /// Whether the cell `capture` holds, at `call`, the value every later read
     /// of it sees.
     bool settledAt(mlir::Value capture, mlir::Operation * call);
