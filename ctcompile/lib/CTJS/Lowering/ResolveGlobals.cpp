@@ -1347,9 +1347,26 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         // not only `typeof`. The holder must be the global object itself (a
         // load of `window`, `self` or `globalThis` the program never binds),
         // and a name that the global object inherits from Object.prototype is
-        // never absent.
+        // never absent. The fold also takes the page to have no element named
+        // like the property: HTML's named access on the Window object (7.3.3),
+        // which the shell's window implements, makes `window.jQuery` an
+        // element whose id or name is "jQuery".
+        //
+        // When clause 5 refused the module, each such read is marked
+        // kAbsentGlobalProperty instead, for the native lowering to fold. That
+        // needs the walk that collects the writes through the global object to
+        // have run to the end: a load of `Function` or `eval`, a dynamic import
+        // or a refused body that may store any global stops it first, and a
+        // name written through the global object would then look unbound.
+        // A mark already on the input is no verdict of this run.
         llvm::MapVector<mlir::StringAttr, std::size_t> folded_through;
-        if (!dynamic) {
+        bool walked = !world.opaque_skip;
+        module.walk([&](mlir::Operation * op) {
+            op->removeAttr(kAbsentGlobalProperty);
+            auto load = mlir::dyn_cast<LoadGlobalOp>(op);
+            walked &= !(load && names_eval(load.getName())) && !mlir::isa<DynamicImportOp>(op);
+        });
+        if (!dynamic || walked) {
             const auto bound = [&](mlir::StringAttr name) {
                 const auto facts = world.bindings.find(name);
                 return (facts != world.bindings.end() && !facts->second.stores.empty()) ||
@@ -1368,6 +1385,10 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
                 reads.push_back(get);
             });
             for (GetPropertyOp get : reads) {
+                if (dynamic) {
+                    get->setAttr(kAbsentGlobalProperty, builder.getUnitAttr());
+                    continue;
+                }
                 mlir::OpBuilder at(get);
                 auto undefined = ConstantOp::create(at, get.getLoc(), get.getType(),
                                                     UndefinedAttr::get(context));

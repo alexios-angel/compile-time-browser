@@ -49,4 +49,12 @@ namespace ctcompile::ctjs {
 /// matches this field, never the row's human-readable `reason`.
 inline constexpr llvm::StringLiteral kGlobalsHostBinding = "host_binding";
 
+/// Set by --ctjs-resolve-globals on a read of a property of the global object
+/// (`window.jQuery`) whose name is absent by every rule of its fold except
+/// clause 5: something in the module could write the globals table
+/// dynamically, so the read stays for the VM. Native code reaches none of those
+/// writes, because each one is refused where it sits, so the native lowering
+/// folds the read to undefined.
+inline constexpr llvm::StringLiteral kAbsentGlobalProperty = "ctjs.absent_global_property";
+
 } // namespace ctcompile::ctjs
