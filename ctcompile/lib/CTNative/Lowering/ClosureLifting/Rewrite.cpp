@@ -48,6 +48,9 @@ liftReport closureLifter::run() {
     // indexAndNewTargets() supplies the two census walks they need.
     indexAndNewTargets();
     captureLexicalThis(); // ArrowThis.cpp: an arrow's `this` becomes a capture.
+    // A callback handed to Bootstrap's execute helper is called directly
+    // (ExecuteCalls.cpp), before the binding rules below read the calls.
+    callExecutedFunctions();
     // Bindings of functions that run once, which a closure the lift would
     // refuse captures, become static variables first (RunOnce.cpp), so those
     // closures no longer capture them. Boxes holding a function wait for a
