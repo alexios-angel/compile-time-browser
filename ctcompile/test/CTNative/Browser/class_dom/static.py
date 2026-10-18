@@ -93,8 +93,8 @@ ELEMENT = (
 )
 
 
-def main():
-    args = dom.parse_args(__doc__, oracles=True)
+def main(argv=None):
+    args = dom.parse_args(__doc__, oracles=True, argv=argv)
     includes, libraries = dom.link_options(args)
     executions = refusals = 0
     for name, body in CASES.items():
@@ -135,6 +135,14 @@ def main():
     print(
         f"DOM class static factories: {len(CASES)} Node/VM sources, "
         f"{executions} native executions, {refusals} refusals"
+    )
+
+
+def test_static(lit):
+    main(
+        lit.args(
+            "--translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --nm %nm --work %t"
+        )
     )
 
 

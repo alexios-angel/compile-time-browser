@@ -59,6 +59,15 @@
 // RUN: %t/declared-clang | FileCheck %s --check-prefix=DECLAREDOUT
 // RUN: %native_reference %t/declared.js | FileCheck %s --check-prefix=DECLAREDOUT
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/declared.js | FileCheck %s --check-prefix=DECLAREDOUT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/declared-relayed.js --mlir-print-debuginfo 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/declared-relayed.mlir
+// RUN: FileCheck %s --check-prefix=RELAYED --implicit-check-not=ctnative.not_native --implicit-check-not=static_count < %t/declared-relayed.mlir
+// RUN: ctjs-opt %t/declared-relayed.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/declared-relayed.cpp
+// RUN: %gxx -O2 %t/declared-relayed.cpp -o %t/declared-relayed-gcc
+// RUN: %t/declared-relayed-gcc | FileCheck %s --check-prefix=DECLAREDOUT
+// RUN: %clangxx -O2 %t/declared-relayed.cpp -o %t/declared-relayed-clang
+// RUN: %t/declared-relayed-clang | FileCheck %s --check-prefix=DECLAREDOUT
+// RUN: %native_reference %t/declared-relayed.js | FileCheck %s --check-prefix=DECLAREDOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/declared-sibling.js --mlir-print-debuginfo 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/declared-sibling.mlir
 // RUN: FileCheck %s --check-prefix=SIBLING --implicit-check-not=ctnative.not_native --implicit-check-not=static_count < %t/declared-sibling.mlir
@@ -105,10 +114,10 @@
 // --- A function declaration over a static binding ----------------------------
 //
 // `bump` is declared in the factory and captures `count`; an arrow inside
-// `run` calls it. Until `count` is static, the binding rule cannot call `bump`
-// directly from the arrow (its capture is not a binding that rule erases, and
-// the arrow is made a frame further in than `count`), so the arrow would be
-// refused. Boxes holding a function wait for a second round: with `count`
+// `inner`, inside `run`, calls it. Until `count` is static, the binding rule
+// cannot call `bump` directly from the arrow (its capture is not a binding
+// that rule erases, and the arrow is made two frames further in than `count`,
+// past the one frame a capture is relayed), so the arrow would be refused. Boxes holding a function wait for a second round: with `count`
 // static, `bump` is a local function again and every call of it is direct,
 // instead of `bump` becoming a static variable called through.
 //
@@ -118,6 +127,15 @@
 // DECLARED: emitc.func @bump_
 // DECLARED-NOT: static_bump
 // DECLAREDOUT: r=43
+//
+// When the arrow is made in `run`, one frame in (declared-relayed.js), `run`
+// captures `count` and the arrow takes it relayed from `run`
+// (canRelaySiblingCapture), so the lift lowers the program as it stands, with
+// `count` passed by pointer and no static.
+//
+// RELAYED: emitc.func @bump_{{[0-9]+}}(%arg0: !emitc.ptr<!emitc.opaque<"ctnative::js_num">>, %arg1: !emitc.opaque<"ctnative::js_num">)
+// RELAYED: emitc.func @run_{{[0-9]+}}(%arg0: !emitc.ptr<!emitc.opaque<"ctnative::js_num">>)
+// RELAYED: emitc.func @fn_{{[0-9]+}}(%arg0: !emitc.ptr<!emitc.opaque<"ctnative::js_num">>)
 //
 // When the arrow is made in the factory itself, it captures `count` too
 // (canAddSiblingCapture) and passes it on to `bump`, so the lift lowers the
@@ -165,6 +183,20 @@ var r = (function (factory) {
 });
 
 //--- declared.js
+var r = (function () {
+    var count = 0;
+    function bump(n) { count = count + n; return count; }
+    function run() {
+        function inner() {
+            const twice = () => bump(1) + bump(2);
+            return twice();
+        }
+        return inner();
+    }
+    return run() * 10 + count;
+})();
+
+//--- declared-relayed.js
 var r = (function () {
     var count = 0;
     function bump(n) { count = count + n; return count; }

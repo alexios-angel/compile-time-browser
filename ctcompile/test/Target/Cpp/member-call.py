@@ -4,7 +4,7 @@
 import argparse
 from pathlib import Path
 
-from harness import FLAGS, find_compilers, run
+from Target.Cpp.harness import FLAGS, find_compilers, run
 
 PREFIX = """#include <cstdint>
 #include <memory>
@@ -44,12 +44,12 @@ int main() {
 """
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--translate", required=True)
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     args.work.mkdir(parents=True, exist_ok=True)
     emitted = run([args.translate, "--mlir-to-cpp", str(args.source)])
     source = args.work / "member-call.cpp"

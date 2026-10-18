@@ -75,7 +75,10 @@
 // RUN:   | FileCheck %s --check-prefix=BOUNDDATA --implicit-check-not=ctnative.not_native
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/bounddeep.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
-// RUN:   | FileCheck %s --check-prefix=BOUNDDEEP
+// RUN:   | FileCheck %s --check-prefix=BOUNDDEEP --implicit-check-not=ctnative.not_native
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/bounddeeper.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=BOUNDDEEPER
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/deepwrite.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=DEEPWRITE
@@ -368,12 +371,21 @@
 // BOUNDDATA: emitc.func @fn_[[USE]](%arg0: !emitc.opaque<"ctnative::js_num">, %arg1: !emitc.opaque<"ctnative::js_num">)
 // BOUNDDATA: call @fn_[[F]](%arg0, %arg1)
 //
-// When the call is a frame further in, inside `use` made by `mid`, `step` is
-// not in scope where `use` is made, so there is still nothing to prepend it
-// at.
+// When the call is a frame further in, inside `use` made by `mid`, `use`
+// takes `step` relayed from `mid`, which captures it first
+// (canRelaySiblingCapture), and passes it on to `f`. Two frames in, inside
+// `use` made by `inner` made by `mid`, nothing relays it, so there is still
+// nothing to prepend it at.
 //
-// BOUNDDEEP: ctjs.func {{.*}}@data_deep$1
-// BOUNDDEEP-SAME: ctnative.not_native = "a closure used as a value: it is the value of a local binding this tier cannot call directly: it is read from inside another function, and capture 0 of the function it holds is not a binding this step erases - a call out there has nothing to prepend the capture at"
+// BOUNDDEEP: emitc.func @data_deep_{{[0-9]+}}(
+// BOUNDDEEP: emitc.func @fn_[[F:[0-9]+]](%arg0: !emitc.opaque<"ctnative::js_num">, %arg1: !emitc.opaque<"ctnative::js_num">)
+// BOUNDDEEP: emitc.func @fn_{{[0-9]+}}(%arg0: !emitc.opaque<"ctnative::js_num">)
+// BOUNDDEEP: emitc.func @fn_{{[0-9]+}}(%arg0: !emitc.opaque<"ctnative::js_num">, %arg1: !emitc.opaque<"ctnative::js_num">)
+// BOUNDDEEP-NOT: emitc.func
+// BOUNDDEEP: call @fn_[[F]](%arg0, %arg1)
+//
+// BOUNDDEEPER: ctjs.func {{.*}}@data_deeper$1
+// BOUNDDEEPER-SAME: ctnative.not_native = "a closure used as a value: it is the value of a local binding this tier cannot call directly: it is read from inside another function, and capture 0 of the function it holds is not a binding this step erases - a call out there has nothing to prepend the capture at"
 
 // --- The slot clause inward: an inner level that fails ----------------------
 //
@@ -638,6 +650,21 @@ function data_deep(k) {
     return mid();
 }
 var r = data_deep(3);
+
+//--- bounddeeper.js
+function data_deeper(k) {
+    var step = k * 2;
+    var f = function (n) { return n + step; };
+    var mid = function () {
+        var inner = function () {
+            var use = function (n) { return f(n); };
+            return use(1);
+        };
+        return inner();
+    };
+    return mid();
+}
+var r = data_deeper(3);
 
 //--- deepwrite.js
 function deep_assigns() {
