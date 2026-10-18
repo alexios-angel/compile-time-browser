@@ -794,8 +794,9 @@ void closureLifter::argumentCensus() {
     // A parameter every call passes an object literal of one shape may also
     // be tested with `typeof` and spread into a fresh literal: both are
     // written out for that shape (SpreadParameters.h), so the rule below sees
-    // the constant-key reads they become. The literals a folded test drops
-    // leave the census with it.
+    // the constant-key reads they become, and so are a function's own
+    // literals used that way. The literals a folded test drops leave the
+    // census with it.
     {
         llvm::SmallVector<calledFunction> called;
         const auto row = [&](ctjs::FuncOp function, llvm::ArrayRef<closureCall> sites) {
@@ -813,7 +814,11 @@ void closureLifter::argumentCensus() {
             row(llvm::cast<ctjs::FuncOp>(function), sites);
         }
         llvm::SmallVector<mlir::Operation *> erased;
-        if (rewriteSpreadParameters(called, erased) && !erased.empty()) {
+        (void)rewriteSpreadParameters(called, erased);
+        // Then the values a function makes itself, such as a local tested
+        // with `typeof` before it is spread.
+        (void)rewriteLiteralLocals(module, erased);
+        if (!erased.empty()) {
             const llvm::SmallPtrSet<mlir::Operation *, 8> gone(erased.begin(), erased.end());
             llvm::erase_if(objects, [&](ctjs::CreateObjectOp object) {
                 return gone.contains(object.getOperation());

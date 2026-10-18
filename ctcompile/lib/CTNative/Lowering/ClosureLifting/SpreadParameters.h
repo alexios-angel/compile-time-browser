@@ -46,4 +46,14 @@ struct calledFunction {
 unsigned rewriteSpreadParameters(llvm::ArrayRef<calledFunction> functions,
                                  llvm::SmallVectorImpl<mlir::Operation *> & erasedLiterals);
 
+/// The same rewrite for a value made in the function itself: a fresh object
+/// literal whose own keys are all defined directly in its block before any
+/// other use, so they never change once it is read, or the result of an
+/// scf.if whose two arms each make it as such a literal, both of one shape.
+/// Its uses must be `typeof`, constant-key reads, spreads into fresh literals
+/// and the scf.if arms that test it. Any other value is left as it is. Returns
+/// how many values it rewrote; `erasedLiterals` as above.
+unsigned rewriteLiteralLocals(mlir::ModuleOp module,
+                              llvm::SmallVectorImpl<mlir::Operation *> & erasedLiterals);
+
 } // namespace ctcompile::ctnative::lowering_detail
