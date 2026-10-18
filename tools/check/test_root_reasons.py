@@ -193,6 +193,42 @@ def test_members_of_a_refused_constructor_are_behind_it():
     ]
 
 
+# f$1 is held in a run-once function's static variable, and g$2 calls it
+# through a reference to that variable (as Popper's modifiers call
+# detectOverflow), so f$1's parameter waits for g$2 as well as for its own
+# closure: fixing either reason leaves it one fix away, and neither frees it.
+STATIC_REASON = (
+    "it is the value of a local binding this tier cannot call directly: it is a static "
+    "variable of a function that runs once, read in `X` where the name reaches `X`, so "
+    "the binding holds a function VALUE and this step makes none"
+)
+STATIC = """\
+  ctjs.func @_script_$0(%arg0) -> !ctjs.value {
+    %1 = ctjs.constant #ctjs.undefined {}
+    %2 = ctjs.create_cell %1 {ctnative.static_cell = "static_f"}
+    %3 = ctjs.create_closure %arg2[1] this %1 {ctnative.closure_reason = "it is the value of a local binding this tier cannot call directly: it is a static variable of a function that runs once, read in `fn$0` where the name reaches `ctjs.set_property`, so the binding holds a function VALUE and this step makes none"}
+    ctjs.cell_set %2, %3
+  }
+  ctjs.func @f$1(%arg0) -> !ctjs.value attributes {ctnative.not_native = "parameter 0 is !ctnative.boxed - no caller proves it (x)"} {
+  }
+  ctjs.func @g$2(%arg0) -> !ctjs.value attributes {ctnative.not_native = "a regular expression literal"} {
+    %1 = ctjs.constant #ctjs.undefined {}
+    %2 = ctjs.create_cell %1 {ctnative.static_cell = "static_f", ctnative.static_reference}
+    %3 = ctjs.cell_get %2 {}
+    %4 = ctjs.call %3(%1, %1) {}
+  }
+"""
+
+
+def test_calls_through_a_static_variable_are_callers():
+    # Without the edge, f$1 would be blocked by its static variable alone:
+    # 1 solely for that reason.
+    assert rows_of(STATIC) == [
+        (REGEX, 1, 2, 1, 1, (STATIC_REASON, 1)),
+        (STATIC_REASON, 1, 1, 0, 1, (REGEX, 1)),
+    ]
+
+
 # Four roots that each free one function alone. x$5 and y$6 are behind three
 # of them; z$7 is behind b$2 and c$3 only, so fixing either leaves it one fix
 # away. Ranked by blocks after solely, a$1 (3 blocked) would come before b$2
