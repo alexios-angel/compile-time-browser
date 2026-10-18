@@ -25,6 +25,11 @@ inline constexpr llvm::StringLiteral kNativeCarried = "ctnative.carried";
 /// On an arrow whose lexical `this` became a capture (ArrowThis.cpp), the
 /// capture slot that holds it; on the cell made for it, a unit marker.
 inline constexpr llvm::StringLiteral kNativeLexicalThis = "ctnative.lexical_this";
+/// On a function that is an arrow. The importer records that only as a
+/// closure's non-undefined `$enclosing_this`, which captureLexicalThis
+/// (ArrowThis.cpp) replaces with undefined, so it keeps the fact here for the
+/// constructor rule: `new` on an arrow throws.
+inline constexpr llvm::StringLiteral kNativeArrow = "ctnative.arrow";
 /// On a carried `ctjs.create_cell`: a callback the runtime keeps (a timer
 /// handler, a listener, a promise handler) captures it, so the binding lives
 /// in a std::shared_ptr<ctnative::cell<T>> (Runtime/Cell.hpp) rather than a
