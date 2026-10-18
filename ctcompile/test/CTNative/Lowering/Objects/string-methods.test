@@ -1,6 +1,7 @@
 # String methods on a proved String, as css-dump.js uses them: `trim()`,
 # `toLowerCase()` and `toUpperCase()` (Bootstrap's Config message) become
-# ctnative::String.prototype.<name>.call, and `s[i]`
+# ctnative::String.prototype.<name>.call, a template substitution of a Number,
+# a Boolean, null or undefined is its ToString, and `s[i]`
 # with a Number index becomes ctnative::string_at, which counts UTF-16 code
 # units (`é` is one) and answers undefined past the end. `Number(s)` is
 # ctnative::Number(s), ToNumber of the String. The answers match
@@ -49,6 +50,19 @@ function shout(s) {
     return s.toUpperCase();
 }
 var shouted = shout('Stra\u00dfe \u00e9 ok');
+function number(x) {
+    return `n=${x}`;
+}
+function flag(x) {
+    return `${x}!`;
+}
+function missing(x) {
+    return `[${x}]`;
+}
+function unset(x) {
+    return `(${x})`;
+}
+var templated = number(1.5) + number(-7) + flag(false) + missing(null) + unset(void 0);
 
 #--- key.js
 function pick(s, k) {
