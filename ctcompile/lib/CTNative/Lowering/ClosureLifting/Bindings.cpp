@@ -9,6 +9,8 @@
 
 #include "ClosureLifter.h"
 
+#include "llvm/ADT/ScopeExit.h"
+
 namespace ctcompile::ctnative::lowering_detail {
 
 /// Does this box ever hold a function? The cheap half of the question, asked
@@ -253,6 +255,31 @@ bool closureLifter::canAddSiblingCapture(ctjs::CreateClosureOp closure, unsigned
            dominance.properlyDominates(cell.getResult(), holder.getOperation());
 }
 
+bool closureLifter::canRelaySiblingCapture(ctjs::CreateClosureOp closure, unsigned index,
+                                           ctjs::CreateClosureOp holder) {
+    const ctjs::CreateClosureOp enclosing = enclosingClosureOf(holder);
+    return enclosing &&
+           enclosing->getParentOfType<ctjs::FuncOp>() == closure->getParentOfType<ctjs::FuncOp>() &&
+           (siblingCaptureSlot(closure, index, enclosing) ||
+            canAddSiblingCapture(closure, index, enclosing));
+}
+
+void closureLifter::addRelayedCaptureSlot(ctjs::CreateClosureOp holder, unsigned outer) {
+    llvm::SmallVector<std::int32_t> indices;
+    if (const mlir::DenseI32ArrayAttr existing = holder.getEnclosingIndicesAttr()) {
+        indices.assign(existing.asArrayRef().begin(), existing.asArrayRef().end());
+    } else {
+        indices.assign(holder.getUpvalues().size(), -1);
+    }
+    mlir::OpBuilder at(holder);
+    holder.getUpvaluesMutable().append(undefinedAt(at, holder.getLoc()));
+    indices.push_back(static_cast<std::int32_t>(outer));
+    holder->setAttr("enclosing_indices", mlir::Builder(context).getDenseI32ArrayAttr(indices));
+    ctjs::FuncOp target = targetOf(holder);
+    target->setAttr("upvalue_count", mlir::Builder(context).getI32IntegerAttr(
+                                         static_cast<std::int32_t>(target.getUpvalueCount() + 1)));
+}
+
 void closureLifter::addCaptureSlot(ctjs::CreateClosureOp holder, mlir::Value cell) {
     holder.getUpvaluesMutable().append(cell);
     if (const mlir::DenseI32ArrayAttr indices = holder.getEnclosingIndicesAttr()) {
@@ -350,6 +377,8 @@ void closureLifter::removeCaptureSlots(ctjs::CreateClosureOp c, llvm::ArrayRef<u
 /// would need sibling captures. Otherwise returns whether any binding target
 /// takes sibling captures (`siblingBindingTargets`).
 bool closureLifter::bindLocalFunctions(liftReport & out, bool probeSiblings) {
+    closureOfFunction = oneClosurePerFunction();
+    const llvm::scope_exit forget([&] { closureOfFunction.reset(); });
     llvm::MapVector<mlir::Operation *, functionBinding> plans;
     module.walk([&](ctjs::CreateCellOp cell) {
         if (!holdsAFunction(cell)) { return; }
@@ -390,10 +419,15 @@ bool closureLifter::bindLocalFunctions(liftReport & out, bool probeSiblings) {
             for (unsigned j = 0; j < captures; ++j) {
                 auto held = plan.closure.getUpvalues()[j].getDefiningOp<ctjs::CreateCellOp>();
                 if (held && taken.contains(held.getOperation())) { continue; }
-                if ((allowSiblingCaptures || probeSiblings) &&
+                // A target an earlier trial denied keeps the stricter rule.
+                const bool siblings =
+                    probeSiblings ||
+                    (allowSiblingCaptures && !siblingDenied.contains(plan.target.getSymName()));
+                if (siblings &&
                     llvm::all_of(plan.slots, [&](const functionBinding::capturedSlot & slot) {
                         return siblingCaptureSlot(plan.closure, j, slot.made).has_value() ||
-                               canAddSiblingCapture(plan.closure, j, slot.made);
+                               canAddSiblingCapture(plan.closure, j, slot.made) ||
+                               canRelaySiblingCapture(plan.closure, j, slot.made);
                     })) {
                     continue;
                 }
@@ -424,7 +458,9 @@ bool closureLifter::bindLocalFunctions(liftReport & out, bool probeSiblings) {
     if (probeSiblings) { return false; }
     // A frame that reads the binding but does not capture one of the
     // closure's bindings captures it now, so the call it makes has the value
-    // to pass (canAddSiblingCapture).
+    // to pass (canAddSiblingCapture). A reader one frame further in takes it
+    // relayed from its enclosing closure, which captures it first if it does
+    // not yet (canRelaySiblingCapture).
     if (allowSiblingCaptures) {
         for (auto & entry : plans) {
             if (!taken.contains(entry.first)) { continue; }
@@ -432,11 +468,21 @@ bool closureLifter::bindLocalFunctions(liftReport & out, bool probeSiblings) {
             for (const functionBinding::capturedSlot & slot : plan.slots) {
                 for (unsigned j = 0; j < plan.closure.getUpvalues().size(); ++j) {
                     auto held = plan.closure.getUpvalues()[j].getDefiningOp<ctjs::CreateCellOp>();
+                    const mlir::Value cell = plan.closure.getUpvalues()[j];
                     if ((held && taken.contains(held.getOperation())) ||
                         siblingCaptureSlot(plan.closure, j, slot.made)) {
                         continue;
                     }
-                    addCaptureSlot(slot.made, plan.closure.getUpvalues()[j]);
+                    if (canAddSiblingCapture(plan.closure, j, slot.made)) {
+                        addCaptureSlot(slot.made, cell);
+                        continue;
+                    }
+                    const ctjs::CreateClosureOp enclosing = enclosingClosureOf(slot.made);
+                    if (!siblingCaptureSlot(plan.closure, j, enclosing)) {
+                        addCaptureSlot(enclosing, cell);
+                    }
+                    addRelayedCaptureSlot(slot.made,
+                                          *siblingCaptureSlot(plan.closure, j, enclosing));
                 }
             }
         }

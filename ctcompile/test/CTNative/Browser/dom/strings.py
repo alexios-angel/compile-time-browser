@@ -433,5 +433,9 @@ function makeElement(value) {
     )
 
 
+def test_strings(lit):
+    main(lit.args("%dom_driver --node %node --reference %native_reference"))
+
+
 if __name__ == "__main__":
     main()

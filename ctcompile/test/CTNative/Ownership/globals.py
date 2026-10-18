@@ -133,8 +133,8 @@ int main() {
             check_lifetime(args, name, mode, compilers[1], changed, expected)
 
 
-def main():
-    args = native_args(__doc__)
+def main(argv=None):
+    args = native_args(__doc__, argv=argv)
     compilers, nm = native_tools(args.reference)
     node, reference = args.node, args.reference
     positives = {
@@ -425,6 +425,14 @@ def main():
         f"{len(refusals)} source refusals plus stale/forged/budget controls pass; "
         "fixed undefined preserves its exact tag and rejects missing/absent/written bindings, "
         f"stale/forged proofs and incomplete normalization (rollback at {low}, complete at {high})"
+    )
+
+
+def test_globals(lit):
+    main(
+        lit.args(
+            "--translate ctjs-translate --opt ctjs-opt --work %t --node %node --reference %native_reference"
+        )
     )
 
 

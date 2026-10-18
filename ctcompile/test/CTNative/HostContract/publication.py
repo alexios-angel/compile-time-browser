@@ -41,12 +41,12 @@ def source(factory=FACTORY, middle="", *, twice=False):
     )
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--translate", required=True)
     parser.add_argument("--opt", required=True)
     parser.add_argument("--work", type=Path, required=True)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     args.work.mkdir(parents=True, exist_ok=True)
     sources = {
         "ordinary": source(),
@@ -234,6 +234,10 @@ def main():
     print(
         "host publication: exact factories, current method/table replacements, distinct invocations and ownership/effect guards passed"
     )
+
+
+def test_publication(lit):
+    main(lit.args("--translate ctjs-translate --opt ctjs-opt --work %t"))
 
 
 if __name__ == "__main__":
