@@ -324,7 +324,7 @@ bool closureLifter::knowsEveryReceiver(ctjs::CallOp call) {
 /// callee value it is given; it must take every argument the call passes.
 /// The method census decides it on a clone, because it marks the module
 /// and reads it before the rewrites that still come before the main census;
-/// calls correspond by walk order.
+/// calls correspond by walk order, which the census must not change.
 llvm::DenseMap<mlir::Operation *, ctjs::FuncOp> closureLifter::methodSitesForCopies() {
     const auto passesAClosure = [](ctjs::CallOp call) {
         return call.getCallee().getDefiningOp<ctjs::GetPropertyOp>() &&
@@ -373,14 +373,38 @@ llvm::DenseMap<mlir::Operation *, ctjs::FuncOp> closureLifter::methodSitesForCop
         return sites;
     }
     mlir::OwningOpRef<mlir::ModuleOp> clone(module.clone());
+    // Each call of the clone carries its walk position, which is that of the
+    // call it copies here, through the census. A census that added, erased or
+    // reordered a call would pair a resolution with the wrong call here and
+    // copy it, so that is a fatal error.
+    const auto position = mlir::StringAttr::get(context, "ctnative.census_position");
+    unsigned next = 0;
+    clone->walk([&](ctjs::CallOp twin) {
+        twin->setAttr(position,
+                      mlir::IntegerAttr::get(mlir::IntegerType::get(context, 32), next++));
+    });
     closureLifter census{*clone};
     census.census();
     census.constructorCensus();
     census.argumentCensus();
     census.methodCensus();
     llvm::SmallVector<ctjs::CallOp> twins;
-    clone->walk([&](ctjs::CallOp call) { twins.push_back(call); });
-    if (twins.size() != calls.size()) { return sites; }
+    clone->walk([&](ctjs::CallOp twin) {
+        auto at = twin->getAttrOfType<mlir::IntegerAttr>(position);
+        if (!at || at.getInt() != static_cast<std::int64_t>(twins.size())) {
+            llvm::report_fatal_error(
+                "ctnative lowering: the method census added, erased or reordered a ctjs.call "
+                "in its clone of the module - methodSitesForCopies pairs its resolutions with "
+                "this module's calls by position, so a rewrite the census runs must keep "
+                "every call in place, or this pairing must follow it");
+        }
+        twins.push_back(twin);
+    });
+    if (twins.size() != calls.size()) {
+        llvm::report_fatal_error("ctnative lowering: the method census erased a ctjs.call in its "
+                                 "clone of the module - methodSitesForCopies pairs its "
+                                 "resolutions with this module's calls by position");
+    }
     for (auto [call, twin] : llvm::zip(calls, twins)) {
         if (!passesAClosure(call) || !census.knowsEveryReceiver(twin)) { continue; }
         std::optional<methodCall> resolved = census.resolveMethod(twin);
