@@ -3,6 +3,7 @@
 # also reuses compiler-side primitive helpers from ctbrowser; the generated
 # C++ uses only the public platform libraries it needs, never Script.
 add_library(ctcompile-ctnative-lowering
+  ArgumentTypeCopies.cpp
   ForOf.cpp
   LowerToEmitC.cpp
   LoweringSupport.cpp

@@ -623,6 +623,19 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // read `config[key]` under each key as a constant: a literal read only
         // that way is a record, not a table.
         if (!hostContract) { prepareNativeDictionaries(module); }
+        // A function called with values of different exact types gets one copy
+        // per type, so no parameter needs a std::variant. Before the alias
+        // groups and the solve, so both see the copies as ordinary functions.
+        // A function whose original body is kept for a refusal is not copied.
+        if (!hostContract) {
+            copyPerArgumentType(module, [&](ctjs::FuncOp fn) {
+                const auto keeps = [&](const auto & originals) {
+                    return llvm::any_of(originals,
+                                        [&](const auto & row) { return row.first == fn; });
+                };
+                return keeps(recoveryOriginals) || keeps(forOfOriginals);
+            });
+        }
         receiverGroups groups = TypeInference::groupReceivers(module);
         if (ownedGlobals) {
             for (const auto & root : ownedGlobals->roots()) {
@@ -728,7 +741,8 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // every caller native too: a refused caller keeps a ctjs.call_direct,
         // which must name a ctjs.func with a body, and a lowered function no
         // longer has one. So a refusal propagates along the call graph both
-        // ways, each step naming the function that caused it. The global
+        // ways, each step naming the function that caused it, except back to
+        // a callee that a refused caller can call through a closure. The global
         // census below can refuse the script entry after this has run, so it
         // runs again then.
         const auto closeNativeSet = [&] {
@@ -767,6 +781,40 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                              "retained by `" + fn.getSymName() + "`, which is not native");
                     });
                     fn.getBody().walk([&](ctjs::CallDirectOp call) {
+                        // A refused caller of a native function that takes no
+                        // parameters and reads neither new.target nor its own
+                        // closure (a static getter, which the class statics
+                        // rewrite turned into a direct call) calls it through a
+                        // closure instead, as it did through the class before
+                        // that rewrite. A closure names its function by index,
+                        // not by symbol, so the callee stays native for its
+                        // native callers, and the call means the same.
+                        auto callee =
+                            llvm::dyn_cast_or_null<ctjs::FuncOp>(symbols.lookup(call.getCallee()));
+                        mlir::Block * entry = callee && !callee.getBody().empty()
+                                                  ? &callee.getBody().front()
+                                                  : nullptr;
+                        const std::optional<unsigned> index =
+                            entry ? ctjs::functionIndex(callee) : std::nullopt;
+                        if (!native && index && nativeSet.contains(callee.getOperation()) &&
+                            entry->getNumArguments() == ctjs::implicit_arguments &&
+                            entry->getArgument(ctjs::arg_new_target).use_empty() &&
+                            entry->getArgument(ctjs::arg_callee).use_empty()) {
+                            mlir::OpBuilder at(call);
+                            const mlir::Type type = call.getResult().getType();
+                            auto undefined = ctjs::ConstantOp::create(
+                                at, call.getLoc(), type, ctjs::UndefinedAttr::get(&getContext()));
+                            auto closure = ctjs::CreateClosureOp::create(
+                                at, call.getLoc(), type,
+                                fn.getBody().front().getArgument(ctjs::arg_callee), undefined,
+                                at.getI32IntegerAttr(static_cast<std::int32_t>(*index)),
+                                mlir::ValueRange{}, mlir::DenseI32ArrayAttr{});
+                            auto through = ctjs::CallOp::create(at, call.getLoc(), type, closure,
+                                                                call.getReceiver(), call.getArgs());
+                            call.getResult().replaceAllUsesWith(through.getResult());
+                            call.erase();
+                            return;
+                        }
                         edge(symbols.lookup(call.getCallee()),
                              "calls `" + call.getCallee() + "`, which is not native",
                              "called by `" + fn.getSymName() + "`, which is not native");

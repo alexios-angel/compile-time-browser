@@ -409,4 +409,12 @@ bool domBookkeeping(const DOMEntryAnalysis & entry, mlir::Operation * op);
 llvm::StringMap<mlir::Type> identityFieldStoreTypes(mlir::DataFlowSolver & solver,
                                                     llvm::ArrayRef<ctjs::FuncOp> functions);
 
+/// Copies each private function called directly with arguments of different
+/// exact types, where its parameter would need a std::variant carrier or has
+/// none, once per type, and sends each call to the copy for its argument's
+/// type (ArgumentTypeCopies.cpp). Skips a function `keepsOriginal` names.
+/// Records each copy in ctnative.copies; true when it made one.
+bool copyPerArgumentType(mlir::ModuleOp module,
+                         llvm::function_ref<bool(ctjs::FuncOp)> keepsOriginal);
+
 } // namespace ctcompile::ctnative::lowering_detail

@@ -97,6 +97,9 @@ concept primitive_equality_comparable = requires(ctnative::js_string text, const
     ctnative::primitive_strict_equal(text, value);
     ctnative::primitive_strict_equal(value, text);
 };
+template <class T>
+concept object_to_string_takes =
+    requires(const T & value) { ctnative::Object.prototype.toString.call(value); };
 struct convertible_number {
     operator double() const { return 3.0; }
 };
@@ -1312,13 +1315,13 @@ int main() {
         CHECK(toString.call(ctnative::nullable_string{std::string{"y"}}) ==
               js_string{"[object String]"});
         CHECK(toString.call(ctnative::nullable_string{}) == js_string{"[object Undefined]"});
-        // A union carrier answers the tag of the alternative it holds.
-        CHECK(toString.call(ctnative::number_string{js_string{"z"}}) ==
-              js_string{"[object String]"});
-        CHECK(toString.call(ctnative::nullable_boolean_string{ctnative::js_boolean_t{false}}) ==
-              js_string{"[object Boolean]"});
-        CHECK(toString.call(ctnative::nullable_number_string{ctnative::js_null_t{}}) ==
-              js_string{"[object Null]"});
+        // A String union has no overload, which would need std::visit: a
+        // toType called with several kinds is copied per kind instead
+        // (Lowering/ArgumentTypeCopies.cpp).
+        static_assert(object_to_string_takes<js_string>);
+        static_assert(!object_to_string_takes<ctnative::number_string>);
+        static_assert(!object_to_string_takes<ctnative::nullable_boolean_string>);
+        static_assert(!object_to_string_takes<ctnative::nullable_number_string>);
     }
 
     // RegExp.prototype.test (RegExp.hpp), as Config's type check calls it on

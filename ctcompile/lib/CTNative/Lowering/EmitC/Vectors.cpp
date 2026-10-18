@@ -280,8 +280,6 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
                           : row.params[i] == Param::number    ? 'n'
                           : row.params[i] == Param::element   ? 'e'
                           : row.params[i] == Param::printable ? 'p'
-                          // A union is passed as it is; the runtime visits it.
-                          : row.params[i] == Param::primitive ? 'p'
                           // A constant table is passed as it is, as a printable is.
                           : row.params[i] == Param::staticTable ? 'p'
                           : table                               ? 'd'
