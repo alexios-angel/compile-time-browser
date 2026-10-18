@@ -377,8 +377,8 @@ def mutations(text):
     yield "late-initialization", insert(missing, moved_owner, moved_exit.start(), store[0])
 
 
-def main():
-    args = dom.parse_args(__doc__, oracles=True)
+def main(argv=None):
+    args = dom.parse_args(__doc__, oracles=True, argv=argv)
     includes, libraries = dom.link_options(args)
     executions = refusals = 0
     for name, method in CASES.items():
@@ -487,6 +487,10 @@ def main():
     print(
         f"DOM class Boolean captures: {len(CASES)} Node/VM sources, {executions} native executions, {refusals} refusals"
     )
+
+
+def test_captures(lit):
+    main(lit.args("%dom_driver --node %node --reference %native_reference"))
 
 
 if __name__ == "__main__":

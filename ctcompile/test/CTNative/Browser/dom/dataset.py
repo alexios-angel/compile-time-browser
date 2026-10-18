@@ -612,8 +612,8 @@ def client(symbol, owned, name):
 """
 
 
-def main():
-    args = dom.parse_args(__doc__, oracles=True)
+def main(argv=None):
+    args = dom.parse_args(__doc__, oracles=True, argv=argv)
     vendor = dom.BOOTSTRAP
     assert BOOTSTRAP_FILTER in vendor.read_text(), "Bootstrap dataset source pin changed"
     assert PREFIX in vendor.read_text(), "Bootstrap prefix source pin changed"
@@ -920,6 +920,10 @@ def main():
     print(
         f"native DOM dataset: {len(SOURCES)} sources, {sum(map(len, expected.values()))} Node/VM source-double observations, 8 GCC/Clang binaries, HTML/SVG and lifetime sanitizer, {refusals} refusals"
     )
+
+
+def test_dataset(lit):
+    main(lit.args("%dom_driver --node %node --reference %native_reference"))
 
 
 if __name__ == "__main__":

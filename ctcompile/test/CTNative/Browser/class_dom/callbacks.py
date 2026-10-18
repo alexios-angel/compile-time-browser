@@ -218,8 +218,8 @@ def call_variants(args, ir, contract):
         yield label, path, manifest
 
 
-def main():
-    args = dom.parse_args(__doc__, oracles=True)
+def main(argv=None):
+    args = dom.parse_args(__doc__, oracles=True, argv=argv)
     includes, libraries = dom.link_options(args)
     executions = refusals = 0
     for name, body in CASES.items():
@@ -301,6 +301,10 @@ def main():
     print(
         f"DOM class callbacks: {len(CASES)} Node/VM sources, {executions} native executions, {refusals} refusals"
     )
+
+
+def test_callbacks(lit):
+    main(lit.args("%dom_driver --node %node --reference %native_reference"))
 
 
 if __name__ == "__main__":

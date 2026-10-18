@@ -46,8 +46,8 @@ def lower(args, source, name, count, passes, *, admitted=0):
     return output
 
 
-def main():
-    args = native_args(__doc__)
+def main(argv=None):
+    args = native_args(__doc__, argv=argv)
     node, reference = args.node, args.reference
     base = "function probe() { const map = new Map(); map.set(1, 10); "
     cases = {
@@ -144,6 +144,14 @@ def main():
     print(
         "Map iterators: ten source refusals across default/optimized/partial/deforest, "
         "rerun and forged proofs; immediate consumption remains native"
+    )
+
+
+def test_iterators(lit):
+    main(
+        lit.args(
+            "--translate ctjs-translate --opt ctjs-opt --work %t --node %node --reference %native_reference"
+        )
     )
 
 

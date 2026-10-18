@@ -137,8 +137,8 @@ def bad_programs():
     return bad
 
 
-def main():
-    args = dom.parse_args(__doc__, oracles=True)
+def main(argv=None):
+    args = dom.parse_args(__doc__, oracles=True, argv=argv)
     # Pin the base case's IR and JavaScript text so an edit to cells.py cannot
     # silently change what every derived case replaces into.
     original, js, _, _ = CASES["retained-equality"]
@@ -192,6 +192,10 @@ def main():
     print(
         f"DOM Boolean String comparisons: {len(CASES)} Node/VM sources, {executions} native executions, {refusals} refusals"
     )
+
+
+def test_strings(lit):
+    main(lit.args("%dom_driver --node %node --reference %native_reference"))
 
 
 if __name__ == "__main__":
