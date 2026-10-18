@@ -5,11 +5,19 @@
 // interpreter words it, so a caller that reports `e.message` (the engine seam
 // answers "threw: <message>") reports the same text from either engine.
 //
+// A type_error nothing catches ends the program as an uncaught TypeError ends
+// the interpreter's run: "threw: uncaught TypeError: <message>" on stderr and
+// exit status 1, instead of std::terminate's abort.
+//
 //===----------------------------------------------------------------------===//
 
 #pragma once
 
+#include <cstdio>
+#include <cstdlib>
+#include <exception>
 #include <stdexcept>
+#include <string>
 
 namespace ctnative {
 
@@ -17,5 +25,32 @@ namespace ctnative {
 struct type_error : std::invalid_argument {
     using std::invalid_argument::invalid_argument;
 };
+
+/// `throw new TypeError(message)` (ECMA-262 20.5.6.1.1) where the program uses
+/// the new object for nothing but the throw, so its message is all that can
+/// be observed.
+template <class Text> [[noreturn]] void throw_type_error(const Text & message) {
+    throw type_error(std::string{message.value()});
+}
+
+namespace detail {
+/// The terminate handler that reports an uncaught type_error the way the
+/// interpreter reports an uncaught TypeError, after flushing what the program
+/// printed. Any other reason to terminate keeps the default abort.
+[[noreturn]] inline void report_uncaught() noexcept {
+    if (const std::exception_ptr thrown = std::current_exception()) {
+        try {
+            std::rethrow_exception(thrown);
+        } catch (const type_error & error) {
+            std::fflush(stdout);
+            std::fprintf(stderr, "threw: uncaught TypeError: %s\n", error.what());
+            std::_Exit(1);
+        } catch (...) {}
+    }
+    std::abort();
+}
+/// Installs report_uncaught once per program, before `main` runs.
+inline const std::terminate_handler default_terminate = std::set_terminate(report_uncaught);
+} // namespace detail
 
 } // namespace ctnative

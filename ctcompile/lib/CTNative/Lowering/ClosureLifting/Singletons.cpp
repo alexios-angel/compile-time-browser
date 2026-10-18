@@ -27,6 +27,14 @@
 //     or reachable by anyone a closure of it was handed to. A read that could
 //     run first would find `undefined`, and a direct call would hide the error.
 //
+// markStaticClassReads applies the same ordering to a static variable that
+// holds a class: the variable is written only with one closure made in its
+// owner (the importer writes a class declaration's closure twice), and every
+// read is the callee and new.target of a `new` that runs after the last
+// write, the class definition's. Each read and write is then marked
+// kNativeStaticClass with the constructor's name, and the constructor lift
+// (Constructors.cpp) builds the instance at that `new`.
+//
 //===----------------------------------------------------------------------===//
 
 #include "ClosureLifter.h"
@@ -468,6 +476,92 @@ bool closureLifter::bindSingletonMethods(liftReport & out) {
         indexStarters();
     }
     return changed;
+}
+
+void closureLifter::markStaticClassReads() {
+    llvm::MapVector<mlir::StringAttr, llvm::SmallVector<ctjs::CreateCellOp>> bySymbol;
+    module.walk([&](ctjs::CreateCellOp cell) {
+        if (auto symbol = cell->getAttrOfType<mlir::StringAttr>(kNativeStaticCell)) {
+            bySymbol[symbol].push_back(cell);
+        }
+    });
+    if (bySymbol.empty()) { return; }
+    indexStarters();
+    const llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> noFields;
+    for (auto & [symbol, cells] : bySymbol) {
+        // One owning box, as for a method table.
+        ctjs::CreateCellOp owner;
+        for (ctjs::CreateCellOp cell : cells) {
+            if (cell->hasAttr(kNativeStaticReference)) { continue; }
+            if (owner) {
+                owner = {};
+                break;
+            }
+            owner = cell;
+        }
+        if (!owner || !ctjs::constantAttr<ctjs::UndefinedAttr>(owner.getInitial())) { continue; }
+        auto function = owner->getParentOfType<ctjs::FuncOp>();
+        llvm::SmallVector<ctjs::CellSetOp> writes;
+        llvm::SmallVector<ctjs::CellGetOp> reads;
+        bool usable = true;
+        for (ctjs::CreateCellOp cell : cells) {
+            for (mlir::OpOperand & use : cell.getResult().getUses()) {
+                switch (classify(use)) {
+                case cellUse::read:
+                    reads.push_back(llvm::cast<ctjs::CellGetOp>(use.getOwner()));
+                    break;
+                case cellUse::write:
+                    writes.push_back(llvm::cast<ctjs::CellSetOp>(use.getOwner()));
+                    break;
+                default: usable = usable && llvm::isa<ctjs::RootOp>(use.getOwner()); break;
+                }
+            }
+        }
+        if (!usable || writes.empty() || reads.empty()) { continue; }
+        auto closure = writes.front().getValue().getDefiningOp<ctjs::CreateClosureOp>();
+        ctjs::FuncOp target = closure ? targetOf(closure) : ctjs::FuncOp{};
+        if (!target || closure->getParentOfType<ctjs::FuncOp>() != function) { continue; }
+        // Only a binding read as the class a `new` constructs.
+        const bool constructedOnly = llvm::all_of(reads, [](ctjs::CellGetOp read) {
+            return llvm::all_of(read.getResult().getUses(), [&](mlir::OpOperand & use) {
+                auto made = llvm::dyn_cast<ctjs::ConstructOp>(use.getOwner());
+                return llvm::isa<ctjs::RootOp>(use.getOwner()) ||
+                       (made && made.getCallee() == read.getResult() &&
+                        made.getNewTarget() == read.getResult());
+            });
+        });
+        if (!constructedOnly) { continue; }
+        const auto refuse = [&](const llvm::Twine & why) {
+            owner->setAttr(kNativeStaticClassReason, mlir::StringAttr::get(context, why));
+        };
+        const auto where = [](mlir::Operation * op) {
+            return ("`" + op->getParentOfType<ctjs::FuncOp>().getSymName() + "`").str();
+        };
+        // Every write stores that one closure, in one block of the owner. The
+        // last one is the class definition's, after the prototype is built.
+        mlir::Operation * last = writes.front();
+        for (ctjs::CellSetOp write : writes) {
+            if (write.getValue() != closure.getResult() || write->getBlock() != last->getBlock()) {
+                refuse("it is written with another value in " + where(write.getOperation()));
+                usable = false;
+                break;
+            }
+            if (last->isBeforeInBlock(write)) { last = write; }
+        }
+        if (!usable) { continue; }
+        // A read that could run before the last write could find
+        // `undefined`, or a class whose prototype is not built yet.
+        if (const auto early = llvm::find_if(
+                reads, [&](ctjs::CellGetOp read) { return !runsAfter(read, last, noFields); });
+            early != reads.end()) {
+            refuse("a read in " + where(early->getOperation()) +
+                   " can run before the class is written");
+            continue;
+        }
+        const mlir::StringAttr name = target.getSymNameAttr();
+        for (ctjs::CellGetOp read : reads) { read->setAttr(kNativeStaticClass, name); }
+        for (ctjs::CellSetOp write : writes) { write->setAttr(kNativeStaticClass, name); }
+    }
 }
 
 } // namespace ctcompile::ctnative::lowering_detail
