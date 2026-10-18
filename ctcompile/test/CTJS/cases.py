@@ -56,6 +56,11 @@ CASES = {
         "ctjs-translate --ctbrowser-js-to-ctjs %t/declared.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/host.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=HOST",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/inherited.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=INHERITED",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/compiled.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=MARK",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/compiled.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc    | FileCheck %s --check-prefix=NATIVE",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/compiled-written.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals    | FileCheck %s --check-prefix=KEPT --implicit-check-not=ctjs.absent_global_property",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/compiled-written.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc    | FileCheck %s --check-prefix=WRITTEN --implicit-check-not=ctnative.absent_globals",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/compiled-eval.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals    | FileCheck %s --check-prefix=KEPT --implicit-check-not=ctjs.absent_global_property",
     ],
     "Transforms/absent-globals": [
         "split-file %s %t",
