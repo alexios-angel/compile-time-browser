@@ -72,6 +72,19 @@ inline bool isBorrowedParameter(mlir::Value value) {
            });
 }
 
+/// Whether `value` is the entry argument through which a listener that removes
+/// itself receives its own ctnative::callable_identity (kNativeListenerSelf on
+/// its ctjs.func, ClosureLifting/HostCallbacks.cpp). Its only uses name the
+/// listener of a removal, so it needs no value carrier.
+inline bool isListenerSelfParameter(mlir::Value value) {
+    auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
+    if (!argument || !argument.getOwner()->isEntryBlock()) { return false; }
+    auto function = llvm::dyn_cast<ctjs::FuncOp>(argument.getOwner()->getParentOp());
+    auto self = function ? function->getAttrOfType<mlir::IntegerAttr>(kNativeListenerSelf)
+                         : mlir::IntegerAttr{};
+    return self && argument.getArgNumber() == static_cast<unsigned>(self.getInt());
+}
+
 /// The kNativeMethodTable name on `op`, or empty.
 inline llvm::StringRef methodTableName(mlir::Operation * op) {
     return ctjs::stringAttrOf(op, kNativeMethodTable);

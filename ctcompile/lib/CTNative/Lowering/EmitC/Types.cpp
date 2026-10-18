@@ -79,6 +79,11 @@ void lowering::retype(ctjs::FuncOp fn) {
     const auto retypeValue = [&](mlir::Value v) {
         if (retypeClosureSet(v)) { return; } // ClosureSets.cpp
         if (retypeBorrowed(v)) { return; }
+        // A listener's own identity, which its removals of itself name.
+        if (isListenerSelfParameter(v)) {
+            v.setType(ec::OpaqueType::get(context, "ctnative::callable_identity"));
+            return;
+        }
         if (v.getDefiningOp<ctjs::CreateObjectOp>() && carrierOf(typeOf(v)) == carrier::json) {
             v.setType(ec::LValueType::get(carrierType(context, carrier::json)));
             return;

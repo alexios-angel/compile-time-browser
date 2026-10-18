@@ -40,6 +40,17 @@
 // EMIT-DAG: call_opaque "ctnative::EventTarget.prototype.removeEventListener.call"
 // EMIT-DAG: call_opaque "ctnative::declared_identity<&{{.*}}>"
 
+// A listener that removes itself through its own binding (settle) is bound to
+// a fresh identity, which it also receives among its captures to remove
+// itself by; the element it compares with the event's target stays a copy,
+// though the listener writes another binding. A binding written twice
+// (selfRebound), read for anything but a removal (selfInspected) or also
+// captured by another closure (selfShared) keeps its refusal.
+// EMIT-DAG: emitc.func @{{[A-Za-z_0-9]+}}(%arg0: !emitc.opaque<"ctnative::js_element_t">, {{.*}}: !emitc.opaque<"ctnative::callable_identity">, %arg{{[0-9]+}}: !emitc.opaque<"ctnative::js_event">)
+// CHECK-DAG: @selfRebound${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: it is the value of a local binding this tier cannot call directly: it is assigned more than once"
+// CHECK-DAG: @selfInspected${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: it is the value of a local binding this tier cannot call directly: the name reaches `ctjs.call`, so the binding holds a function VALUE and this step makes none"
+// CHECK-DAG: @selfShared${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: it is the value of a local binding this tier cannot call directly: the name reaches `ctjs.call`, so the binding holds a function VALUE and this step makes none"
+
 // A listener and a timer handler that capture a binding their frame writes
 // afterwards (later, timerLater) lift: the binding becomes a shared cell
 // whose handle the callback takes (rule 2b in ClosureLifter.h).
@@ -130,6 +141,23 @@ function wait(name) {
     }, 5);
 }
 wait('w');
+function settle(root) {
+    let done = false;
+    const handler = function (event) {
+        if (event.target === root) {
+            done = true;
+            root.removeEventListener('transitionend', handler);
+        }
+    };
+    root.addEventListener('transitionend', handler);
+    setTimeout(function () {
+        if (!done) {
+            seen = seen + 'f';
+        }
+    }, 5);
+}
+settle(document.documentElement);
+settle(document.documentElement);
 
 //--- refusals.js
 var seen = '';
@@ -244,6 +272,32 @@ function timerGlobal() {
 function clearNumber() {
     clearTimeout(5);
 }
+function selfRebound() {
+    var root = document.documentElement;
+    var handler = function () {
+        root.removeEventListener('transitionend', handler);
+    };
+    root.addEventListener('transitionend', handler);
+    handler = null;
+}
+function selfInspected() {
+    var root = document.documentElement;
+    const handler = function () {
+        seen = typeof handler;
+        root.removeEventListener('transitionend', handler);
+    };
+    root.addEventListener('transitionend', handler);
+}
+function selfShared() {
+    var root = document.documentElement;
+    const handler = function () {
+        root.removeEventListener('transitionend', handler);
+    };
+    root.addEventListener('transitionend', handler);
+    setTimeout(function () {
+        root.removeEventListener('transitionend', handler);
+    }, 5);
+}
 later();
 timerLater();
 timerThis();
@@ -264,6 +318,9 @@ returnsMade();
 initEscapes();
 capturesArray();
 capturesStyle();
+selfRebound();
+selfInspected();
+selfShared();
 
 //--- dynamic.js
 var count = 0;

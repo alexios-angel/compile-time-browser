@@ -85,7 +85,7 @@ inline ctbrowser::json_value to_json(const js_string & value) {
     return ctbrowser::json_value{value.value()};
 }
 inline ctbrowser::json_value to_json(const number_string & value) {
-    return std::visit([](const auto & alternative) { return to_json(alternative); }, value);
+    return value.holds<js_string>() ? to_json(value.text) : to_json(value.scalar);
 }
 
 inline void define_json_properties(ctbrowser::json_value::object &) {}

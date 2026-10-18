@@ -48,7 +48,9 @@ void closureLifter::singleWriteCensus() {
                 // has to follow: condition 3, checked by whyCapturesDoNotReach
                 // where the call sites are known.
                 ctjs::FuncOp target = targetOf(llvm::cast<ctjs::CreateClosureOp>(user));
-                if (!target || mutatesUpvalue.contains(target.getOperation())) { return; }
+                if (!target || writesSlot(target, use.getOperandNumber() - kFirstCapture)) {
+                    return;
+                }
                 continue;
             }
             // `ctjs.cell_set %other, %cell` stores this cell into another
@@ -356,8 +358,9 @@ mlir::Value closureLifter::constantValueOf(ctjs::CreateCellOp cell) {
 }
 
 /// A cell whose value is the same at every read. Every use must be a read, a
-/// capture into a function that writes no upvalue, or the one `ctjs.cell_set`
-/// that singleWriteCensus proved dominates all of them; anything else fails.
+/// capture into a slot its function never writes (writesSlot), or the one
+/// `ctjs.cell_set` that singleWriteCensus proved dominates all of them;
+/// anything else fails.
 bool closureLifter::isConstantCell(ctjs::CreateCellOp cell) {
     ctjs::CellSetOp write = writtenOnce.lookup(cell.getOperation());
     for (mlir::OpOperand & use : cell.getResult().getUses()) {
@@ -369,7 +372,7 @@ bool closureLifter::isConstantCell(ctjs::CreateCellOp cell) {
         if (kind == cellUse::read || (write && user == write.getOperation())) { continue; }
         if (kind != cellUse::capture) { return false; }
         ctjs::FuncOp target = targetOf(llvm::cast<ctjs::CreateClosureOp>(user));
-        if (!target || mutatesUpvalue.contains(target.getOperation())) { return false; }
+        if (!target || writesSlot(target, use.getOperandNumber() - kFirstCapture)) { return false; }
     }
     return true;
 }
