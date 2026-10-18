@@ -11,6 +11,7 @@
 #include "Analysis.h"
 
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
+#include "ctcompile/CTNative/IR/CTNativeAttrNames.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -154,6 +155,18 @@ private:
     bool closureEdges() {
         for (ctjs::CreateClosureOp closure : closures) {
             if (!spend()) { return false; }
+            // In an admitted function a lifted closure that nothing uses, or
+            // whose every use is a method store that lowers to nothing (lift()
+            // marks those ctnative.method), makes nothing at run time. Its
+            // function is reached only through the direct calls the lift
+            // wrote, which are symbol edges.
+            auto owner = closure->getParentOfType<ctjs::FuncOp>();
+            if (closure->hasAttr(kNativeLifted) && owner &&
+                !owner->hasAttr("ctnative.not_native") &&
+                llvm::all_of(closure.getResult().getUsers(),
+                             [](mlir::Operation * user) { return user->hasAttr(kNativeMethod); })) {
+                continue;
+            }
             const auto found = indexed.find(static_cast<unsigned>(closure.getFunction()));
             if (closure.getFunction() < 0 || found == indexed.end()) {
                 return refuse("numeric closure reference has no visible CTJS target");
