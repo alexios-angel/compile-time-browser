@@ -59,6 +59,15 @@
 // RUN: %t/declared-clang | FileCheck %s --check-prefix=DECLAREDOUT
 // RUN: %native_reference %t/declared.js | FileCheck %s --check-prefix=DECLAREDOUT
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/declared.js | FileCheck %s --check-prefix=DECLAREDOUT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/declared-sibling.js --mlir-print-debuginfo 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/declared-sibling.mlir
+// RUN: FileCheck %s --check-prefix=SIBLING --implicit-check-not=ctnative.not_native --implicit-check-not=static_count < %t/declared-sibling.mlir
+// RUN: ctjs-opt %t/declared-sibling.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/declared-sibling.cpp
+// RUN: %gxx -O2 %t/declared-sibling.cpp -o %t/declared-sibling-gcc
+// RUN: %t/declared-sibling-gcc | FileCheck %s --check-prefix=DECLAREDOUT
+// RUN: %clangxx -O2 %t/declared-sibling.cpp -o %t/declared-sibling-clang
+// RUN: %t/declared-sibling-clang | FileCheck %s --check-prefix=DECLAREDOUT
+// RUN: %native_reference %t/declared-sibling.js | FileCheck %s --check-prefix=DECLAREDOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/twice.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=TWICE
@@ -95,12 +104,13 @@
 
 // --- A function declaration over a static binding ----------------------------
 //
-// `bump` is declared in the factory and captures `count`; an arrow calls it.
-// Until `count` is static, the binding rule cannot call `bump` directly from
-// the arrow (its capture is not a binding that rule erases), so the arrow
-// would be refused. Boxes holding a function wait for a second round: with
-// `count` static, `bump` is a local function again and every call of it is
-// direct, instead of `bump` becoming a static variable called through.
+// `bump` is declared in the factory and captures `count`; an arrow inside
+// `run` calls it. Until `count` is static, the binding rule cannot call `bump`
+// directly from the arrow (its capture is not a binding that rule erases, and
+// the arrow is made a frame further in than `count`), so the arrow would be
+// refused. Boxes holding a function wait for a second round: with `count`
+// static, `bump` is a local function again and every call of it is direct,
+// instead of `bump` becoming a static variable called through.
 //
 // DECLARED-NOT: static_bump
 // DECLARED: emitc.global static @static_count :
@@ -108,6 +118,14 @@
 // DECLARED: emitc.func @bump_
 // DECLARED-NOT: static_bump
 // DECLAREDOUT: r=43
+//
+// When the arrow is made in the factory itself, it captures `count` too
+// (canAddSiblingCapture) and passes it on to `bump`, so the lift lowers the
+// program as it stands and no static is needed: `count` stays the factory's
+// variable, which `bump` and the arrow reach by pointer.
+//
+// SIBLING: emitc.func @bump_{{[0-9]+}}(%arg0: !emitc.ptr<!emitc.opaque<"ctnative::js_num">>, %arg1: !emitc.opaque<"ctnative::js_num">)
+// SIBLING: emitc.func @fn_{{[0-9]+}}(%arg0: !emitc.ptr<!emitc.opaque<"ctnative::js_num">>)
 
 // --- Negative controls -------------------------------------------------------
 //
@@ -147,6 +165,17 @@ var r = (function (factory) {
 });
 
 //--- declared.js
+var r = (function () {
+    var count = 0;
+    function bump(n) { count = count + n; return count; }
+    function run() {
+        const twice = () => bump(1) + bump(2);
+        return twice();
+    }
+    return run() * 10 + count;
+})();
+
+//--- declared-sibling.js
 var r = (function () {
     var count = 0;
     function bump(n) { count = count + n; return count; }

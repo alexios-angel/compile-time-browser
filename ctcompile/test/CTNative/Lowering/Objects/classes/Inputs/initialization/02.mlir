@@ -50,6 +50,18 @@ function plain_borrowed_write() {
 }
 var a = plain_borrowed_write();
 
+//--- plain-borrowed-write-unknown.js
+function plain_borrowed_write_unknown() {
+    function Shape() {}
+    var instance = new Shape();
+    instance.read = function () { return 7; };
+    var replace = function (value) { value.read = function () { return 9; }; };
+    var writers = [replace];
+    writers[0](instance);
+    return instance.read();
+}
+var a = plain_borrowed_write_unknown();
+
 //--- plain-self-replace.js
 function plain_self_replace() {
     function Shape() {}

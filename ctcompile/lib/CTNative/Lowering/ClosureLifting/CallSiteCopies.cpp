@@ -27,10 +27,15 @@
 //    entry block, down to a function that uses it other than only calling it
 //    (a callee that only calls it borrows the closure, BorrowedCallbacks.cpp,
 //    and one reached directly from the call stores it into a closure set,
-//    ClosureSets.cpp) and does not box it in a cell (no closure rule lowers a
-//    closure held in one, so copying would only move the refusal). Each copy
-//    in the chain then runs exactly once per call, so the last makes exactly
-//    one closure, as the call did;
+//    ClosureSets.cpp). Each copy in the chain then runs exactly once per call,
+//    so the last makes exactly one closure, as the call did;
+//  - the closure can be lifted where the last copy makes it: that function
+//    neither boxes the parameter in a cell that is written or captured (no
+//    closure rule lowers a closure held in one) nor passes it to another call
+//    or merges it at a branch result (the generic rule refuses it there), so
+//    the copies do not merely move a refusal. A cell that only holds the
+//    parameter, which the importer makes when a nested function reuses the
+//    parameter's name, is forwarded to its reads;
 //  - the chain is at most kMaxChain functions long, and each call in it passes
 //    a callee value its copy can take: any value, when the function reads no
 //    new.target and no capture through its own closure, or else the
@@ -74,6 +79,37 @@ std::pair<ctjs::CallDirectOp, unsigned> handedOn(ctjs::FuncOp fn, mlir::BlockArg
         return {};
     }
     return {call, use.getOperandNumber()};
+}
+
+/// Whether `box` only ever holds the value it was made with: no static
+/// variable, and nothing writes it, captures it or reads it but a
+/// ctjs.cell_get, so every read is that value.
+bool holdsOnlyItsValue(ctjs::CreateCellOp box) {
+    return !box->hasAttr(kNativeStaticCell) &&
+           llvm::all_of(box.getResult().getUses(), [](mlir::OpOperand & use) {
+               return llvm::isa<ctjs::CellGetOp>(use.getOwner());
+           });
+}
+
+/// Whether a closure in place of `parameter` would be passed to another call
+/// or merged with other values at a branch result, directly or through a
+/// cell that only holds it. The generic rule refuses it there ("it is passed
+/// as an argument", "it reaches scf.yield"), so copies that make it there
+/// gain nothing.
+bool passedOnOrMerged(mlir::Value parameter) {
+    llvm::SmallVector<mlir::Value> values{parameter};
+    for (mlir::Operation * user : parameter.getUsers()) {
+        if (auto box = llvm::dyn_cast<ctjs::CreateCellOp>(user); box && holdsOnlyItsValue(box)) {
+            for (mlir::Operation * read : box->getUsers()) { values.push_back(read->getResult(0)); }
+        }
+    }
+    return llvm::any_of(values, [](mlir::Value value) {
+        return llvm::any_of(value.getUses(), [](mlir::OpOperand & use) {
+            mlir::Operation * user = use.getOwner();
+            if (llvm::isa<ctjs::CallOp>(user)) { return use.getOperandNumber() != 0; }
+            return llvm::isa<ctjs::CallDirectOp, ctjs::ConstructOp, mlir::scf::YieldOp>(user);
+        });
+    });
 }
 
 /// Whether `function` has a body to copy that cannot see the parameters a
@@ -308,19 +344,25 @@ bool closureLifter::copyCallSitesForClosures() {
                 chain.push_back({next, nextPosition});
                 continue;
             }
-            // A parameter the last function boxes in a cell would hold the
-            // closure in that cell, which no closure rule lowers, so the
-            // copies would only move the refusal there, at the cost of every
-            // function they copy.
+            // The copies pay only if the closure they make can be lifted in
+            // the last one. A cell that is written or captured would hold it,
+            // which no closure rule lowers, and a call it is passed to or a
+            // branch that merges it would refuse it there, so the copies
+            // would only move the refusal, at the cost of every function they
+            // copy. A cell that only holds the parameter is forwarded to its
+            // reads instead.
             handed = chain.size() > 1 && !parameter.use_empty() &&
                      !llvm::all_of(parameter.getUses(),
                                    [](mlir::OpOperand & use) {
                                        return llvm::isa<ctjs::CallOp>(use.getOwner()) &&
                                               use.getOperandNumber() == 0;
                                    }) &&
-                     llvm::none_of(parameter.getUsers(), [](mlir::Operation * user) {
-                         return llvm::isa<ctjs::CreateCellOp>(user);
-                     });
+                     llvm::none_of(parameter.getUsers(),
+                                   [](mlir::Operation * user) {
+                                       auto box = llvm::dyn_cast<ctjs::CreateCellOp>(user);
+                                       return box && !holdsOnlyItsValue(box);
+                                   }) &&
+                     !passedOnOrMerged(parameter);
             break;
         }
         if (!handed || chain.size() > kMaxChain) { continue; }
@@ -414,6 +456,17 @@ bool closureLifter::copyCallSitesForClosures() {
         inside.getUpvaluesMutable().assign(cells);
         inside.removeEnclosingIndicesAttr();
         last.replaceAllUsesWith(inside.getResult());
+        // A cell that only holds the parameter is the parameter: its reads
+        // take the closure itself.
+        for (mlir::Operation * user : llvm::make_early_inc_range(inside->getUsers())) {
+            auto box = llvm::dyn_cast<ctjs::CreateCellOp>(user);
+            if (!box || !holdsOnlyItsValue(box)) { continue; }
+            for (mlir::Operation * read : llvm::make_early_inc_range(box->getUsers())) {
+                read->getResult(0).replaceAllUsesWith(inside.getResult());
+                read->erase();
+            }
+            box->erase();
+        }
         // The parameter the closure came in by is dead in every copy now:
         // drop it, and its argument at each call, from the last copy back to
         // the call that made the closure.

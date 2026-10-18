@@ -38,8 +38,8 @@ def configure(args, ir, name, values):
     return path
 
 
-def main():
-    args = native_args(__doc__)
+def main(argv=None):
+    args = native_args(__doc__, argv=argv)
     compilers, nm = native_tools(args.reference)
     js, _, subject, values = prepare_umd(args)
     expected = observe_umd(args, js, values)
@@ -239,6 +239,14 @@ int main() {
         "by-value outer Map, direct member captures, "
         "nonmovable member ABI and ASan/UBSan saved-child/payload lifetimes; "
         "budget/stale/callable-escape refuse"
+    )
+
+
+def test_data_session(lit):
+    main(
+        lit.args(
+            "--translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --work %t"
+        )
     )
 
 
