@@ -76,7 +76,7 @@ enum class carrier {
     map,
     closure,
     /// One of a proved set of callables (Analysis lattice `closure_set`), a
-    /// std::variant spelled per set by EmitC/ClosureSets.cpp.
+    /// struct emitted per set by EmitC/ClosureSets.cpp.
     closureSet,
     methodTable,
     objectIdentity,
@@ -158,7 +158,7 @@ inline constexpr llvm::StringLiteral kStaticTableType = "ctnative::static_table_
 inline constexpr llvm::StringLiteral kObjectIdentityType =
     "std::shared_ptr<ctnative::identity_object>";
 /// One row per carrier, in enum order: its C++ spelling (empty when the
-/// carrier has no fixed one) and whether it is a String-union variant.
+/// carrier has no fixed one) and whether it is a String union.
 struct carrierRow {
     carrier which;
     llvm::StringLiteral spelling;
@@ -410,7 +410,7 @@ llvm::StringMap<mlir::Type> identityFieldStoreTypes(mlir::DataFlowSolver & solve
                                                     llvm::ArrayRef<ctjs::FuncOp> functions);
 
 /// Copies each private function called directly with arguments of different
-/// exact types, where its parameter would need a std::variant carrier or has
+/// exact types, where its parameter would need a String-union carrier or has
 /// none, once per type, and sends each call to the copy for its argument's
 /// type (ArgumentTypeCopies.cpp). Skips a function `keepsOriginal` names.
 /// Records each copy in ctnative.copies; true when it made one.

@@ -624,7 +624,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // that way is a record, not a table.
         if (!hostContract) { prepareNativeDictionaries(module); }
         // A function called with values of different exact types gets one copy
-        // per type, so no parameter needs a std::variant. Before the alias
+        // per type, so no parameter needs a String union. Before the alias
         // groups and the solve, so both see the copies as ordinary functions.
         // A function whose original body is kept for a refusal is not copied.
         if (!hostContract) {

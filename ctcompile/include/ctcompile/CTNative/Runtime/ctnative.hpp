@@ -330,58 +330,116 @@ inline bool operator<(const nullable_string & a, const nullable_string & b) {
     return a.tag == nullable_string::kind::string && a.value < b.value;
 }
 
-// --- Boolean/Number/String variant carriers ----------------------------------
+// --- String unions -------------------------------------------------------------
 //
-// Each alternative is either string text or a scalar nullable_scalar can
-// carry. Each operation (text, truthiness, typeof, ToNumber, print) is written
-// once in `detail` over any such variant; the named helpers below are the
-// spellings generated code calls.
+// A value proved to be a String or one scalar kind, a Number or a Boolean, and
+// for a global read before its store also undefined or null. It is a struct
+// with an enum class tag, and each operation (text, truthiness, typeof,
+// ToNumber, print) is written once in `detail` as a switch on the tag that
+// calls the String's or the scalar's own helper, so the C++ compiler sees
+// every call. The named helpers below are the spellings generated code calls.
+
+/// Which kind a string_union holds.
+enum class union_kind : unsigned char {
+    undefined,
+    null,
+    scalar,
+    string
+};
+
+/// A String or a `Scalar` (js_num or js_boolean_t), or also undefined or null
+/// when `Nullable`. The fields of the kinds it does not hold are unused.
+template <class Scalar, bool Nullable> struct string_union {
+    union_kind tag = Nullable ? union_kind::undefined : union_kind::scalar;
+    Scalar scalar{};
+    js_string text;
+
+    string_union() = default;
+    string_union(Scalar value) : tag(union_kind::scalar), scalar(value) {}
+    string_union(js_string value) : tag(union_kind::string), text(std::move(value)) {}
+    string_union(undefined_t)
+    requires Nullable
+    {}
+    string_union(js_null_t)
+    requires Nullable
+        : tag(union_kind::null) {}
+
+    /// Whether this holds the kind `A` names: undefined_t, js_null_t, Scalar
+    /// or js_string.
+    template <class A> bool holds() const {
+        if constexpr (std::is_same_v<A, undefined_t>) {
+            return tag == union_kind::undefined;
+        } else if constexpr (std::is_same_v<A, js_null_t>) {
+            return tag == union_kind::null;
+        } else if constexpr (std::is_same_v<A, Scalar>) {
+            return tag == union_kind::scalar;
+        } else {
+            static_assert(std::is_same_v<A, js_string>);
+            return tag == union_kind::string;
+        }
+    }
+    /// Equal when both hold the same kind with equal values.
+    friend bool operator==(const string_union & a, const string_union & b) {
+        if (a.tag != b.tag) { return false; }
+        switch (a.tag) {
+        case union_kind::undefined:
+        case union_kind::null: return true;
+        case union_kind::scalar: return a.scalar == b.scalar;
+        case union_kind::string: return a.text == b.text;
+        }
+        std::terminate();
+    }
+};
+
 namespace detail {
 template <class T, class... U>
 concept one_of = (std::is_same_v<T, U> || ...);
 template <class T> constexpr bool is_absent = one_of<T, undefined_t, js_null_t>;
 
-template <class... T, class Text, class Scalar>
-auto visit_carrier(const std::variant<T...> & value, Text text, Scalar scalar) {
-    return std::visit(
-        [&](const auto & alternative) {
-            using A = std::decay_t<decltype(alternative)>;
-            if constexpr (std::is_same_v<A, js_string>) {
-                return text(alternative.value());
-            } else if constexpr (std::is_same_v<A, std::string>) {
-                return text(alternative);
-            } else {
-                return scalar(nullable_scalar{alternative});
-            }
-        },
-        value);
+/// Calls `text` with a String's text, or `scalar` with any other kind as a
+/// nullable_scalar.
+template <class S, bool N, class Text, class Scalar>
+auto visit_carrier(const string_union<S, N> & value, Text text, Scalar scalar) {
+    switch (value.tag) {
+    case union_kind::undefined: return scalar(nullable_scalar{});
+    case union_kind::null: return scalar(nullable_scalar::null());
+    case union_kind::scalar: return scalar(nullable_scalar{value.scalar});
+    case union_kind::string: return text(value.text.value());
+    }
+    std::terminate();
 }
-template <class... T> js_string variant_text(const std::variant<T...> & value) {
+template <class S, bool N> js_string union_text(const string_union<S, N> & value) {
     return visit_carrier(
         value, [](const std::string & text) { return js_string{text}; },
         [](nullable_scalar scalar) { return scalar.to_string(); });
 }
-template <class... T> bool variant_truthy(const std::variant<T...> & value) {
+template <class S, bool N> bool union_truthy(const string_union<S, N> & value) {
     return visit_carrier(
         value, [](const std::string & text) { return !text.empty(); }, scalar_truthy);
 }
-template <class... T> std::string variant_typeof(const std::variant<T...> & value) {
+template <class S, bool N> std::string union_typeof(const string_union<S, N> & value) {
     return visit_carrier(
         value, [](const std::string &) { return std::string{"string"}; }, scalar_typeof);
 }
-template <class... T> js_num variant_number(const std::variant<T...> & value) {
+template <class S, bool N> js_num union_number(const string_union<S, N> & value) {
     return visit_carrier(
         value, [](const std::string & text) { return js_num{ctbrowser::string_to_number(text)}; },
         [](nullable_scalar scalar) { return to_number(scalar); });
 }
-template <class... T> void print_variant(const char * name, const std::variant<T...> & value) {
+template <class S, bool N> void print_union(const char * name, const string_union<S, N> & value) {
     visit_carrier(
         value, [name](const std::string & text) { print_string(name, text); },
         [name](nullable_scalar scalar) { print_scalar(name, scalar); });
 }
-// Widening keeps every alternative; absence stays its own alternative.
-template <class R, class... T> R widen(const std::variant<T...> & value) {
-    return std::visit([](const auto & alternative) -> R { return alternative; }, value);
+// Widening keeps every kind; absence stays its own kind.
+template <class R, class S, bool N> R widen(const string_union<S, N> & value) {
+    switch (value.tag) {
+    case union_kind::undefined: return undefined_t{};
+    case union_kind::null: return js_null_t{};
+    case union_kind::scalar: return value.scalar;
+    case union_kind::string: return value.text;
+    }
+    std::terminate();
 }
 template <class R> R widen(const nullable_string & value) {
     switch (value.tag) {
@@ -391,38 +449,30 @@ template <class R> R widen(const nullable_string & value) {
     }
     std::terminate();
 }
-// The alternative A of a global the compiler proved holds one; terminates
-// otherwise. Absence here means a missing generated store, never a value to
-// coerce.
-template <class A, class... T> const A & present(const std::variant<T...> & value) {
-    if (const auto * alternative = std::get_if<A>(&value)) { return *alternative; }
+// The kind A of a global the compiler proved holds one; terminates otherwise.
+// Absence here means a missing generated store, never a value to coerce.
+template <class A, class S, bool N> const A & present(const string_union<S, N> & value) {
+    if constexpr (std::is_same_v<A, js_string>) {
+        if (value.tag == union_kind::string) { return value.text; }
+    } else {
+        static_assert(std::is_same_v<A, S>);
+        if (value.tag == union_kind::scalar) { return value.scalar; }
+    }
     std::terminate();
 }
-template <class R, class... T> R present_carrier(const std::variant<T...> & value) {
-    return std::visit(
-        [](const auto & alternative) -> R {
-            if constexpr (is_absent<std::decay_t<decltype(alternative)>>) {
-                std::terminate();
-            } else {
-                return alternative;
-            }
-        },
-        value);
+template <class R, class S, bool N> R present_carrier(const string_union<S, N> & value) {
+    switch (value.tag) {
+    case union_kind::undefined:
+    case union_kind::null: std::terminate();
+    case union_kind::scalar: return value.scalar;
+    case union_kind::string: return value.text;
+    }
+    std::terminate();
 }
 } // namespace detail
 
-inline bool boolean_string_truthy(const std::variant<js_boolean_t, std::string> & value) {
-    return detail::variant_truthy(value);
-}
-inline js_string boolean_string_text(const std::variant<js_boolean_t, std::string> & value) {
-    return detail::variant_text(value);
-}
-inline js_num to_number(const std::variant<js_boolean_t, std::string> & value) {
-    return detail::variant_number(value);
-}
-
 /// A value proved to be a Number or a String.
-using number_string = std::variant<js_num, js_string>;
+using number_string = string_union<js_num, false>;
 
 inline constexpr js_num to_number(js_num value) {
     return value;
@@ -436,16 +486,16 @@ inline js_num to_number(T value) {
     return to_number(nullable_scalar{value});
 }
 inline js_num to_number(const number_string & value) {
-    return detail::variant_number(value);
+    return detail::union_number(value);
 }
 inline js_string number_string_text(const number_string & value) {
-    return detail::variant_text(value);
+    return detail::union_text(value);
 }
 inline bool number_string_truthy(const number_string & value) {
-    return detail::variant_truthy(value);
+    return detail::union_truthy(value);
 }
 inline std::string number_string_typeof(const number_string & value) {
-    return std::holds_alternative<js_num>(value) ? "number" : "string";
+    return value.holds<js_num>() ? "number" : "string";
 }
 /// Unwraps a global stored as std::optional<number_string>. Terminates if the
 /// global was never stored, because the compiler proved it present.
@@ -454,13 +504,13 @@ inline number_string global_number_string(const std::optional<number_string> & v
     return *value;
 }
 inline void print_number_string(const char * name, const number_string & value) {
-    detail::print_variant(name, value);
+    detail::print_union(name, value);
 }
 
 /// A Number or String that may also be null or undefined (for example a global
-/// read before its store). Absence is its own alternative, never NaN or an
-/// empty string.
-using nullable_number_string = std::variant<undefined_t, js_null_t, js_num, js_string>;
+/// read before its store). Absence is its own kind, never NaN or an empty
+/// string.
+using nullable_number_string = string_union<js_num, true>;
 
 inline nullable_number_string to_nullable_number_string(const number_string & value) {
     return detail::widen<nullable_number_string>(value);
@@ -478,19 +528,19 @@ inline nullable_number_string to_nullable_number_string(const nullable_string & 
     return detail::widen<nullable_number_string>(value);
 }
 inline js_num to_number(const nullable_number_string & value) {
-    return detail::variant_number(value);
+    return detail::union_number(value);
 }
 inline js_string nullable_number_string_text(const nullable_number_string & value) {
-    return detail::variant_text(value);
+    return detail::union_text(value);
 }
 inline bool nullable_number_string_truthy(const nullable_number_string & value) {
-    return detail::variant_truthy(value);
+    return detail::union_truthy(value);
 }
 inline std::string nullable_number_string_typeof(const nullable_number_string & value) {
-    return detail::variant_typeof(value);
+    return detail::union_typeof(value);
 }
 inline void print_nullable_number_string(const char * name, const nullable_number_string & value) {
-    detail::print_variant(name, value);
+    detail::print_union(name, value);
 }
 inline number_string global_number_string(const nullable_number_string & value) {
     return detail::present_carrier<number_string>(value);
@@ -502,29 +552,31 @@ inline std::string global_string(const nullable_number_string & value) {
     return detail::present<js_string>(value).value();
 }
 
-using boolean_string = std::variant<js_boolean_t, js_string>;
-using nullable_boolean_string = std::variant<undefined_t, js_null_t, js_boolean_t, js_string>;
+/// A value proved to be a Boolean or a String, possibly also null or
+/// undefined.
+using boolean_string = string_union<js_boolean_t, false>;
+using nullable_boolean_string = string_union<js_boolean_t, true>;
 namespace detail {
-// The four Number/Boolean-or-String unions, each a std::variant holding js_string.
+// The four Number/Boolean-or-String unions.
 template <class T>
 concept primitive_union =
     one_of<T, number_string, nullable_number_string, boolean_string, nullable_boolean_string>;
 } // namespace detail
 
 inline js_num to_number(const boolean_string & value) {
-    return detail::variant_number(value);
+    return detail::union_number(value);
 }
 inline js_string boolean_string_text(const boolean_string & value) {
-    return detail::variant_text(value);
+    return detail::union_text(value);
 }
 inline bool boolean_string_truthy(const boolean_string & value) {
-    return detail::variant_truthy(value);
+    return detail::union_truthy(value);
 }
 inline std::string boolean_string_typeof(const boolean_string & value) {
-    return std::holds_alternative<js_boolean_t>(value) ? "boolean" : "string";
+    return value.holds<js_boolean_t>() ? "boolean" : "string";
 }
 inline void print_boolean_string(const char * name, const boolean_string & value) {
-    detail::print_variant(name, value);
+    detail::print_union(name, value);
 }
 inline nullable_boolean_string to_nullable_boolean_string(const boolean_string & value) {
     return detail::widen<nullable_boolean_string>(value);
@@ -542,20 +594,20 @@ inline nullable_boolean_string to_nullable_boolean_string(const nullable_string 
     return detail::widen<nullable_boolean_string>(value);
 }
 inline js_num to_number(const nullable_boolean_string & value) {
-    return detail::variant_number(value);
+    return detail::union_number(value);
 }
 inline js_string nullable_boolean_string_text(const nullable_boolean_string & value) {
-    return detail::variant_text(value);
+    return detail::union_text(value);
 }
 inline bool nullable_boolean_string_truthy(const nullable_boolean_string & value) {
-    return detail::variant_truthy(value);
+    return detail::union_truthy(value);
 }
 inline std::string nullable_boolean_string_typeof(const nullable_boolean_string & value) {
-    return detail::variant_typeof(value);
+    return detail::union_typeof(value);
 }
 inline void print_nullable_boolean_string(const char * name,
                                           const nullable_boolean_string & value) {
-    detail::print_variant(name, value);
+    detail::print_union(name, value);
 }
 inline boolean_string global_boolean_string(const nullable_boolean_string & value) {
     return detail::present_carrier<boolean_string>(value);
@@ -569,8 +621,7 @@ inline std::string global_string(const nullable_boolean_string & value) {
 
 template <class T>
 concept primitive_add_operand =
-    detail::one_of<T, js_num, js_boolean_t, nullable_scalar, js_string, nullable_string,
-                   std::variant<js_boolean_t, std::string>> ||
+    detail::one_of<T, js_num, js_boolean_t, nullable_scalar, js_string, nullable_string> ||
     detail::primitive_union<T>;
 
 template <primitive_add_operand L, primitive_add_operand R>
@@ -580,10 +631,8 @@ number_string add(const L & left, const R & right) {
             return true;
         } else if constexpr (std::is_same_v<T, nullable_string>) {
             return value.tag == nullable_string::kind::string;
-        } else if constexpr (std::is_same_v<T, std::variant<js_boolean_t, std::string>>) {
-            return std::holds_alternative<std::string>(value);
         } else if constexpr (detail::primitive_union<T>) {
-            return std::holds_alternative<js_string>(value);
+            return value.template holds<js_string>();
         } else {
             return false;
         }
@@ -598,7 +647,7 @@ number_string add(const L & left, const R & right) {
         } else if constexpr (std::is_same_v<T, js_num> || std::is_same_v<T, js_boolean_t>) {
             return js_string{} + value;
         } else {
-            return detail::variant_text(value);
+            return detail::union_text(value);
         }
     };
     const auto number = []<class T>(const T & value) {
@@ -633,9 +682,13 @@ js_boolean_t visit_equality_operand(const T & value, F && visitor) {
         }
         std::terminate();
     } else if constexpr (primitive_union<T>) {
-        return std::visit(
-            [&](const auto & alternative) { return visit_equality_operand(alternative, visitor); },
-            value);
+        switch (value.tag) {
+        case union_kind::undefined: return visit_equality_operand(undefined_t{}, visitor);
+        case union_kind::null: return visit_equality_operand(js_null_t{}, visitor);
+        case union_kind::scalar: return visit_equality_operand(value.scalar, visitor);
+        case union_kind::string: return visit_equality_operand(value.text, visitor);
+        }
+        std::terminate();
     } else {
         return visitor(nullable_scalar{value});
     }
@@ -804,7 +857,7 @@ inline std::string object_typeof(const object_value & value) {
 /// `ctnative::Boolean(x)`. `Boolean(value)` (ECMA-262 20.3.1.1) is ToBoolean
 /// (7.1.2), so each call operator forwards to the carrier's existing
 /// truthiness: the explicit `bool` of js_num, js_string, js_boolean_t and
-/// js_symbol_t, scalar_truthy, string_truthy, detail::variant_truthy for the
+/// js_symbol_t, scalar_truthy, string_truthy, detail::union_truthy for the
 /// String unions, and object_truthy. It sits here, after those helpers,
 /// rather than beside js_boolean_t. No prototype method is lowered yet.
 struct boolean_constructor {
@@ -819,8 +872,8 @@ struct boolean_constructor {
     js_boolean_t operator()(const nullable_string & value) const {
         return js_boolean_t{string_truthy(value)};
     }
-    template <class... T> js_boolean_t operator()(const std::variant<T...> & value) const {
-        return js_boolean_t{detail::variant_truthy(value)};
+    template <class S, bool N> js_boolean_t operator()(const string_union<S, N> & value) const {
+        return js_boolean_t{detail::union_truthy(value)};
     }
     js_boolean_t operator()(const object_value & value) const {
         return js_boolean_t{object_truthy(value)};

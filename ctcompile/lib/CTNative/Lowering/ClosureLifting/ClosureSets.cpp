@@ -9,10 +9,10 @@
 // lift passes them. Instead each closure stays a value bound to its captures,
 // and the value the call goes through is one of that finite set. Type
 // inference gives it the lattice's `closure_set` type, and the emitted C++ is
-// a std::variant of ctnative::bound members, which a call dispatches with
-// std::visit (Runtime/Callable.hpp):
+// one struct per set whose enum class tag names the member, with a call that
+// switches on the tag (EmitC/ClosureSets.cpp):
 //
-//   std::variant<ctnative::bound<fn_2, js_num>, ctnative::bound<fn_3>> v8 = ...;
+//   closure_set_fn_2_fn_3 v8 = closure_set_fn_2_fn_3::make_fn_2(k);
 //   ctnative::invoke_callable(v8, 5.0);
 //
 // Closure lifting decides the structure: every value in the group is a
@@ -25,7 +25,8 @@
 // same attributes, so type inference types the members and the calls, and
 // admission requires one signature for all of them. The `ctnative.closure_set`
 // attribute on a member's closure names the whole set, so emission
-// (EmitC/ClosureSets.cpp) can spell the variant where the closure is made.
+// (EmitC/ClosureSets.cpp) can spell the set's struct where the closure is
+// made.
 //
 //===----------------------------------------------------------------------===//
 
