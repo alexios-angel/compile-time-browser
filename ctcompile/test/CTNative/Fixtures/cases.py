@@ -34,6 +34,13 @@ CASES = {
         "not %compilation_unit --module %t/array-callbacks.emitc.mlir --js %S/array-callbacks.js --work %t --name array_callbacks_negative --core-build %build --mutate kept --mutate-as string 2>&1 | FileCheck %s --check-prefix=NEGATIVE",
         "%compile_clean --module %t/array-callbacks.emitc.mlir --work %t --name array_callbacks",
     ],
+    "Objects/array-callback-cells": [
+        "python3 %S/string-arrays-calls.py --translate ctjs-translate --opt ctjs-opt --js %S/array-callback-cells.js --out %t/array-callback-cells.emitc.mlir",
+        "ctjs-translate --mlir-to-cpp %t/array-callback-cells.emitc.mlir | FileCheck %s",
+        "%compilation_unit --module %t/array-callback-cells.emitc.mlir --js %S/array-callback-cells.js --work %t --name array_callback_cells --core-build %build",
+        "not %compilation_unit --module %t/array-callback-cells.emitc.mlir --js %S/array-callback-cells.js --work %t --name array_callback_cells_negative --core-build %build --mutate sortCalls 2>&1 | FileCheck %s --check-prefix=NEGATIVE",
+        "%compile_clean --module %t/array-callback-cells.emitc.mlir --work %t --name array_callback_cells",
+    ],
     "Objects/array-sort": [
         "python3 %S/string-arrays-calls.py --translate ctjs-translate --opt ctjs-opt --js %S/array-sort.js --out %t/array-sort.emitc.mlir",
         "ctjs-translate --mlir-to-cpp %t/array-sort.emitc.mlir | FileCheck %s",
