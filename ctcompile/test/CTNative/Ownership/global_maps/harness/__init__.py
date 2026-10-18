@@ -167,7 +167,10 @@ def standalone(args, output, name, value, compilers, nm):
             )
         if name in MIXED_RESULT_TYPES:
             _, alternative = MIXED_RESULT_TYPES[name]
-            variant = f"std::variant<ctnative::js_boolean_t, {alternative}>"
+            variant = {
+                "double": "ctnative::boolean_or_number",
+                "std::string": "ctnative::boolean_or_string",
+            }[alternative]
             key = {
                 "result_seeded_mixed_contents": "double",
                 "result_seeded_join_reseed": "double",
@@ -226,7 +229,7 @@ def standalone(args, output, name, value, compilers, nm):
             key = (
                 "std::string"
                 if name == "nullable_homogeneous_key"
-                else "std::variant<ctnative::js_boolean_t, std::string>"
+                else "ctnative::boolean_or_string"
             )
             if name in nullable_key_sources():
                 key = "ctnative::nullable_string"
@@ -237,23 +240,21 @@ def standalone(args, output, name, value, compilers, nm):
                     "nullable_second_key_use",
                     "nullable_key_mixed",
                 }:
-                    key = "std::variant<ctnative::js_boolean_t, ctnative::nullable_string>"
-            payload = "std::variant<ctnative::js_boolean_t, std::string>"
+                    key = "ctnative::nullable_boolean_or_string"
+            payload = "ctnative::boolean_or_string"
             if name in nullable_payload_sources():
                 key = payload = "ctnative::nullable_string"
                 if name in {"nullable_payload_mixed", "nullable_mixed_payload_readback"}:
-                    key = payload = (
-                        "std::variant<ctnative::js_boolean_t, ctnative::nullable_string>"
-                    )
+                    key = payload = "ctnative::nullable_boolean_or_string"
                 elif name in {
                     "nullable_payload_mixed_readback",
                     "nullable_payload_mixed_identity",
                     "nullable_payload_mixed_saved",
                 }:
-                    payload = "std::variant<ctnative::js_boolean_t, ctnative::nullable_string>"
+                    payload = "ctnative::nullable_boolean_or_string"
             if name in {**nullable_host_result_sources(), **nullable_nested_result_sources()}:
                 key = "ctnative::nullable_string"
-                payload = "std::variant<ctnative::js_boolean_t, ctnative::nullable_string>"
+                payload = "ctnative::nullable_boolean_or_string"
             if f"std::shared_ptr<ctnative::map_storage<{key}, {payload}>>" not in cpp:
                 raise RuntimeError(
                     f"{name}/{mode}: nullable signature changed the exact Map schema"

@@ -537,16 +537,15 @@ void closureLifter::markStaticClassReads() {
         const auto where = [](mlir::Operation * op) {
             return ("`" + op->getParentOfType<ctjs::FuncOp>().getSymName() + "`").str();
         };
-        // Every write stores that one closure, in one block of the owner. The
-        // last one is the class definition's, after the prototype is built.
+        // Every write stores that one closure, in one block of the owner
+        // (RunOnce.cpp keeps a binding written with anything else a capture).
+        // The last write is the class definition's, after the prototype is
+        // built.
         mlir::Operation * last = writes.front();
         for (ctjs::CellSetOp write : writes) {
-            if (write.getValue() != closure.getResult() || write->getBlock() != last->getBlock()) {
-                refuse("it is written with another value in " + where(write.getOperation()));
-                usable = false;
-                break;
-            }
-            if (last->isBeforeInBlock(write)) { last = write; }
+            usable = usable && write.getValue() == closure.getResult() &&
+                     write->getBlock() == last->getBlock();
+            if (usable && last->isBeforeInBlock(write)) { last = write; }
         }
         if (!usable) { continue; }
         // A read that could run before the last write could find

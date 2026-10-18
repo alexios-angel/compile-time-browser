@@ -1,4 +1,5 @@
 ctcompile_test_sources(ctcompile-test-native-runtime NativeRuntime.cpp)
+ctcompile_test_sources(ctcompile-test-native-maps NativeMaps.cpp)
 
 ctcompile_test_sources(ctcompile-test-native-page NativePage.cpp)
 

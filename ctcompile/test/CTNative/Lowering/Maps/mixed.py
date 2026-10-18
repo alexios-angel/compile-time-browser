@@ -45,12 +45,7 @@ int main() {
         auto map = FACTORY();
         std::weak_ptr<ctnative::identity_object> key;
         for (const auto & entry : ENTRIES) {
-            std::visit([&](const auto & alternative) {
-                if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>,
-                                             std::shared_ptr<ctnative::identity_object>>) {
-                    key = alternative;
-                }
-            }, entry.first);
+            if (entry.first.object) { key = entry.first.object; }
         }
         if (key.expired() || map->size() != 2) { return 91; }
         auto alias = map;
@@ -171,7 +166,7 @@ def check_isolated_nullable_helpers(args, source, node, reference, compilers, nm
             "mixedNullableRead",
             "traceMixedNullableRead",
             17182024,
-            "map_storage<std::string, std::variant<ctnative::js_boolean_t, ctnative::nullable_string>>",
+            "map_storage<std::string, ctnative::nullable_boolean_or_string>",
             "mixedNullableRead(true, false) * 1000000 + mixedNullableRead(true, true) * 10000"
             " + mixedNullableRead(false, false) * 100 + mixedNullableRead(false, true)",
         ),
@@ -235,21 +230,15 @@ def main():
         for label, module in [("plain", ir), ("deduced", deduced)]:
             cpp = run([args.translate, "--mlir-to-cpp", str(module)]).stdout
             assert "ctbrowser::script" not in cpp
-            assert "std::variant<ctnative::js_boolean_t," in cpp and "map_get_present_as<" in cpp
+            assert "ctnative::boolean_or_" in cpp and "map_get_present_as<" in cpp
             assert "ctnative::number_map<ctnative::nullable_string>" in cpp
-            assert (
-                "map_storage<ctnative::nullable_string, std::variant<ctnative::js_boolean_t, std::string>>"
-                in cpp
-            )
-            assert "std::variant<ctnative::js_boolean_t, ctnative::nullable_string>" in cpp
+            assert "map_storage<ctnative::nullable_string, ctnative::boolean_or_string>" in cpp
+            assert "ctnative::nullable_boolean_or_string" in cpp
             assert "map_storage<double, ctnative::nullable_string>" in cpp
             assert "map_storage<ctnative::nullable_string, ctnative::nullable_string>" in cpp
-            assert (
-                "map_storage<std::string, std::variant<ctnative::js_boolean_t, ctnative::nullable_string>>"
-                in cpp
-            )
+            assert "map_storage<std::string, ctnative::nullable_boolean_or_string>" in cpp
             assert "ctnative::map_get_present_nullable_as<ctnative::nullable_string>" in cpp
-            key_carrier = "std::variant<double, std::shared_ptr<ctnative::identity_object>>"
+            key_carrier = "ctnative::object_value"
             assert f"ctnative::number_map<{key_carrier}>" in cpp
             assert f"ctnative::map_storage<{key_carrier}, ctnative::object_value>" in cpp
             assert ("#define CTNATIVE_ORDERED_MAPS 1" in cpp) == ordered

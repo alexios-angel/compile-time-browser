@@ -976,6 +976,17 @@ struct closureLifter {
     std::optional<std::string> whyNotLiftableConstructor(ctjs::CreateClosureOp c);
     std::optional<std::string> whyConstructorSetupDoesNotLift(ctjs::CreateClosureOp c);
 
+    // --- Copies per call site (CallSiteCopies.cpp) -----------------------------
+    //
+    // A closure passed down a chain of functions to where it is stored is made
+    // there, in a copy of the chain for that call.
+    bool copyCallSitesForClosures();
+    /// Whether the cell `capture` holds, at `call`, the value every later read
+    /// of it sees.
+    bool settledAt(mlir::Value capture, mlir::Operation * call);
+    /// Whether `fn`, or a function it makes closures of, may write an upvalue.
+    bool writesUpvalues(ctjs::FuncOp fn, unsigned depth);
+
     // --- Closure sets (ClosureSets.cpp) ----------------------------------------
     //
     // Closures whose values meet at scf.if results and are otherwise only

@@ -341,10 +341,6 @@ public:
             /// What console.log prints (Runtime/Console.hpp): a String, a
             /// Number, a Boolean, null or undefined, or an optional of them.
             printable,
-            /// A printable value, or a union of a String with a Number or a
-            /// Boolean, optional or not (Runtime/ctnative.hpp's std::variant
-            /// carriers): what Object.prototype.toString takes.
-            primitive,
             /// A run-once static's constant table whose fields are all
             /// Strings, proved by Inference/StaticTables.cpp, which marks the
             /// call (kNativeStaticTableEnumeration).
