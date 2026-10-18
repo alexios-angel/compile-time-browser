@@ -1228,6 +1228,15 @@ int main() {
         CHECK(ctnative::JSON.stringify(json_value{json_value::object{}}) == js_string{"{}"});
         CHECK(ctnative::JSON.stringify(json_value{json_value::array{}}) == js_string{"[]"});
         CHECK(ctnative::JSON.stringify(json_value{false}) == js_string{"false"});
+
+        // typeof of each kind of node: null, an array and an object are all
+        // "object".
+        CHECK(ctnative::json_typeof(json_value{false}) == js_string{"boolean"});
+        CHECK(ctnative::json_typeof(json_value{-0.0}) == js_string{"number"});
+        CHECK(ctnative::json_typeof(json_value{std::string{}}) == js_string{"string"});
+        CHECK(ctnative::json_typeof(json_value{nullptr}) == js_string{"object"});
+        CHECK(ctnative::json_typeof(json_value{json_value::array{}}) == js_string{"object"});
+        CHECK(ctnative::json_typeof(tree) == js_string{"object"});
     }
 
     // Arrays of Strings: push returns the new length, an index past the end or
