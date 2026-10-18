@@ -623,6 +623,19 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // read `config[key]` under each key as a constant: a literal read only
         // that way is a record, not a table.
         if (!hostContract) { prepareNativeDictionaries(module); }
+        // A function called with values of different exact types gets one copy
+        // per type, so no parameter needs a std::variant. Before the alias
+        // groups and the solve, so both see the copies as ordinary functions.
+        // A function whose original body is kept for a refusal is not copied.
+        if (!hostContract) {
+            copyPerArgumentType(module, [&](ctjs::FuncOp fn) {
+                const auto keeps = [&](const auto & originals) {
+                    return llvm::any_of(originals,
+                                        [&](const auto & row) { return row.first == fn; });
+                };
+                return keeps(recoveryOriginals) || keeps(forOfOriginals);
+            });
+        }
         receiverGroups groups = TypeInference::groupReceivers(module);
         if (ownedGlobals) {
             for (const auto & root : ownedGlobals->roots()) {
