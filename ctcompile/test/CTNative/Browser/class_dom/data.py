@@ -38,6 +38,8 @@ def source(constructor=False):
     original = text.split(f"//--- class-map-record-nested-vendor-{kind}.js\n", 1)[1].split(
         "//---", 1
     )[0]
+    # Drop the comment lines that introduce the next `//---` section.
+    original = re.sub(r"(?:^//.*\n)+\Z", "", original, flags=re.M)
     vendor = dom.BOOTSTRAP.read_text()
     data = (
         vendor[

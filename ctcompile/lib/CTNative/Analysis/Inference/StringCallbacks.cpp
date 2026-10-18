@@ -9,7 +9,8 @@
 // each group, all Strings.
 //
 // `text.toLowerCase()` on a proved String is recognised here too, since the
-// replacement functions this serves (Bootstrap's normalizeDataKey) call it.
+// replacement functions this serves (Bootstrap's normalizeDataKey) call it,
+// and so is `text.toUpperCase()`, which Config's TypeError message calls.
 //
 // The pattern check is shared by the lift and admission: the native runtime
 // runs the pattern with std::regex (Runtime/RegExp.hpp), and only a subset of
@@ -270,7 +271,8 @@ void TypeInference::markStringMethodCalls(mlir::Operation * top) {
         auto read = ctjs::receiverMethod(call);
         const llvm::StringRef name = ctjs::methodKey(call);
         if (read && read.getObject() == call.getReceiver() && read.getResult().hasOneUse() &&
-            call.getArgs().empty() && (name == "toLowerCase" || name == "trim")) {
+            call.getArgs().empty() &&
+            (name == "toLowerCase" || name == "toUpperCase" || name == "trim")) {
             call->setAttr(kNativeStringMethod, mlir::StringAttr::get(call.getContext(), name));
         }
         // `text.replace(/pattern/, replacement)` with a replacement that is

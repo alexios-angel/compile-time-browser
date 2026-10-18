@@ -1,5 +1,6 @@
 # Sibling closures that share one captured variable receive that same cell as an ordinary
-# lifted parameter. Different cells, deeper nesting, escape and reassignment are refused.
+# lifted parameter. A sibling made in the same frame that captures a different cell
+# captures the callee's cell too; deeper nesting, escape and reassignment are refused.
 # RUN: split-file %s %t
 # RUN: %node %t/expected.cjs %t/values.js
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir
@@ -12,7 +13,7 @@
 # RUN: %compilation_unit --cxx g++ --module %t/optimized.mlir --js %t/values.js --work %t --name sibling_optimized_gcc --core-build %build
 # RUN: %compilation_unit --cxx %dom_clang --module %t/optimized.mlir --js %t/values.js --work %t --name sibling_optimized_clang --core-build %build
 # RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name sibling_mutation --mutate siblingSnapshot --mutate-as string --core-build %build 2>&1 | FileCheck %s --check-prefix=MUTATION
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/different-cell.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=MISSING
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/different-cell.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=WIDENED --implicit-check-not=ctnative.not_native
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/deeper.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=MISSING
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/escaping-caller.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/reassigned-function.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REASSIGNED
@@ -23,6 +24,12 @@
 # CPP: ctnative::number_string*
 # MUTATION: global 'siblingSnapshot' differs
 # MISSING: it is read from inside another function, and capture 0 of the function it holds is not a binding this step erases
+# `middle` captures `other` and calls `read`, which captures `value`: `middle`, made in
+# the frame `value` belongs to, takes `value` as well and passes it to `read`.
+# WIDENED: call @middle_[[MIDDLE:[0-9]+]](%{{[0-9]+}}, %{{[0-9]+}})
+# WIDENED: emitc.func @read_[[READ:[0-9]+]](%arg0: !emitc.opaque<"ctnative::js_num">)
+# WIDENED: emitc.func @middle_[[MIDDLE]](%arg0: !emitc.opaque<"ctnative::js_num">, %arg1: !emitc.opaque<"ctnative::js_num">)
+# WIDENED: call @read_[[READ]](%arg1)
 # REFUSED: ctnative.not_native =
 # REASSIGNED: it is assigned more than once
 

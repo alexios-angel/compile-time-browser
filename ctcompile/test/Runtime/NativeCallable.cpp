@@ -8,18 +8,23 @@
 // caller's object rather than a copy, and that the declared result type
 // converts the callable's answer.
 //
-// It also tests a closure set: a std::variant of ctnative::bound members,
-// called through invoke_callable. The cases pin that two members with one
-// signature are still two alternatives, that the member the variant holds is
-// the one called, with its own captures, and that the captures are copies.
+// It also tests a closure set in the form ctcompile emits one
+// (EmitC/ClosureSets.cpp): a struct whose tag names the member a value is,
+// with each member's captures as named fields and a call that switches on
+// the tag. The cases pin that two members with one signature are still two
+// members, that the member the tag names is the one called, with its own
+// captures, that the captures are copies, and that a receiver pointer is
+// declared as ctnative::parameter_t of the member's function.
 //
 //===----------------------------------------------------------------------===//
 
 #include "ctcompile/CTNative/Runtime/Callable.hpp"
 
+#include <exception>
 #include <functional>
 #include <string>
 #include <type_traits>
+#include <utility>
 
 #include "check.hpp"
 
@@ -96,24 +101,43 @@ double scaled(double by, double value) {
     return value * by;
 }
 
-/// `c ? (v => v + k) : (v => v * k)`: one signature, two members.
-using offset_or_scaled =
-    std::variant<ctnative::bound<offset, double>, ctnative::bound<scaled, double>>;
-static_assert(std::variant_size_v<offset_or_scaled> == 2);
-static_assert(!std::is_same_v<ctnative::bound<offset, double>, ctnative::bound<scaled, double>>);
+/// `c ? (v => v + k) : (v => v * k)`: one signature, two members, as
+/// ctcompile emits the set.
+struct closure_set_offset_scaled {
+    enum class member : unsigned char {
+        offset,
+        scaled
+    };
+    member tag{};
+    double c0_0{};
+    double c1_0{};
+    static closure_set_offset_scaled make_offset(double c0) {
+        return {.tag = member::offset, .c0_0 = std::move(c0)};
+    }
+    static closure_set_offset_scaled make_scaled(double c0) {
+        return {.tag = member::scaled, .c1_0 = std::move(c0)};
+    }
+    template <class... A> auto operator()(A &&... args) const {
+        switch (tag) {
+        case member::offset: return offset(c0_0, std::forward<A>(args)...);
+        case member::scaled: return scaled(c1_0, std::forward<A>(args)...);
+        }
+        std::terminate();
+    }
+};
 
 void test_a_set_calls_the_member_it_holds() {
-    offset_or_scaled f = ctnative::bind<offset>(3.0);
-    CHECK(ctnative::invoke_callable(f, 2.0) == 5.0);
-    f = ctnative::bind<scaled>(3.0);
-    CHECK(ctnative::invoke_callable(f, 2.0) == 6.0);
+    auto f = closure_set_offset_scaled::make_offset(3.0);
+    CHECK(f(2.0) == 5.0);
+    f = closure_set_offset_scaled::make_scaled(3.0);
+    CHECK(f(2.0) == 6.0);
 }
 
 void test_a_set_member_copies_its_captures() {
     double k = 2.0;
-    const offset_or_scaled f = ctnative::bind<offset>(k);
+    const auto f = closure_set_offset_scaled::make_offset(k);
     k = 100.0;
-    CHECK(ctnative::invoke_callable(f, 1.0) == 3.0);
+    CHECK(f(1.0) == 3.0);
 }
 
 struct box {
@@ -124,17 +148,33 @@ double plus_x(box * const self, double value) {
     return value + self->x;
 }
 
-/// A member whose capture is a receiver pointer is spelled from the lifted
-/// function's own signature, `box * const` decayed to `box *`, which is what
-/// bind<plus_x> makes from a `box *`.
-static_assert(std::is_same_v<ctnative::bound_prefix<plus_x, 1>, ctnative::bound<plus_x, box *>>);
-static_assert(std::is_same_v<ctnative::bound_prefix<offset, 0>, ctnative::bound<offset>>);
+/// A member whose capture is a receiver pointer declares it as the lifted
+/// function's own parameter type, `box * const` decayed to `box *`.
+static_assert(std::is_same_v<ctnative::parameter_t<plus_x, 0>, box *>);
+static_assert(std::is_same_v<ctnative::parameter_t<offset, 1>, double>);
+
+struct closure_set_plus_x {
+    enum class member : unsigned char {
+        plus_x
+    };
+    member tag{};
+    ctnative::parameter_t<plus_x, 0> c0_0{};
+    static closure_set_plus_x make_plus_x(ctnative::parameter_t<plus_x, 0> c0) {
+        return {.tag = member::plus_x, .c0_0 = std::move(c0)};
+    }
+    template <class... A> auto operator()(A &&... args) const {
+        switch (tag) {
+        case member::plus_x: return plus_x(c0_0, std::forward<A>(args)...);
+        }
+        std::terminate();
+    }
+};
 
 void test_a_member_binds_a_receiver_pointer() {
     box b{4.0};
-    const std::variant<ctnative::bound_prefix<plus_x, 1>> f = ctnative::bind<plus_x>(&b);
+    const auto f = closure_set_plus_x::make_plus_x(&b);
     b.x = 6.0;
-    CHECK(ctnative::invoke_callable(f, 1.0) == 7.0);
+    CHECK(f(1.0) == 7.0);
 }
 
 } // namespace

@@ -7,6 +7,7 @@
 //   el.previousElementSibling    -> el.previousElementSibling()
 //   i.matches(s), i an element or null
 //                                -> ctnative::present_element(i).matches(s)
+//   a === b, two elements        -> a == b
 //
 // present_element throws the VM's TypeError for null, as reading a member of
 // null does.
@@ -31,6 +32,11 @@ std::optional<std::string> elementAction(lowering & lower, mlir::Operation * o) 
         compare && (carrierOf(lower.typeOf(compare.getLhs())) == carrier::nullableElement ||
                     carrierOf(lower.typeOf(compare.getRhs())) == carrier::nullableElement)) {
         return std::string{"element_absent"};
+    }
+    if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(o);
+        compare && carrierOf(lower.typeOf(compare.getLhs())) == carrier::domElement &&
+        carrierOf(lower.typeOf(compare.getRhs())) == carrier::domElement) {
+        return std::string{"element_same"};
     }
     // The names are recorded now: by replacement time the keys are emitc
     // constants.
@@ -90,6 +96,15 @@ bool replaceElement(mlir::Operation * o, llvm::StringRef kind) {
         const auto i1 = b.getI1Type();
         mlir::Value present = ec::CastOp::create(b, where, i1, tested);
         o->getResult(0).replaceAllUsesWith(ec::LogicalNotOp::create(b, where, i1, present));
+        lowering::eraseIfUnused(o);
+        return true;
+    }
+    if (kind == "element_same") {
+        // `a === b` or `a == b` on two page elements (admission proved both):
+        // whether the views name one node.
+        auto compare = llvm::cast<ctjs::CompareOp>(o);
+        o->getResult(0).replaceAllUsesWith(ec::CmpOp::create(
+            b, where, b.getI1Type(), ec::CmpPredicate::eq, compare.getLhs(), compare.getRhs()));
         lowering::eraseIfUnused(o);
         return true;
     }

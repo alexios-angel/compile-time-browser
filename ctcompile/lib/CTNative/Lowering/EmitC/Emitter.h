@@ -235,6 +235,9 @@ struct lowering {
     /// create_object.
     llvm::DenseMap<mlir::Operation *, std::string> accessKey;
     llvm::DenseMap<mlir::Operation *, mlir::Type> accessType;
+    /// The class of each field that owns an instance by value
+    /// (kNativeOwnedInstance), by key: the member's C++ type.
+    llvm::StringMap<mlir::Type> ownedFieldTypes;
     std::set<std::string> identityFields;
     llvm::StringMap<mlir::Type> identityFieldTypes;
     llvm::DenseMap<mlir::Operation *, std::string> identityAccess;
@@ -312,19 +315,33 @@ struct lowering {
     llvm::DenseMap<mlir::Value, std::string> borrowedSignatures;
     llvm::StringMap<std::string> borrowedCallbackSignatures;
     /// Closure sets (ClosureSets.cpp): a set's value and each closure making
-    /// one of its members is a std::variant of ctnative::bound members.
+    /// one of its members is a struct emitted per set, whose enum class tag
+    /// says which member it holds and whose call switches on that tag.
     bool retypeClosureSet(mlir::Value v);
     bool replaceClosureSetMember(mlir::Operation * op);
     std::string closureSetSpelling(llvm::ArrayRef<llvm::StringRef> targets);
-    std::string closureSetMemberSpelling(llvm::StringRef target);
     mlir::Type closureSetCarrierOf(mlir::Value v);
     mlir::Type joinClosureSetCarriers(mlir::Type a, mlir::Type b);
     mlir::Value convertClosureSet(mlir::OpBuilder & b, mlir::Location where, mlir::Value value,
                                   mlir::Type target);
     void declareClosureSetMembers(mlir::OpBuilder & b, llvm::ArrayRef<ec::FuncOp> lowered);
-    llvm::StringMap<std::string> closureSetMembers;
-    /// Each closure-set member's target, mapped to its whole set's variant
-    /// spelling, once computed.
+    void defineReceiverClosureSets(mlir::OpBuilder & b);
+    /// One member of a closure set: its lifted function's C++ name, and the
+    /// type and initializer of each capture field. `receiver` is set when a
+    /// capture's type is spelled from the function's signature, as the pointer
+    /// an arrow's lexical `this` is bound as is.
+    struct closureSetMember {
+        std::string function;
+        llvm::SmallVector<std::pair<std::string, std::string>> captures;
+        bool receiver = false;
+    };
+    const closureSetMember & closureSetMemberOf(llvm::StringRef target);
+    llvm::StringMap<closureSetMember> closureSetMembers;
+    /// Each set's struct definition by name, and whether a member binds a
+    /// receiver, which puts the definition after the function prototypes.
+    std::map<std::string, std::pair<std::string, bool>> closureSetDefinitions;
+    /// Each closure-set member's target, mapped to its whole set's struct
+    /// name, once computed.
     std::optional<llvm::StringMap<std::string>> closureSetGroups;
     static std::string spelled(mlir::Type type);
 

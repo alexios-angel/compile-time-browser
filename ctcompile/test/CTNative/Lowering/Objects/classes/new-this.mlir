@@ -47,16 +47,23 @@
 // NAMES-DAG: emitc.func @describe_D_{{[0-9]+}}
 // RUN-NAMES: r={{"?dp"?$}}
 //
-// getOrCreateInstance returns the instance it builds. The class is proved and
-// the `new this` is lifted, but a class instance is not a returned record
-// (Analysis/Inference/Records.cpp), so each copy is refused as an escape.
+// getOrCreateInstance returns the instance it builds. The class is proved,
+// the `new this` is lifted, and each copy returns its class by value
+// (Analysis/Inference/Records.cpp): the caller only reads `k`. The program is
+// native and prints the interpreter's value; instances-by-value.mlir's
+// twice.js keeps a returned instance that is passed on refused.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/get-or-create.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
-// RUN:   | FileCheck %s --check-prefix=GETORCREATE
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/get-or-create.mlir
+// RUN: FileCheck %s --check-prefix=GETORCREATE --implicit-check-not=ctnative.not_native < %t/get-or-create.mlir
+// RUN: ctjs-opt %t/get-or-create.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/get-or-create.cpp
+// RUN: %gxx -O2 %t/get-or-create.cpp -o %t/get-or-create-gcc
+// RUN: %t/get-or-create-gcc | FileCheck %s --check-prefix=GETORCREATE-RUN
+// RUN: %clangxx -O2 %t/get-or-create.cpp -o %t/get-or-create-clang
+// RUN: %t/get-or-create-clang | FileCheck %s --check-prefix=GETORCREATE-RUN
 // RUN: %native_reference %t/get-or-create.js | FileCheck %s --check-prefix=GETORCREATE-RUN
 // GETORCREATE-NOT: ctnative.class_reason
-// GETORCREATE-DAG: ctjs.func private @getOrCreateInstance_Alert${{[0-9]+}}({{.*}}ctnative.not_native = "an object literal that escapes - it is returned"
-// GETORCREATE-DAG: ctjs.func private @getOrCreateInstance_Button${{[0-9]+}}({{.*}}ctnative.not_native = "an object literal that escapes - it is returned"
+// GETORCREATE-DAG: emitc.func @getOrCreateInstance_Alert_{{[0-9]+}}
+// GETORCREATE-DAG: emitc.func @getOrCreateInstance_Button_{{[0-9]+}}
 // GETORCREATE-RUN: r=12
 //
 // The static read as a value and called as a plain function: its `this` is

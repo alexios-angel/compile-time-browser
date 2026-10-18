@@ -79,6 +79,11 @@ void lowering::retype(ctjs::FuncOp fn) {
     const auto retypeValue = [&](mlir::Value v) {
         if (retypeClosureSet(v)) { return; } // ClosureSets.cpp
         if (retypeBorrowed(v)) { return; }
+        // A listener's own identity, which its removals of itself name.
+        if (isListenerSelfParameter(v)) {
+            v.setType(ec::OpaqueType::get(context, "ctnative::callable_identity"));
+            return;
+        }
         if (v.getDefiningOp<ctjs::CreateObjectOp>() && carrierOf(typeOf(v)) == carrier::json) {
             v.setType(ec::LValueType::get(carrierType(context, carrier::json)));
             return;
@@ -352,6 +357,12 @@ void lowering::retype(ctjs::FuncOp fn) {
             return;
         }
         mlir::Value(object.getResult()).setType(classType(shapeAt(object.getResult())));
+    });
+    // A read of a field owning an instance by value names the member itself.
+    fn.getBody().walk([&](ctjs::GetPropertyOp get) {
+        if (get->hasAttr(kNativeOwnedInstance)) {
+            mlir::Value(get.getResult()).setType(classType(shapeAt(get.getResult())));
+        }
     });
     // The receiver of a lifted method has the same shape, behind a pointer.
     // It is retyped here because retypeValue leaves closed objects alone until

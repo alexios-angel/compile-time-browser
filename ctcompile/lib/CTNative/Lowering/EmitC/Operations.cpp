@@ -308,10 +308,10 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             } else if (expected == ec::OpaqueType::get(context, kPageElementType)) {
                 // An ordinary script's element, such as a folded for-of's
                 // element after the last one: the runtime's unbound view.
-                use.set(
-                    ec::ConstantOp::create(b, where, expected,
-                                           ec::OpaqueAttr::get(context, "ctnative::js_element_t{}"))
-                        .getResult());
+                use.set(ec::ConstantOp::create(
+                            b, where, expected,
+                            ec::OpaqueAttr::get(context, "ctnative::js_element_t::unbound()"))
+                            .getResult());
             } else if (expected == i1 || isBooleanCarrier(expected)) {
                 use.set(convertScalar(
                     b, where, once(emptyBoolean, [&] { return boolConstant(b, where, false); }),
@@ -500,6 +500,21 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     // the closure it held loses its last use and is erased in the sweep. `this` is a parameter
     // and the method is a free function; there is nothing to write.
     if (o->hasAttr("ctnative.method")) {
+        eraseIfUnused(o);
+        return;
+    }
+    // A field that owns an instance by value: a read is the member itself,
+    // and the store copies the constructed instance into it.
+    if (o->hasAttr(kNativeOwnedInstance)) {
+        if (auto get = llvm::dyn_cast<GetPropertyOp>(o)) {
+            swap(memberAccess(b, where, get.getObject(), memberName(o), accessType.lookup(o)));
+            return;
+        }
+        auto set = llvm::cast<SetPropertyOp>(o);
+        const mlir::Type storage = accessType.lookup(o);
+        ec::AssignOp::create(b, where,
+                             memberAccess(b, where, set.getObject(), memberName(o), storage),
+                             ec::LoadOp::create(b, where, storage, set.getValue()));
         eraseIfUnused(o);
         return;
     }

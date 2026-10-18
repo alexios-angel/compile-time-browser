@@ -102,6 +102,16 @@ struct closureLifter {
     /// H that writes it is not constant either, which is why this set is
     /// computed as a fixpoint.
     llvm::DenseSet<mlir::Operation *> mutatesUpvalue;
+    /// The same facts per slot: the slots j each function writes, directly or
+    /// through a closure it makes that relays its slot j (`enclosing_indices`)
+    /// and writes it. A cell captured into slot j of G is written only if G
+    /// writes slot j, so G may write its other slots and the cell stays
+    /// constant (writesSlot). A store through any closure but the function's
+    /// own makes every answer the per-function one (slotsPrecise).
+    llvm::DenseMap<mlir::Operation *, llvm::SmallDenseSet<unsigned, 4>> writtenSlots;
+    bool slotsPrecise = true;
+    /// Whether `target` may write its upvalue slot `slot`.
+    bool writesSlot(ctjs::FuncOp target, unsigned slot);
     /// Functions in which a call may not become a ctjs.call_direct: op::call
     /// pushes its frame with the pending new.target, and call_direct
     /// materialises undefined for it. ResolveGlobals refuses the same shape.
@@ -181,7 +191,7 @@ struct closureLifter {
     //
     // The cells rule 1 cannot take: written twice, written on only one path,
     // or (most commonly) written by a closure with `ctjs.store_upvalue`, which
-    // `mutatesUpvalue` marks and `isConstantCell` refuses. There is no single
+    // `writtenSlots` records and `isConstantCell` refuses. There is no single
     // value to copy into a parameter, so no by-value copy can be correct.
     //
     // So the box becomes an ordinary frame-local variable and the capture
@@ -550,6 +560,12 @@ struct closureLifter {
     /// `removeEventListener` call (at least one adding it), with those calls. Judged by
     /// whyNotHostCallback and rewritten by rewriteHostCallback, as arrayCallbacks are.
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CallOp, 1>> hostCallbacks;
+    /// Turns a listener that removes itself through its own binding into a
+    /// listener the census takes, before any census reads the binding.
+    void bindSelfRemovingListeners();
+    /// Rewrites each call of Bootstrap's execute helper with a function and
+    /// nothing else into a call of that function (ExecuteCalls.cpp).
+    void callExecutedFunctions();
     void hostCallbackCensus();
     std::optional<std::string> whyNotHostCallback(ctjs::CreateClosureOp c);
     void rewriteHostCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
@@ -639,6 +655,15 @@ struct closureLifter {
 
     mlir::Value siblingCapturedValue(ctjs::CreateClosureOp closure, unsigned index,
                                      ctjs::CreateClosureOp holder);
+
+    /// Whether `holder`, made in the frame of `closure`, can capture the cell
+    /// in slot `index` of `closure` as well: the cell is a binding of that
+    /// frame in scope where `holder` is made.
+    bool canAddSiblingCapture(ctjs::CreateClosureOp closure, unsigned index,
+                              ctjs::CreateClosureOp holder);
+    /// Appends `cell` to `holder`'s captures, with its `enclosing_indices`
+    /// entry and its target's `upvalue_count`.
+    void addCaptureSlot(ctjs::CreateClosureOp holder, mlir::Value cell);
 
     void removeCaptureSlots(ctjs::CreateClosureOp c, llvm::ArrayRef<unsigned> slots);
 
@@ -839,6 +864,43 @@ struct closureLifter {
 
     bool usesCloseTheShape(mlir::Value object);
 
+    /// The `new` whose instance `value` is when `value` is the result of a
+    /// direct call of a function that returns that instance by value: the
+    /// function is called only by name, has one return, of an instance it
+    /// constructs, and every symbol use of it is a direct call whose result is
+    /// used only through constant keys or as a method call's receiver
+    /// (Methods.cpp). Null otherwise. markRecordReturns
+    /// (Analysis/Inference/Records.cpp) later returns the class by value.
+    ctjs::ConstructOp returnedInstance(mlir::Value value);
+    /// Whether `ret` returns the instance a `new` in its function made, and
+    /// every call of that function keeps the result as returnedInstance says.
+    /// Otherwise the reason goes into `why` when given.
+    bool returnsAnInstance(ctjs::ReturnOp ret, std::string * why = nullptr);
+    /// Whether `set` stores a `new`'s instance into a field of `this` that owns
+    /// it by value: the instance has no other use, `set` is the only store of
+    /// its key in the module and runs unconditionally in a class constructor
+    /// before anything but other keys' reads and writes uses `this`, and every
+    /// read of that key is of `this` in that constructor or a method of its
+    /// prototype, used only through constant keys or as a method call's
+    /// receiver. So the instance is never shared, aliased or published, and no
+    /// read can run before the store. The reads go into `reads` when given;
+    /// otherwise the reason goes into `why` when given.
+    bool ownsByValue(ctjs::SetPropertyOp set,
+                     llvm::SmallVectorImpl<ctjs::GetPropertyOp> * reads = nullptr,
+                     std::string * why = nullptr);
+    /// Why `object`'s uses do not close its shape: the first store of it into
+    /// a field, or return of it, that ownsByValue or returnsAnInstance refuses,
+    /// with that refusal's reason; otherwise the general rule.
+    std::string whyUsesOpenTheShape(mlir::Value object);
+    /// The first reason ownsByValue or returnsAnInstance gave for refusing each
+    /// store or return. A later round of the lift asks again after rewrites
+    /// that erase an owner's prototype or make a method call direct, and gets
+    /// the reason the unrewritten IR gave.
+    llvm::DenseMap<mlir::Operation *, std::string> refusedInstanceUses;
+    /// The stores ownsByValue proved during methodCensus, before any rewrite
+    /// turned a method call through a read into a direct call, with the reads.
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::GetPropertyOp>> ownedStores;
+
     bool retainedByLocalMap(mlir::OpOperand & use,
                             llvm::DenseMap<mlir::Value, mlir::Value> * reads = nullptr);
 
@@ -962,6 +1024,17 @@ struct closureLifter {
 
     std::optional<std::string> whyNotLiftableConstructor(ctjs::CreateClosureOp c);
     std::optional<std::string> whyConstructorSetupDoesNotLift(ctjs::CreateClosureOp c);
+
+    // --- Copies per call site (CallSiteCopies.cpp) -----------------------------
+    //
+    // A closure passed down a chain of functions to where it is stored is made
+    // there, in a copy of the chain for that call.
+    bool copyCallSitesForClosures();
+    /// Whether the cell `capture` holds, at `call`, the value every later read
+    /// of it sees.
+    bool settledAt(mlir::Value capture, mlir::Operation * call);
+    /// Whether `fn`, or a function it makes closures of, may write an upvalue.
+    bool writesUpvalues(ctjs::FuncOp fn, unsigned depth);
 
     // --- Closure sets (ClosureSets.cpp) ----------------------------------------
     //

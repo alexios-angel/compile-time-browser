@@ -985,118 +985,11 @@ def finish(workloads, budget, started):
     return report
 
 
-# A plugin the self-test loads: one stage that fails on b*.js, one that hangs
-# in a grandchild process, and one that reports MISSING.
-PLUGIN = """
-@stage("probe-check", "fails on scripts named b*.js", "rename it", needs="discover")
-def probe_check(ctx, name):
-    def body(item):
-        bad = ctx.scripts[item]["path"].name.startswith("b")
-        ctx.add(name, item, "FAIL" if bad else "PASS", "probe")
-    ctx.each(name, list(ctx.scripts), body)
-
-
-@stage("probe-sleep", "sleeps past its limit", "wake it", needs="discover")
-def probe_sleep(ctx, name):
-    # the grandchild holds the output pipe: only killing the process GROUP ends the read
-    nap = "import subprocess, sys, time; "
-    nap += "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
-    nap += "time.sleep(30)"
-    def body(item):
-        import sys
-        ctx.run([sys.executable, "-c", nap], name, item)
-        ctx.add(name, item, "PASS", "slept")
-    ctx.each(name, list(ctx.scripts), body)
-
-
-@stage("probe-binary", "a native binary that prints a=1", "write it", needs="discover")
-def probe_binary(ctx, name):
-    def body(item):
-        ctx.artifacts[item] = {"binaries": [ctx.root / "native.sh"]}
-        ctx.add(name, item, "PASS", "probe")
-    ctx.each(name, list(ctx.scripts), body)
-
-
-@stage("probe-missing", "a capability that does not exist yet", "build it", needs="discover")
-def probe_missing(ctx, name):
-    ctx.each(name, list(ctx.scripts), lambda item: ctx.add(name, item, "MISSING", "absent"))
-"""
-
-
 def self_test():
-    with tempfile.TemporaryDirectory() as temp:
-        root = Path(temp)
-        (root / "a.js").write_text("var a = 1;\n")
-        (root / "b.js").write_text("var b = 2;\n")
-        (root / "page.html").write_text('<p><script src="a.js"></script><script>var c;</script>')
-        defs = root / "workloads"
-        defs.mkdir()
-        (defs / "probe.py").write_text(PLUGIN)
-        defaults = {"schema": 1, "done_means": "test", "stages": ["discover", "probe-check"]}
-        defaults["timeouts"] = {"command": 5, "item": 10, "total": 60}
-        (defs / "defaults.json").write_text(json.dumps(defaults))
-        workloads = {
-            "good": {"scripts": ["a.js"]},
-            "bad": {"scripts": ["*.js"], "stages": ["discover", "probe-check", "native-run"]},
-            "page": {"pages": ["page.html"], "stages": ["discover", "page-scripts", "probe-check"]},
-            "slow": {"scripts": ["a.js"], "stages": ["discover", "probe-sleep", "probe-check"]},
-            "unknown": {"scripts": ["a.js"], "stages": ["discover", "no-such-stage"]},
-            "stale": {"scripts": ["missing.js"]},
-            "gap": {"scripts": ["a.js"], "stages": ["discover", "probe-missing"]},
-            "entry": {"scripts": [{"pattern": "a.js", "string_entries": ["f", "g"]}]},
-            "globals": {"scripts": ["a.js"], "stages": ["discover", "probe-binary", "script-run"]},
-            "vacuous": {"scripts": ["b.js"], "stages": ["discover", "probe-binary", "script-run"]},
-            "unnamed-skip": {
-                "scripts": [{"pattern": "b.js", "script-run": {"skip": "no globals"}}],
-                "stages": ["discover", "probe-binary", "script-run"],
-            },
-        }
-        # script-run's reference prints a=1 for a.js and nothing for b.js; the
-        # native binary prints a=1.
-        reference = root / "ctcompile/test/ctcompile-test-native-reference"
-        reference.parent.mkdir(parents=True)
-        reference.write_text('#!/bin/sh\ncase "$1" in */a.js) echo a=1;; esac\n')
-        (root / "native.sh").write_text("#!/bin/sh\necho a=1\n")
-        for program in (reference, root / "native.sh"):
-            program.chmod(0o755)
-        workloads["slow"]["options"] = {"probe-sleep": {"timeout": 0.5}}
-        for name, body in workloads.items():
-            (defs / f"{name}.json").write_text(json.dumps(body))
-        loaded = load(defs)
-        later = time.monotonic() + 60
-        results = {name: check(loaded[name], root, later, root) for name in workloads}
-        assert results["good"]["verdict"] == "DONE", results["good"]
-        assert results["entry"]["verdict"] == "DONE", results["entry"]
-        assert string_entries({"string_entries": ["f", "g"]}) == "f,g"
-        assert string_entries({"path": root / "a.js"}) == ""
-        bad = results["bad"]
-        assert bad["verdict"] == "NOT DONE" and bad["first_gap"]["stage"] == "probe-check", bad
-        assert [s["status"] for s in bad["stages"]] == ["PASS", "FAIL", "PASS"], bad["stages"]
-        page = results["page"]
-        assert page["inventory"]["scripts"] == 2 and page["verdict"] == "DONE", page
-        started = time.monotonic()
-        slow = check(loaded["slow"], root, time.monotonic() + 60, root)
-        assert slow["verdict"] == "TIMED OUT" and time.monotonic() - started < 5, slow
-        blocked = [r for r in slow["results"] if r["stage"] == "probe-check"]
-        assert blocked and blocked[0]["status"] == "BLOCKED", slow["results"]
-        assert results["unknown"]["verdict"] == "CANNOT CHECK", results["unknown"]
-        assert results["stale"]["verdict"] == "CANNOT CHECK", results["stale"]
-        assert results["globals"]["verdict"] == "DONE", results["globals"]
-        vacuous = [r for r in results["vacuous"]["results"] if r["stage"] == "script-run"]
-        assert vacuous[0]["status"] == "FAIL" and "no globals" in vacuous[0]["summary"], vacuous
-        # An opt-out that names no CTest of the workload is refused.
-        skip = [r for r in results["unnamed-skip"]["results"] if r["stage"] == "script-run"]
-        assert skip[0]["status"] == "FAIL" and "opt-out" in skip[0]["summary"], skip
-        gap = results["gap"]
-        assert gap["verdict"] == "NOT DONE" and gap["first_gap"]["status"] == "MISSING", gap
-        spent = check(loaded["slow"], root, time.monotonic() + 0.3, root)
-        assert spent["verdict"] == "TIMED OUT", spent
-        assert spent["stages"][-1]["summary"].startswith("1 TIMEOUT"), spent["stages"]
-        report = finish([results["good"], bad], 60, started)
-        assert report["exit"] == 1 and "VERDICT: NOT DONE" in render_text(report, 5)
-        assert finish([spent], 60, started)["exit"] == 3
-        assert json.loads(json.dumps(report))["schema"] == SCHEMA
-    print("self-test passed")
+    """Run the checks in test_check_workload.py; return the exit status."""
+    import selftest
+
+    return selftest.run(__file__)
 
 
 def main():
@@ -1113,8 +1006,7 @@ def main():
     parser.add_argument("--self-test", action="store_true", help="check this script, no build")
     args = parser.parse_args()
     if args.self_test:
-        self_test()
-        return 0
+        return self_test()
     try:
         available = load(args.definitions)
     except (SetupError, OSError, ValueError) as error:

@@ -138,7 +138,7 @@ carrier carrierOf(mlir::Type type) {
     // Number/Boolean unions use the same tags as an optional scalar. The
     // lattice keeps its exact alternatives: choosing this representation
     // neither adds nullability nor admits objects or unknown values. A
-    // Boolean|String or Number|String value has its own owning variant carrier.
+    // Boolean|String or Number|String value has its own owning String union.
     if (auto variant = llvm::dyn_cast<VariantType>(type)) {
         if (pairAlternatives(variant.getAlternatives(), is<BoolType>, [](mlir::Type alternative) {
                 auto string = llvm::dyn_cast<StrType>(alternative);
@@ -427,15 +427,16 @@ mlir::Type vectorCarrierType(mlir::MLIRContext * c, bool strings) {
     return ec::LValueType::get(ec::OpaqueType::get(c, strings ? kStringVectorType : kVectorType));
 }
 
-/// Returns the C++ storage type for a two-alternative Map value variant
-/// (Boolean|Number or Boolean|String), or empty if there is none. This covers
-/// Map storage only; call operands and typed reads are admitted separately.
+/// Returns the C++ storage type for a two-alternative Map key or value
+/// (Boolean|Number or Boolean|String), a tagged struct of the runtime, or
+/// empty if there is none. This covers Map storage only; call operands and
+/// typed reads are admitted separately.
 llvm::StringRef mixedMapSpelling(mlir::Type type) {
     auto variant = llvm::dyn_cast<VariantType>(type);
     if (!variant) { return {}; }
     const auto alternatives = variant.getAlternatives();
     if (pairAlternatives(alternatives, is<BoolType>, is<NumType>)) {
-        return "std::variant<ctnative::js_boolean_t, double>";
+        return "ctnative::boolean_or_number";
     }
     if (pairAlternatives(alternatives, is<BoolType>, [](mlir::Type alternative) {
             return carrierOf(alternative) == carrier::string;
@@ -448,11 +449,11 @@ llvm::StringRef mixedMapSpelling(mlir::Type type) {
 llvm::StringRef mixedMapKeySpelling(mlir::Type type) {
     if (auto scalar = mixedMapSpelling(type); !scalar.empty()) { return scalar; }
     auto variant = llvm::dyn_cast<VariantType>(type);
-    // Number|object keys hold exact identities; Map values of that type use
-    // object_value storage instead.
+    // A Number|object key is an object_value, as a Map value of that type is:
+    // a key compares objects by identity and Numbers by SameValueZero.
     return variant &&
                    pairAlternatives(variant.getAlternatives(), is<NumType>, is<ObjectIdentityType>)
-               ? "std::variant<double, std::shared_ptr<ctnative::identity_object>>"
+               ? llvm::StringRef{kObjectValueType}
                : llvm::StringRef{};
 }
 
@@ -465,7 +466,7 @@ llvm::StringRef nullableMapSpelling(mlir::Type type) {
     if (carrierOf(type) == carrier::nullable) { return kNullableType; }
     if (carrierOf(optional.getElementType()) == carrier::string) { return kNullableStringType; }
     if (mixedMapSpelling(optional.getElementType()) == kBooleanStringMapType) {
-        return "std::variant<ctnative::js_boolean_t, ctnative::nullable_string>";
+        return "ctnative::nullable_boolean_or_string";
     }
     return {};
 }

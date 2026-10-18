@@ -14,6 +14,9 @@
 #   css-parity.py (`tools/check/compare.py setup` syncs them).
 # - tools: Fabric, which tools/remote_build.py (behind tools/remote-build.sh)
 #   uses for every command it runs on a build box.
+#   Also the AWS and GCP SDKs (boto3 with its CRT extra, which `aws login`
+#   sessions need, google-cloud-compute and ibm-vpc), which `tools/devbox-pool.py status`
+#   asks for a box's power state.
 # - dev: ruff, the Python half of tools/format.sh (`uv run ruff`). uv installs
 #   this group by default.
 #
@@ -27,7 +30,7 @@ dependencies = []
 [dependency-groups]
 test = ["lit==18.1.8", "psutil", "pytest", "pytest-timeout", "pytest-xdist"]
 compare = ["playwright>=1.40,<2", "pillow>=10,<13"]
-tools = ["fabric>=3,<4"]
+tools = ["fabric>=3,<4", "boto3", "botocore[crt]", "google-cloud-compute", "ibm-vpc"]
 dev = ["ruff"]
 
 # tools/format.sh runs `ruff format` over every tracked .py with this file as its

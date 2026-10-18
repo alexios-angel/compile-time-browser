@@ -67,9 +67,14 @@ inline constexpr llvm::StringLiteral kNativeClassConstruct = "ctnative.class_con
 /// (ClosureLifting/Singletons.cpp).
 inline constexpr llvm::StringLiteral kNativeStaticClass = "ctnative.static_class";
 /// On the owning ctjs.create_cell of such a static cell whose reads are all
-/// `new`s but which markStaticClassReads did not mark: why (it is written
-/// with another value, or a read can run before the write).
+/// `new`s but which markStaticClassReads did not mark because a read can run
+/// before the class is written.
 inline constexpr llvm::StringLiteral kNativeStaticClassReason = "ctnative.static_class_reason";
+/// On a ctjs.set_property that stores a class instance into a field of
+/// `this` owning it by value, and on every ctjs.get_property of that field:
+/// the instance lives in the owner as a member of its class, and each read
+/// names that member (ClosureLifting/Methods.cpp, ownsByValue).
+inline constexpr llvm::StringLiteral kNativeOwnedInstance = "ctnative.owned_instance";
 /// On a class constructor's closure: why the class census did not prove it.
 inline constexpr llvm::StringLiteral kNativeClassReason = "ctnative.class_reason";
 /// On the object literal that stands for an instance of a JavaScript class
@@ -133,6 +138,12 @@ inline constexpr llvm::StringLiteral kNativeHostIdentified = "ctnative.host_iden
 /// On a specialised `removeEventListener` call: its arguments are the type,
 /// the listener's identity and the capture flag, with no captures.
 inline constexpr llvm::StringLiteral kNativeHostRemove = "ctnative.host_remove";
+/// A listener that removes itself through its own binding. On its
+/// `ctjs.create_closure`: the capture slot that held the binding, now a
+/// placeholder in which the lift passes the closure's identity. On the lifted
+/// listener: the entry argument that receives the identity, a
+/// ctnative::callable_identity (ClosureLifting/HostCallbacks.cpp).
+inline constexpr llvm::StringLiteral kNativeListenerSelf = "ctnative.listener_self";
 /// On an addEventListener or removeEventListener call whose listener is the
 /// value of a closed top-level function binding: that function. Written by
 /// ResolveGlobals (CTJS), read by ClosureLifting/HostCallbacks.cpp.
