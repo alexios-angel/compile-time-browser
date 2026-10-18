@@ -1063,6 +1063,21 @@ struct closureLifter {
     // A closure passed down a chain of functions to where it is stored is made
     // there, in a copy of the chain for that call.
     bool copyCallSitesForClosures();
+    /// The function each method call that passes a closure made for it
+    /// reaches, where the copies may treat it as a direct call of that function.
+    llvm::DenseMap<mlir::Operation *, ctjs::FuncOp> methodSitesForCopies();
+    /// Whether every object the receiver of `call` may name is known (after
+    /// methodCensus).
+    bool knowsEveryReceiver(ctjs::CallOp call);
+    /// The calls a closure passed to `first` at parameter `at` is handed on
+    /// through, with the position each passes it at, when copies of that chain
+    /// would let the closure lift where the last one uses it.
+    std::optional<llvm::SmallVector<std::pair<ctjs::CallDirectOp, unsigned>>> copyChain(
+        ctjs::FuncOp first, unsigned at);
+    /// The methods whose resolved calls copyCallSitesForClosures turned into
+    /// calls of per-site copies. One left with no call lifts with none
+    /// (whyNotLiftableMethod), so its class is not refused for it.
+    llvm::DenseSet<mlir::Operation *> copiedAwayMethods;
     /// Whether the cell `capture` holds, at `call`, the value every later read
     /// of it sees.
     bool settledAt(mlir::Value capture, mlir::Operation * call);

@@ -514,7 +514,9 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     const bool constructor = llvm::all_of(made, [&](ctjs::CreateClosureOp c) {
         return constructorClosures.contains(c.getOperation());
     });
-    const bool method = !constructor && callsOfTarget.count(target.getOperation()) != 0 &&
+    const bool method = !constructor &&
+                        (callsOfTarget.count(target.getOperation()) != 0 ||
+                         copiedAwayMethods.contains(target.getOperation())) &&
                         llvm::all_of(made, [&](ctjs::CreateClosureOp c) {
                             return methodClosures.contains(c.getOperation());
                         });
@@ -649,7 +651,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             ++out.methods;
         }
         const auto captured = liftedCaptures(made.front());
-        for (methodCall at : callsOfTarget[target.getOperation()]) {
+        for (methodCall at : callsOfTarget.lookup(target.getOperation())) {
             mlir::OpBuilder builder(at.call);
             // Constructor lifting may already have replaced and erased the
             // receiver the census recorded; the live call operand is current.

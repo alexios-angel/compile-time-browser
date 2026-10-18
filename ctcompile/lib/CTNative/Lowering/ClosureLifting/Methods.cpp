@@ -1163,8 +1163,12 @@ std::optional<std::string> closureLifter::whyNotLiftableMethod(ctjs::CreateClosu
     // Every call of it must be one resolveMethod resolved. A method field
     // nothing calls has nowhere to move the receiver to, and an unresolved
     // call would be left dispatching through a closure that is about to lower
-    // to nothing.
+    // to nothing. One whose every call now calls a per-site copy
+    // (CallSiteCopies.cpp) has no call left to move the receiver to and needs
+    // none: its field lowers to nothing like any lifted method's.
     const auto calls = callsOfTarget.find(target.getOperation());
+    const bool copiedAway =
+        calls == callsOfTarget.end() && copiedAwayMethods.contains(target.getOperation());
     if (calls == callsOfTarget.end()) {
         // A method read as a value: `var g = o.m;` loads the field without
         // calling it, so there is no call site for the receiver to move to,
@@ -1185,10 +1189,12 @@ std::optional<std::string> closureLifter::whyNotLiftableMethod(ctjs::CreateClosu
                 }
             }
         }
-        return "nothing calls it";
+        if (!copiedAway) { return "nothing calls it"; }
     }
     const unsigned parameters = entry.getNumArguments() - ctjs::implicit_arguments;
-    for (methodCall at : calls->second) {
+    const llvm::SmallVector<methodCall> sites =
+        copiedAway ? llvm::SmallVector<methodCall>{} : calls->second;
+    for (methodCall at : sites) {
         if (auto why =
                 whyCallSiteDoesNotLift(at.call, at.call.getArgs().size(), parameters, "a call")) {
             return why;
@@ -1212,9 +1218,8 @@ std::optional<std::string> closureLifter::whyNotLiftableMethod(ctjs::CreateClosu
     // which for a method are the calls through the object, not the uses of
     // the closure value.
     return whyLiftTailFails(
-        c, target, llvm::map_range(calls->second, [](const methodCall & at) -> mlir::Operation * {
-            return at.call;
-        }));
+        c, target,
+        llvm::map_range(sites, [](const methodCall & at) -> mlir::Operation * { return at.call; }));
 }
 
 } // namespace ctcompile::ctnative::lowering_detail
