@@ -772,9 +772,10 @@ struct closureLifter {
 
     bool bindLocalFunctions(liftReport & out, bool probeSiblings = false);
 
-    /// Turns calls of methods of an object literal held in a static variable
-    /// into direct calls when nothing else reads it (Singletons.cpp). Returns
-    /// whether it changed the module.
+    /// Turns calls of methods of an object literal held in a static variable,
+    /// and calls through a static variable holding one function, into direct
+    /// calls when nothing else reads it (Singletons.cpp). Returns whether it
+    /// changed the module.
     bool bindSingletonMethods(liftReport & out);
     /// Marks the reads and writes of a static variable that holds one class
     /// and is read only by `new`s that run after its last write
