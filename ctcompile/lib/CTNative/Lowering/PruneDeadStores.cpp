@@ -13,6 +13,11 @@
 // stays a hand-written loop because it must classify every use of a value,
 // erase those users too, and iterate to its own fixpoint.
 //
+// A variable of an ordinary script's element, such as a folded for-of's
+// element carried out of the loop, starts as the unbound view: js_element_t
+// has no default constructor, so `ctnative::js_element_t v;` would not
+// compile.
+//
 //===----------------------------------------------------------------------===//
 
 #include "ctcompile/CTNative/Transforms/Passes.h"
@@ -117,6 +122,15 @@ struct CTNativePruneDeadStoresPass
 
     void runOnOperation() override {
         mlir::Operation * root = getOperation();
+        root->walk([&](ec::VariableOp var) {
+            auto lvalue = llvm::dyn_cast<ec::LValueType>(var.getType());
+            auto initial = llvm::dyn_cast<ec::OpaqueAttr>(var.getValue());
+            if (lvalue && initial && initial.getValue().empty() &&
+                isOpaque(lvalue.getValueType(), "ctnative::js_element_t")) {
+                var.setValueAttr(
+                    ec::OpaqueAttr::get(&getContext(), "ctnative::js_element_t::unbound()"));
+            }
+        });
         unsigned prunedVariableCount = 0;
         unsigned prunedOpCount = 0;
         for (bool changed = true; changed;) {
