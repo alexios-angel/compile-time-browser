@@ -582,8 +582,12 @@ struct closureLifter {
     /// that construct or call. Judged by whyNotPromiseCallback and rewritten
     /// by rewritePromiseCallback, as hostCallbacks are.
     llvm::DenseMap<mlir::Operation *, mlir::Operation *> promiseCallbacks;
+    /// The resolve parameter of each executor in promiseCallbacks, taken
+    /// before any lift moves it behind the captures.
+    llvm::DenseSet<mlir::Value> executorResolves;
     void promiseCallbackCensus();
     std::optional<std::string> whyNotPromiseCallback(ctjs::CreateClosureOp c);
+    bool resolveStaysCalled(mlir::BlockArgument resolve);
     void rewritePromiseCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
 
     /// With `cellFactsOnly`, only what isConstantCell reads: no class census
