@@ -100,6 +100,13 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
 // RUN:              --ctnative-test-instance-registries=lifted=true \
 // RUN:   | FileCheck %s --check-prefix=NEW-THIS
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/new-this-native.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=NEW-THIS-NATIVE --implicit-check-not=ctnative.not_native
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/new-this-native.js --mlir-print-debuginfo 2>/dev/null \
+// RUN:   | ctjs-opt "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ctnative-lower-to-emitc, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))" \
+// RUN:              --mlir-print-debuginfo -o %t/new-this-native.emitc.mlir
+// RUN: %compilation_unit --module %t/new-this-native.emitc.mlir --js %t/new-this-native.js --work %t/new-this-native --name new_this_native
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/new-this-stored.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
 // RUN:              --ctnative-test-instance-registries=lifted=true \
@@ -233,6 +240,19 @@
 // direct calls.
 // NEW-THIS-DAG: ctjs.func @Alert${{[0-9]+}}({{.*}}ctnative.instance_key = "bs.alert", ctnative.instance_registry = "proved"
 // NEW-THIS-DAG: ctjs.func @Button${{[0-9]+}}({{.*}}ctnative.instance_key = "bs.button", ctnative.instance_registry = "proved"
+
+// --- The whole program native, as one of Bootstrap's components --------------
+// A run-once module whose class is made only by getOrCreateInstance's
+// `getInstance(key) || new this(key, size)`: the registry Map is a static
+// (ClosedValueFlow's run-once statics), nothing can reach Map.prototype
+// (NativeMap.cpp's realm rule), the constructor lift takes the registry
+// proof's word for the `new` that joins the read (Constructors.cpp), and
+// that `new` is admitted as the std::shared_ptr it lowers to although its
+// shape is open (Admission/Operations.cpp). The %compilation_unit run
+// checks the answer, 123, against the interpreter.
+// NEW-THIS-NATIVE: emitc.func @getOrCreateInstance_{{[0-9]+}}(
+// NEW-THIS-NATIVE-SAME: -> !emitc.opaque<"std::shared_ptr<Widget>">
+// NEW-THIS-NATIVE: call_opaque "std::make_shared<Widget>"
 
 // --- A fresh instance stored into an object ----------------------------------
 // Only the instance `new this` makes is stored; the read is returned as it
@@ -1010,4 +1030,30 @@ var total = (function () {
     if (b) { t = t + b.toggle(); b.dispose(); }
     if (Button.getInstance(el) === null) { t = t + 10; }
     return t;
+})();
+
+//--- new-this-native.js
+var total = (function () {
+    const registry = new Map();
+    class Widget {
+        constructor(key, size) {
+            this.key = key;
+            this.size = size;
+            registry.set(key, this);
+        }
+        static getInstance(key) {
+            return registry.get(key) || null;
+        }
+        static getOrCreateInstance(key, size) {
+            return this.getInstance(key) || new this(key, size);
+        }
+        grow() {
+            this.size = this.size + 1;
+            return this.size;
+        }
+    }
+    const a = Widget.getOrCreateInstance(1, 3).grow();
+    const b = Widget.getOrCreateInstance(1, 9).grow();
+    const c = Widget.getOrCreateInstance(2, 7).grow();
+    return a * 100 + b * 10 + c + registry.size;
 })();

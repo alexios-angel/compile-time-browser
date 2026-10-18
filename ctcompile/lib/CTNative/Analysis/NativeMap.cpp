@@ -790,8 +790,12 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals,
         module.walk([&](ctjs::StoreGlobalOp store) { stored.insert(store.getName()); });
         bool proved = true;
         module.walk([&](ctjs::LoadGlobalOp load) {
-            if (!proved || load.getName() == "Map" || (hostTyped && hostTyped(load)) ||
-                (!stored.contains(load.getName()) && realmBinding(module, load.getName()))) {
+            // An engine helper (`__ctbrowser_class_defined`) is never bound
+            // by the program either.
+            const llvm::StringRef name = load.getName();
+            if (!proved || name == "Map" || (hostTyped && hostTyped(load)) ||
+                (!stored.contains(name) &&
+                 (realmBinding(module, name) || name.starts_with("__ctbrowser_")))) {
                 return;
             }
             if (globals && globals->proved()) {
@@ -938,11 +942,14 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals,
     // A proved Map held in a run-once static is read only after its one
     // write (connectRunOnceStatics), so the hoisted undefined of the
     // variable is never seen, and its type is the Map's alone.
+    // Only a family decided native has its static marked: a refused one
+    // stays a boxed value, read as it always was.
     llvm::DenseSet<mlir::Attribute> heldStatics;
     for (mlir::Operation * write : graph.staticWrites) {
         auto store = llvm::cast<ctjs::CellSetOp>(write);
         auto cell = store.getCell().getDefiningOp<ctjs::CreateCellOp>();
-        if (cell && families.contains(graph.find(store.getValue()))) {
+        const auto family = families.find(graph.find(store.getValue()));
+        if (cell && family != families.end() && (!perFamily || refusals[family->second].empty())) {
             heldStatics.insert(cell->getAttr(kNativeStaticCell));
         }
     }
