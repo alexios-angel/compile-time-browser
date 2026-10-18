@@ -39,6 +39,7 @@ liftReport closureLifter::run() {
         op->removeAttr(kNativeHostIdentity);
         op->removeAttr(kNativeHostIdentified);
         op->removeAttr(kNativeHostRemove);
+        op->removeAttr(kNativeListenerSelf);
     });
     // Bind local functions directly (specializeCallbacks, bindLocalFunctions)
     // before any census. These rewrites erase boxes, stores, reads and calls,
@@ -90,6 +91,9 @@ liftReport closureLifter::run() {
         }
     }
     bindLocalFunctions(out);
+    // A listener that removes itself through its own binding names itself
+    // directly (HostCallbacks.cpp), before the censuses read the binding.
+    bindSelfRemovingListeners();
     // A static variable holding a table of methods is called through
     // directly (Singletons.cpp). After the binding rule, which removes the
     // methods' captures of the functions it binds.
