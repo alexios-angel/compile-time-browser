@@ -63,6 +63,10 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/argument-inert.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ARGINERT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/argument-defined.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ARGDEFINED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/argument-tostring.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ARGTOSTRING
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/container-read.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=CONTAINERREAD
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/container-unknown.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=CONTAINERUNKNOWN
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/container-write.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=CONTAINERWRITE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/container-stored.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=CONTAINERSTORED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/window-read.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=WINREAD
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/window-alias.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=WINALIAS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-read.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERREAD
@@ -465,6 +469,41 @@
 // ARGTOSTRING: ctjs.globals = [
 // ARGTOSTRING-SAME: reason = "the global object may be converted to a string ({{[^)]*}}), and this program binds `toString`"
 
+// --- Positive: the global object kept in a literal and an array made here ----------
+//
+// Storing the window into a literal or array made here is not an escape: the
+// object is followed instead (follow_holder), into the callee it is passed
+// to, where reading it back yields the window again, which is only read
+// through by name.
+//
+// CONTAINERREAD: ctjs.globals = [
+// CONTAINERREAD-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
+// CONTAINERREAD: ctjs.call_direct @add$1
+
+// --- Negative: unless the object reaches a callee nobody can name ------------------
+//
+// That callee can read the window out of it and write through it.
+//
+// CONTAINERUNKNOWN-NOT: call_direct @add
+// CONTAINERUNKNOWN: ctjs.globals = [
+// CONTAINERUNKNOWN-SAME: reason = "an object that may hold the global object escapes into a call whose callee this module does not name{{[^"]*}}"
+
+// --- Negative: or the window read back out is written through ----------------------
+//
+// A computed write through it can bind any global, `add` included.
+//
+// CONTAINERWRITE-NOT: call_direct @add
+// CONTAINERWRITE: ctjs.globals = [
+// CONTAINERWRITE-SAME: reason = "the global object is written through (ctjs.set_property{{[^"]*}}"
+
+// --- Negative: or the object is stored into one not made here ----------------------
+//
+// `o` may be any object, so the literal leaves this walk's sight.
+//
+// CONTAINERSTORED-NOT: call_direct @add
+// CONTAINERSTORED: ctjs.globals = [
+// CONTAINERSTORED-SAME: reason = "an object that may hold the global object escapes into ctjs.set_property{{[^"]*}}"
+
 // --- Positive: a named read off the global object ----------------------------------
 //
 // The same precision, applied to the global object. A read off `window`
@@ -597,12 +636,13 @@
 // result of every call of a function whose callers are all in sight
 // (ENTERNAMED above, enter-cell.js and enter-return.js). Writing another value
 // into the binding keeps its reads watched, so one passed to an unknown callee
-// is still refused; a returned window stored into an object is refused; and a
-// return is refused outright when the function is also used as a value,
-// because a caller out of sight would receive the window.
+// is still refused; a returned window stored into a literal is followed
+// through the literal, which is refused here because it then reaches an
+// unknown callee; and a return is refused outright when the function is also
+// used as a value, because a caller out of sight would receive the window.
 //
 // ENTERCELLLEAK: ctjs.global_escapes = ["the global object escapes into a call whose callee this module does not name (ctjs.call{{[^"]*}}"]
-// ENTERRETURNSTORED: ctjs.global_escapes = ["the global object escapes into ctjs.set_property{{[^"]*}}"]
+// ENTERRETURNSTORED: ctjs.global_escapes = ["an object that may hold the global object escapes into a call whose callee this module does not name (ctjs.call{{[^"]*}}"]
 // ENTERRETURNVALUE: ctjs.global_escapes = ["the global object escapes into ctjs.return{{[^"]*}} - `host${{[0-9]+}}` is also used as a value by ctjs.call{{[^"]*}}"]
 
 // --- Positive: a cycle terminates -------------------------------------------------
@@ -995,6 +1035,38 @@ function toString() { this.injected = 1; return ""; }
 (function (child) { return document.body.classList.contains(child); })(globalThis);
 var z = add(1, 2);
 
+//--- container-read.js
+function add(a, b) { return a + b; }
+(function () {
+    var box = { w: globalThis };
+    var list = [globalThis];
+    return (function (o, a) { return o.w.innerWidth + a[0].innerHeight; })(box, list);
+})();
+var z = add(1, 2);
+
+//--- container-unknown.js
+function add(a, b) { return a + b; }
+(function () {
+    var box = { w: globalThis };
+    return someHost(box);
+})();
+var z = add(1, 2);
+
+//--- container-write.js
+function add(a, b) { return a + b; }
+(function (k) {
+    var box = { w: globalThis };
+    box.w[k] = 1;
+})("add");
+var z = add(1, 2);
+
+//--- container-stored.js
+function add(a, b) { return a + b; }
+(function (o) {
+    o.box = { w: globalThis };
+})({});
+var z = add(1, 2);
+
 //--- enter-read.js
 function add(a, b) { return a + b; }
 // The global object handed to a closure defined two tokens earlier (a UMD
@@ -1102,7 +1174,7 @@ function add(a, b) { return a + b; }
 (function () {
     function host() { return window; }
     function use() { var box = {}; box.held = host(); return box; }
-    use();
+    someHost(use());
 })();
 var z = add(1, 2);
 
