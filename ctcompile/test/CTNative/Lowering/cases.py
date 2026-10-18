@@ -477,7 +477,8 @@ CASES = {
         "ctjs-translate --ctbrowser-js-to-ctjs %t/written.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc    | FileCheck %s --check-prefix=WRITTEN",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/args.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc    | FileCheck %s --check-prefix=ARGS",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/function.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc    | FileCheck %s --check-prefix=FUNCTION",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/shared.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc    | FileCheck %s --check-prefix=SHARED",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/shared.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc    | FileCheck %s --check-prefix=SHARED --implicit-check-not=ctnative.not_native",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/shared-escaped.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc    | FileCheck %s --check-prefix=SHAREDESCAPED",
     ],
     "Closures/return-dispatch": [
         "split-file %s %t",
