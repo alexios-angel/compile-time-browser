@@ -196,7 +196,7 @@ BOX_UV = "/home/linuxbrew/.linuxbrew/bin/uv"
 
 
 def usage(box):
-    """CPU, memory and disk use of a running box, as one line of text."""
+    """CPU, memory and disk use of a box as one line of text, or None if it does not answer."""
     from invoke.exceptions import CommandTimedOut, UnexpectedExit
     from paramiko import SSHException
     from remote_build import open_connection
@@ -207,8 +207,8 @@ def usage(box):
     try:
         with open_connection(box["name"]) as conn:
             u = json.loads(conn.run(command, hide=True, timeout=60).stdout)
-    except (OSError, SSHException, UnexpectedExit, CommandTimedOut, ValueError) as e:
-        return f"usage unavailable ({type(e).__name__})"
+    except (OSError, SSHException, UnexpectedExit, CommandTimedOut, ValueError):
+        return None
     gib = 1 << 30
     return (
         f"CPU {u['cpu']:3.0f}% of {u['cores']} cores, "
@@ -226,9 +226,13 @@ def box_status(box):
             os.close(lock)
     round_ = ", round" if os.path.exists(box["round_marker"]) else ""
     slots = f"{free}/{len(slot_locks(box))} slots free{round_}"
-    if not is_running(box):
-        return f"{box['name']:12s} stopped  {slots}"
-    return f"{box['name']:12s} running  {slots}; {usage(box)}"
+    # A box that answers is running, so the slow cloud status (16 s for AWS's
+    # server.sh) is asked only of a box that does not.
+    if (load := usage(box)) is not None:
+        return f"{box['name']:12s} running  {slots}; {load}"
+    if is_running(box):
+        return f"{box['name']:12s} running  {slots}; not answering over ssh"
+    return f"{box['name']:12s} stopped  {slots}"
 
 
 def status(settings):
