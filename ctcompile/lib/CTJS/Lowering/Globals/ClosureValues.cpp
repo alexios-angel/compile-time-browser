@@ -14,14 +14,19 @@
 //    written to it: each ctjs.cell_set, and each ctjs.store_upvalue in a
 //    function that captured it, through nested captures.
 //  - A call takes what the functions its callee may hold return, and a direct
-//    call what its symbol returns.
+//    call what its symbol returns. Those values are walked in the call's
+//    frame first: there the function's parameters take this call's
+//    arguments, not every caller's, and the walk goes back to the steps
+//    above where it leaves the frame (inFrame).
 //  - A step of an array destructuring (the k-th `__ctbrowser_iter_next` on an
 //    `__ctbrowser_iter_open` in the same block) takes the k-th element of each
 //    array literal the source may be. The literal must be used only by its
 //    own appends, by destructurings, and by `return` into calls whose results
 //    are only destructured, so nothing changes it before it is read; and the
 //    program must write no prototype table the realm made
-//    (read_prototype_writes), so it iterates its elements.
+//    (read_prototype_writes), so it iterates its elements. When the source is
+//    a call's result, a literal made in that call's frame has its element
+//    walked in that frame.
 //  - An operator answers a primitive, which is no closure.
 //
 // Anything else is unknown: a property read, a global, `this`, a value a
@@ -86,6 +91,26 @@ GetPropertyOp methodRead(CallOp call) {
     const mlir::Value receiver = registerFlowOrigin(call.getReceiver());
     return read && receiver && registerFlowOrigin(read.getObject()) == receiver ? read
                                                                                 : GetPropertyOp{};
+}
+
+/// The argument `call` passes to parameter `index` of the function it
+/// enters, or null where it passes fewer, as the parameter is then undefined.
+/// A direct call passes the entry block's arguments in order; a plain call
+/// passes the parameters after its callee and receiver.
+mlir::Value argumentFor(mlir::Operation * call, unsigned index) {
+    if (mlir::isa<CallDirectOp>(call)) {
+        return index < call->getNumOperands() ? call->getOperand(index) : mlir::Value{};
+    }
+    const mlir::OperandRange args = mlir::cast<CallOp>(call).getArgs();
+    return index - implicit_arguments < args.size() ? args[index - implicit_arguments]
+                                                    : mlir::Value{};
+}
+
+/// What `function` returns, from each of its returns.
+llvm::SmallVector<mlir::Value> returnsOf(FuncOp function) {
+    llvm::SmallVector<mlir::Value> values;
+    function.walk([&](ReturnOp ret) { values.append(ret->operand_begin(), ret->operand_end()); });
+    return values;
 }
 
 /// Whether `use` hands an array to an array destructuring.
@@ -171,13 +196,7 @@ std::string ClosureValues::step(mlir::Value value, llvm::SmallVectorImpl<mlir::V
                   HasPropertyOp, DeletePropertyOp, FromBoolOp>(op)) {
         return {};
     }
-    if (auto call = mlir::dyn_cast<CallOp>(op)) { return resultSources(call, work); }
-    if (auto direct = mlir::dyn_cast<CallDirectOp>(op)) {
-        FuncOp target = direct.getTarget();
-        if (!target) { return "the result of " + describe(op); }
-        target.walk([&](ReturnOp ret) { work.append(ret->operand_begin(), ret->operand_end()); });
-        return {};
-    }
+    if (mlir::isa<CallOp, CallDirectOp>(op)) { return resultSources(op, work); }
     llvm::SmallVector<CreateCellOp> cells;
     std::string why;
     if (auto read = mlir::dyn_cast<CellGetOp>(op)) {
@@ -211,27 +230,44 @@ std::string ClosureValues::parameterSources(FuncOp function, unsigned index,
     const callers & sites = callersOf(function);
     if (!sites.unknown.empty()) { return sites.unknown; }
     for (mlir::Operation * site : sites.calls) {
-        // A direct call passes the entry block's arguments in order; a plain
-        // call passes the parameters after its callee and receiver.
-        if (mlir::isa<CallDirectOp>(site)) {
-            if (index < site->getNumOperands()) { work.push_back(site->getOperand(index)); }
-            continue;
-        }
-        const mlir::OperandRange args = mlir::cast<CallOp>(site).getArgs();
-        if (index - implicit_arguments < args.size()) {
-            work.push_back(args[index - implicit_arguments]);
-        }
+        if (const mlir::Value argument = argumentFor(site, index)) { work.push_back(argument); }
     }
     return {};
 }
 
-std::string ClosureValues::resultSources(CallOp call, llvm::SmallVectorImpl<mlir::Value> & work) {
-    const llvm::StringRef global = calleeGlobalName(call);
-    if (global == "__ctbrowser_iter_next") { return elementSources(call, work); }
+std::string ClosureValues::resultSources(mlir::Operation * call,
+                                         llvm::SmallVectorImpl<mlir::Value> & work) {
+    if (auto plain = mlir::dyn_cast<CallOp>(call);
+        plain && calleeGlobalName(plain) == "__ctbrowser_iter_next") {
+        return elementSources(plain, work);
+    }
+    llvm::SmallVector<FuncOp> functions;
+    if (std::string why = calleesOf(call, functions); !why.empty()) { return why; }
+    for (FuncOp function : functions) {
+        llvm::SetVector<mlir::Operation *> made;
+        if (std::string why = inFrame(function, call, returnsOf(function), work, made);
+            !why.empty()) {
+            return why;
+        }
+        for (mlir::Operation * literal : made) { work.push_back(literal->getResult(0)); }
+    }
+    return {};
+}
+
+std::string ClosureValues::calleesOf(mlir::Operation * call,
+                                     llvm::SmallVectorImpl<FuncOp> & functions) {
+    if (auto direct = mlir::dyn_cast<CallDirectOp>(call)) {
+        FuncOp target = direct.getTarget();
+        if (!target) { return "the result of " + describe(call); }
+        functions.push_back(target);
+        return {};
+    }
+    auto plain = mlir::cast<CallOp>(call);
+    const llvm::StringRef global = calleeGlobalName(plain);
     if (!global.empty()) {
         return "the result of " + describe(call) + " through `" + global.str() + "`";
     }
-    const objects callees = objectsOf(call.getCallee());
+    const objects callees = objectsOf(plain.getCallee());
     if (!callees.unknown.empty()) { return callees.unknown; }
     for (mlir::Operation * made : callees.made) {
         // Calling an array or an object literal throws.
@@ -241,7 +277,46 @@ std::string ClosureValues::resultSources(CallOp call, llvm::SmallVectorImpl<mlir
         if (!target) {
             return "the result of a function the module does not hold (" + describe(made) + ")";
         }
-        target.walk([&](ReturnOp ret) { work.append(ret->operand_begin(), ret->operand_end()); });
+        functions.push_back(target);
+    }
+    return {};
+}
+
+std::string ClosureValues::inFrame(FuncOp function, mlir::Operation * call,
+                                   llvm::SmallVector<mlir::Value> values,
+                                   llvm::SmallVectorImpl<mlir::Value> & work,
+                                   llvm::SetVector<mlir::Operation *> & made) {
+    // ponytail: one frame deep. A call met inside the frame leaves it, so its
+    // own callee is walked in its frame, but its arguments take every caller's
+    // values; nesting frames would answer more.
+    llvm::DenseSet<mlir::Value> seen;
+    while (!values.empty()) {
+        mlir::Value value = values.pop_back_val();
+        if (!seen.insert(value).second) { continue; }
+        // Another function's value, a call's result, or an upvalue (whose cell
+        // every call of the function shares) is not this call's alone.
+        mlir::Operation * op = value.getDefiningOp();
+        if (value.getParentRegion()->getParentOfType<FuncOp>() != function ||
+            mlir::isa_and_present<CallOp, CallDirectOp, LoadUpvalueOp>(op)) {
+            work.push_back(value);
+            continue;
+        }
+        auto argument = mlir::dyn_cast<mlir::BlockArgument>(value);
+        if (argument && argument.getOwner()->isEntryBlock() &&
+            argument.getArgNumber() >= implicit_arguments) {
+            if (readsRawArguments(function)) {
+                return quoted(function) + " reads its raw arguments";
+            }
+            if (const mlir::Value passed = argumentFor(call, argument.getArgNumber())) {
+                work.push_back(passed);
+            }
+            continue;
+        }
+        // The rest stays in the frame: a binding cell the function makes is
+        // made again by each call, and only that call's code writes it here.
+        objects found;
+        if (std::string why = step(value, values, found); !why.empty()) { return why; }
+        made.insert(found.made.begin(), found.made.end());
     }
     return {};
 }
@@ -271,9 +346,38 @@ std::string ClosureValues::elementSources(CallOp next, llvm::SmallVectorImpl<mli
     }
     llvm::sort(steps, [](CallOp a, CallOp b) { return a->isBeforeInBlock(b); });
     const auto index = static_cast<std::size_t>(llvm::find(steps, next) - steps.begin());
-    const objects rows = objectsOf(open.getArgs().front());
-    if (!rows.unknown.empty()) { return rows.unknown; }
-    for (mlir::Operation * made : rows.made) {
+    // The literals the source may be. When the source is a call's result, a
+    // literal made in that call's frame keeps the function it was made in, so
+    // its element is walked in that frame too; any other keeps null.
+    llvm::SmallVector<std::pair<mlir::Operation *, FuncOp>> rows;
+    const mlir::Value source = open.getArgs().front();
+    mlir::Operation * site = source.getDefiningOp();
+    auto plain = mlir::dyn_cast_if_present<CallOp>(site);
+    if (mlir::isa_and_present<CallDirectOp>(site) || (plain && calleeGlobalName(plain).empty())) {
+        llvm::SmallVector<FuncOp> functions;
+        if (std::string why = calleesOf(site, functions); !why.empty()) { return why; }
+        for (FuncOp function : functions) {
+            llvm::SmallVector<mlir::Value> outside;
+            llvm::SetVector<mlir::Operation *> made;
+            if (std::string why = inFrame(function, site, returnsOf(function), outside, made);
+                !why.empty()) {
+                return why;
+            }
+            for (mlir::Operation * literal : made) { rows.push_back({literal, function}); }
+            for (mlir::Value value : outside) {
+                const objects found = objectsOf(value);
+                if (!found.unknown.empty()) { return found.unknown; }
+                for (mlir::Operation * literal : found.made) {
+                    rows.push_back({literal, FuncOp{}});
+                }
+            }
+        }
+    } else {
+        const objects found = objectsOf(source);
+        if (!found.unknown.empty()) { return found.unknown; }
+        for (mlir::Operation * literal : found.made) { rows.push_back({literal, FuncOp{}}); }
+    }
+    for (auto [made, function] : rows) {
         auto array = mlir::dyn_cast<CreateArrayOp>(made);
         if (!array) { return "an array destructuring of " + describe(made); }
         if (std::string why = onlyDestructured(array); !why.empty()) { return why; }
@@ -287,7 +391,17 @@ std::string ClosureValues::elementSources(CallOp next, llvm::SmallVectorImpl<mli
         llvm::sort(appends, [](AppendOp a, AppendOp b) { return a->isBeforeInBlock(b); });
         for (AppendOp append : appends) { elements.push_back(append.getElement()); }
         // A shorter literal answers undefined.
-        if (index < elements.size()) { work.push_back(elements[index]); }
+        if (index >= elements.size()) { continue; }
+        if (!function) {
+            work.push_back(elements[index]);
+            continue;
+        }
+        llvm::SetVector<mlir::Operation *> inner;
+        if (std::string why = inFrame(function, site, {elements[index]}, work, inner);
+            !why.empty()) {
+            return why;
+        }
+        for (mlir::Operation * literal : inner) { work.push_back(literal->getResult(0)); }
     }
     return {};
 }
