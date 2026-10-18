@@ -717,6 +717,17 @@ bool closureLifter::copyCallSitesForClosures() {
         boundCaptureCalls.erase(op);
         siblingBindingTargets.erase(op);
     }
+    // A dead original keeps the importer's public visibility otherwise, and
+    // MLIR's DeadCodeAnalysis gives a public function unknown callers: its
+    // parameters read !ctnative.boxed, and every call it makes passes that on,
+    // so a live function it shares with the copies is refused for a caller
+    // that never runs. Private, it has no callers and is dead to the type
+    // solve too, as lift() makes its targets private for the same reason; the
+    // sweep after admission removes it.
+    for (mlir::Operation * op : dead) {
+        mlir::SymbolTable::setSymbolVisibility(llvm::cast<ctjs::FuncOp>(op),
+                                               mlir::SymbolTable::Visibility::Private);
+    }
 
     llvm::SmallVector<mlir::NamedAttribute> all;
     if (auto earlier = module->getAttrOfType<mlir::DictionaryAttr>(kNativeCopies)) {
