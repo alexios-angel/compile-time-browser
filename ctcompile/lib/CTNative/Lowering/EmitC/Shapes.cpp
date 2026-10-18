@@ -143,14 +143,21 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
                 continue;
             }
             mlir::Value key;
+            // A field that owns an instance by value is a member of its class.
+            const auto owned = [&](mlir::Value fallback) {
+                const auto found = user->hasAttr(kNativeOwnedInstance)
+                                       ? ownedFieldTypes.find(ctjs::constantKey(key))
+                                       : ownedFieldTypes.end();
+                return found != ownedFieldTypes.end() ? found->second : carried(fallback);
+            };
             if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
                 if (get.getObject() != alias) { continue; }
                 key = get.getKey();
-                join(read, ctjs::constantKey(key), carried(get.getResult()));
+                join(read, ctjs::constantKey(key), owned(get.getResult()));
             } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
                 if (set.getObject() != alias) { continue; }
                 key = set.getKey();
-                join(stored, ctjs::constantKey(key), carried(set.getValue()));
+                join(stored, ctjs::constantKey(key), owned(set.getValue()));
             }
             if (key) { accessKey[user] = ctjs::constantKey(key).str(); }
         }
@@ -182,6 +189,23 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
 /// have been seen.
 void lowering::censusShapes(llvm::ArrayRef<ctjs::FuncOp> accepted) {
     joinInstanceValues(accepted);
+    // A field owning a class instance by value holds that class, spelled as
+    // nameFamilies spells a class family.
+    // ponytail: assumes the class family is not a template and its name is
+    // not taken by another family; spell it from the family once one needs to.
+    for (ctjs::FuncOp fn : accepted) {
+        fn.getBody().walk([&](ctjs::SetPropertyOp set) {
+            auto object = set.getValue().getDefiningOp<ctjs::CreateObjectOp>();
+            auto name = object ? object->getAttrOfType<mlir::StringAttr>(kNativeClassName)
+                               : mlir::StringAttr{};
+            if (!set->hasAttr(kNativeOwnedInstance) || !name) { return; }
+            const std::string spelled = admission::isReservedInCpp(name.getValue())
+                                            ? "js_" + name.getValue().str()
+                                            : name.getValue().str();
+            ownedFieldTypes[ctjs::constantKey(set.getKey())] =
+                ec::OpaqueType::get(context, spelled);
+        });
+    }
     std::vector<llvm::StringSet<>> keys; // per family, its distinct (name, type) keys
     for (ctjs::FuncOp fn : accepted) {
         fn.getBody().walk([&](ctjs::CreateObjectOp object) {

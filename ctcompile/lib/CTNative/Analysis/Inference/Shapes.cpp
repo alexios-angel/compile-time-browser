@@ -146,6 +146,14 @@ std::optional<unsigned> borrowedObjectCapture(mlir::OpOperand & use) {
     return index;
 }
 
+/// True when `use` is the instance a field owns by value, stored into that
+/// field (ClosureLifting's ownsByValue). The owner keeps the instance as a
+/// member of its class, so the store does not open the instance's shape.
+bool storesOwnedInstance(mlir::OpOperand & use) {
+    return llvm::isa<ctjs::SetPropertyOp>(use.getOwner()) && use.getOperandNumber() == 2 &&
+           use.getOwner()->hasAttr(kNativeOwnedInstance);
+}
+
 /// True when \p use passes the object as a lifted method's `this` or as a listed
 /// object argument. Such a use keeps the shape closed: closure lifting proved
 /// the callee reaches the object only through constant keys, and it marked the
@@ -169,12 +177,17 @@ bool passesAReceiver(mlir::OpOperand & use) {
 /// as a lifted method's receiver or object argument, or as a native Map record
 /// store, so its set of fields is fixed.
 bool TypeInference::hasClosedShape(mlir::Value object) {
+    // A read of a field that owns an instance by value names that instance.
+    const bool ownedRead = object.getDefiningOp() &&
+                           llvm::isa<ctjs::GetPropertyOp>(object.getDefiningOp()) &&
+                           object.getDefiningOp()->hasAttr(kNativeOwnedInstance);
     if (!object.getDefiningOp<ctjs::CreateObjectOp>() && !namesAnObjectParameter(object) &&
-        !nativeMapRecordOrigin(object) && !isRecordCall(object)) {
+        !nativeMapRecordOrigin(object) && !isRecordCall(object) && !ownedRead) {
         return false;
     }
     for (mlir::OpOperand & use : object.getUses()) {
         mlir::Operation * user = use.getOwner();
+        if (storesOwnedInstance(use)) { continue; }
         // Assignment to __proto__ invokes an inherited accessor, so even a
         // dominating constant-key store does not establish an own data field.
         // Only as the target (operand 0): stored as a value into another object
@@ -237,6 +250,20 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> TypeInference::gr
                 classes.unionSets(call->getOperand(static_cast<unsigned>(index)),
                                   entry.getArgument(static_cast<unsigned>(index)));
             }
+        }
+    });
+
+    // A read of a field owning an instance by value is that instance.
+    llvm::StringMap<mlir::Value> ownedByKey;
+    top->walk([&](ctjs::SetPropertyOp set) {
+        if (set->hasAttr(kNativeOwnedInstance)) {
+            ownedByKey[ctjs::constantKey(set.getKey())] = set.getValue();
+        }
+    });
+    top->walk([&](ctjs::GetPropertyOp read) {
+        if (!read->hasAttr(kNativeOwnedInstance)) { return; }
+        if (mlir::Value instance = ownedByKey.lookup(ctjs::constantKey(read.getKey()))) {
+            classes.unionSets(instance, read.getResult());
         }
     });
 

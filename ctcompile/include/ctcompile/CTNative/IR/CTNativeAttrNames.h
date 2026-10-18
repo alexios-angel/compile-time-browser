@@ -67,6 +67,11 @@ inline constexpr llvm::StringLiteral kNativeStaticClass = "ctnative.static_class
 /// `new`s but which markStaticClassReads did not mark because a read can run
 /// before the class is written.
 inline constexpr llvm::StringLiteral kNativeStaticClassReason = "ctnative.static_class_reason";
+/// On a ctjs.set_property that stores a class instance into a field of
+/// `this` owning it by value, and on every ctjs.get_property of that field:
+/// the instance lives in the owner as a member of its class, and each read
+/// names that member (ClosureLifting/Methods.cpp, ownsByValue).
+inline constexpr llvm::StringLiteral kNativeOwnedInstance = "ctnative.owned_instance";
 /// On a class constructor's closure: why the class census did not prove it.
 inline constexpr llvm::StringLiteral kNativeClassReason = "ctnative.class_reason";
 /// On the object literal that stands for an instance of a JavaScript class
