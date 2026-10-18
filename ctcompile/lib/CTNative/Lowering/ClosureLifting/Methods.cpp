@@ -1086,6 +1086,16 @@ void closureLifter::methodCensus() {
             behind[read].assign(registry.instances.begin(), registry.instances.end());
         }
     }
+    // An arrow's `this` names what its maker's receiver names when the arrow
+    // runs only during its maker's calls (ArrowThis.cpp), so `this.m()` in it
+    // resolves as it would in the maker.
+    llvm::SmallVector<std::pair<mlir::Value, mlir::Value>> lexicalThisReads;
+    module.walk([&](ctjs::LoadUpvalueOp read) {
+        const mlir::Value maker = lexicalThisMaker(read.getResult());
+        if (maker && !useOutlivingMaker(read->getParentOfType<ctjs::FuncOp>())) {
+            lexicalThisReads.emplace_back(read.getResult(), maker);
+        }
+    });
     // Fixpoint over the receiver chain. `this.other()` inside a method has
     // `%arg0` as its receiver, and `%arg0` names whatever the call sites pass,
     // which is known only once those call sites resolve. One round per link
@@ -1093,6 +1103,15 @@ void closureLifter::methodCensus() {
     // by the literals in the module.
     for (bool changed = true; changed;) {
         changed = false;
+        for (const auto & [read, maker] : lexicalThisReads) {
+            for (mlir::Value object : behind.lookup(maker)) {
+                llvm::SmallVector<mlir::Value, 2> & named = behind[read];
+                if (!llvm::is_contained(named, object)) {
+                    named.push_back(object);
+                    changed = true;
+                }
+            }
+        }
         for (ctjs::CallOp call : allCalls) {
             auto resolved = resolveMethod(call);
             if (!resolved || resolved->target.getBody().empty() ||

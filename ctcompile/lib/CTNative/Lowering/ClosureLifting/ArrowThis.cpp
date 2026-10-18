@@ -156,16 +156,26 @@ llvm::SmallVector<int32_t> closureLifter::lexicalThisObjectArgs(
                                listsObjectArg(maker, self.getArgNumber());
         if (!fromReceiver && !fromArrow) { return {}; }
     }
-    // Constant-key reads and writes, or the cell of an arrow made in here,
-    // which that arrow's own lift decides; if it does not take `this` as a
-    // pointer, the cell stays, opens this parameter's shape, and admission
-    // refuses this arrow.
+    // Constant-key reads and writes, the receiver of a method call the method
+    // lift makes direct (or has made direct), which takes the pointer as its
+    // `this`, or the cell of an arrow made in here, which that arrow's own
+    // lift decides; if it does not take `this` as a pointer, the cell stays,
+    // opens this parameter's shape, and admission refuses this arrow.
+    const auto receives = [&](mlir::OpOperand & use) {
+        if (auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner())) {
+            return use.getOperandNumber() == 1 && resolveMethod(call).has_value();
+        }
+        auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+        return direct && use.getOperandNumber() == ctjs::arg_receiver &&
+               direct->hasAttr(kNativeReceiver);
+    };
     bool constantKeysOnly = true;
     target.getBody().walk([&](ctjs::LoadUpvalueOp read) {
         if (static_cast<unsigned>(read.getIndex()) != *slot) { return; }
         for (mlir::OpOperand & use : read.getResult().getUses()) {
             auto inner = llvm::dyn_cast<ctjs::CreateCellOp>(use.getOwner());
-            constantKeysOnly &= isConstantKeyAccess(use) || (inner && inner->hasAttr(kLexicalThis));
+            constantKeysOnly &= isConstantKeyAccess(use) || receives(use) ||
+                                (inner && inner->hasAttr(kLexicalThis));
         }
     });
     if (!constantKeysOnly) { return {}; }
