@@ -11,6 +11,7 @@
 #include "../Exceptions/TypeErrors.h"
 #include "Admission.h"
 #include "ctcompile/CTJS/Import/EngineGlobals.h"
+#include "ctcompile/CTJS/Lowering/WholePage.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "ctcompile/CTNative/Analysis/Instances.h"
 
@@ -55,6 +56,18 @@ bool admission::function(ctjs::FuncOp fn) {
     if (auto why = fn->getAttrOfType<mlir::StringAttr>("ctnative.structure_refusal")) {
         return refuse(why.getValue().str());
     }
+    // Code made at run time, which a native program cannot run (WholePage.h):
+    // the reason names the API, so it is reported ahead of any other refusal
+    // the function would otherwise meet first.
+    std::string runtimeCode;
+    fn.walk([&](mlir::Operation * op) {
+        if (auto why = op->getAttrOfType<mlir::StringAttr>(ctjs::kRuntimeCode)) {
+            runtimeCode = why.getValue().str();
+            return mlir::WalkResult::interrupt();
+        }
+        return mlir::WalkResult::advance();
+    });
+    if (!runtimeCode.empty()) { return refuse(runtimeCode); }
     mlir::Block & entry = fn.getBody().front();
     const auto unsupported = [&](mlir::Value value) {
         if (nativeMapRecordPayload(value) ||

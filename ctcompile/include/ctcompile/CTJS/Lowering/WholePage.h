@@ -15,8 +15,10 @@
 // model does not give for free still needs proof: an element whose id or
 // name shadows a global (HTML named access on Window), built-ins the module
 // rebinds itself (clause 5), and code the module creates at run time, which
-// markRuntimeCode() finds: clause 5 counts it as a dynamic global write, and
-// native admission refuses it, since a native program cannot run new code.
+// markRuntimeCode() finds: native admission refuses the function holding such
+// a site, since a native program cannot run new code. A program with a
+// refused function has no native build, so the created code never runs
+// natively.
 //
 //===----------------------------------------------------------------------===//
 #pragma once
@@ -24,6 +26,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringSet.h"
 
 #include <string>
 
@@ -36,6 +39,13 @@ inline constexpr llvm::StringLiteral kWholePage = "ctjs.whole_page";
 /// Whether the page driver recorded `module` as every script its page will
 /// ever run.
 [[nodiscard]] bool wholePage(mlir::ModuleOp module);
+
+/// The ids and names of the page's elements the page driver recorded in the
+/// dictionary's `named` array (HTML's named access on the Window object,
+/// 7.3.3: `window.jQuery` is an element whose id or name is "jQuery"). A pass
+/// that folds a never-bound global to undefined skips a name in this set.
+/// Empty on a module that is not its whole page.
+[[nodiscard]] llvm::StringSet<> pageNamedElements(mlir::ModuleOp module);
 
 /// Set on an operation that may create code at run time, with the reason.
 /// Native admission refuses the function holding it with that reason.
@@ -50,8 +60,9 @@ struct RuntimeCodeSite {
 /// Finds every operation in `module` that may create code at run time, marks
 /// it kRuntimeCode, and returns them in walk order:
 ///  - a load of `eval` or `Function`, and `import()`;
-///  - `setTimeout` or `setInterval` whose first argument is not a function made
-///    here, since a String is compiled;
+///  - `setTimeout` or `setInterval` whose first argument may be a String (a
+///    constant one, or a value ClosureValues cannot prove is a function),
+///    since a String is compiled;
 ///  - `createElement` with a tag that may be `script`, or a frame or plugin
 ///    element, whose document runs its own scripts;
 ///  - `document.write`, `writeln` and `createContextualFragment`, which can
@@ -64,6 +75,9 @@ struct RuntimeCodeSite {
 ///    location set to a string not known at build time.
 /// A shape not listed (a `.constructor` read that may be `Function`) is clause
 /// 5's to follow.
+///
+/// Marks nothing on a module that is not its whole page: the model's promise
+/// (and the ClosureValues query behind the timer check) holds only there.
 llvm::SmallVector<RuntimeCodeSite> markRuntimeCode(mlir::ModuleOp module);
 
 } // namespace ctcompile::ctjs

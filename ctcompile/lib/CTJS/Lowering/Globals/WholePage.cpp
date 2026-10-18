@@ -3,18 +3,19 @@
 // Implements WholePage.h: reading the page driver's kWholePage record, and the
 // census of code the module may create at run time.
 //
-// The census reads shapes, not values, so it errs toward "may create code": a
-// timer whose first argument is not a function made here, a tag or an
-// attribute name that is not a constant, and markup that is not a constant,
-// all count. Each method is matched by its name on any receiver, since which
-// object a value is (the document, an element, the window) is not known here;
-// a same-named method of another object is refused with them. Reading one of
-// these functions as a value counts as well, because a call through the value
-// cannot be checked.
+// The census errs toward "may create code": a tag, an attribute name or
+// markup that is not a constant all count, as does a timer whose first
+// argument may be a String (a constant one, or a value ClosureValues cannot
+// prove is a function). Each method is matched by its name on any receiver,
+// since which object a value is (the document, an element, the window) is not
+// known here; a same-named method of another object is refused with them.
+// Reading one of these functions as a value counts as well, because a call
+// through the value cannot be checked.
 //
 //===----------------------------------------------------------------------===//
 #include "ctcompile/CTJS/Lowering/WholePage.h"
 
+#include "ClosureValues.h"
 #include "Effects.h"
 #include "RegisterFlow.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
@@ -97,7 +98,9 @@ std::string handlerName(mlir::Value name, llvm::StringRef api) {
     const mlir::Value origin = registerFlowOrigin(name);
     auto sum = origin ? origin.getDefiningOp<BinaryOp>() : BinaryOp{};
     const auto prefix =
-        sum && sum.getKind() == BinaryKind::Add ? constantString(sum.getLhs()) : std::nullopt;
+        sum && (sum.getKind() == BinaryKind::Add || sum.getKind() == BinaryKind::Concat)
+            ? constantString(sum.getLhs())
+            : std::nullopt;
     if (prefix && prefix->size() >= 2 && !startsWithLower(*prefix, "on")) { return {}; }
     return "`" + api.str() +
            "` with a name not known at build time may add an on* event "
@@ -119,18 +122,29 @@ std::string handlerMarkup(mlir::Value value, llvm::StringRef api) {
 }
 
 /// Why calling `method` with `call`'s arguments may create code, or empty.
-std::string methodCall(llvm::StringRef method, CallOp call) {
+/// `closures` answers which closures a value can hold (a timer's first
+/// argument that is one of them is a function, never a String).
+std::string methodCall(llvm::StringRef method, CallOp call,
+                       globals_detail::ClosureValues & closures) {
     const auto args = call.getArgs();
     const auto arg = [&](std::size_t index) {
         return index < args.size() ? args[index] : mlir::Value{};
     };
     if (method == "setTimeout" || method == "setInterval") {
         const mlir::Value first = arg(0);
-        const mlir::Value origin = first ? registerFlowOrigin(first) : mlir::Value{};
-        if (!first || (origin && origin.getDefiningOp<CreateClosureOp>())) { return {}; }
+        if (!first) { return {}; }
+        const mlir::Value origin = registerFlowOrigin(first);
+        if (origin && origin.getDefiningOp<CreateClosureOp>()) { return {}; }
+        // A String is compiled, so a value that may be one is refused: a
+        // constant String, or a value the query cannot prove is a function.
+        // A value that is one of the closures it names is a function.
+        if (!constantString(first)) {
+            globals_detail::ClosureValues::Answer held = closures.closuresOf(first);
+            if (held.unknown.empty() && !held.closures.empty()) { return {}; }
+        }
         return "`" + method.str() +
                "` compiles a String first argument as code at run time, "
-               "and this one is not a function made here, so it is not known at build time";
+               "and this one may be a String, so it is not known at build time";
     }
     if (method == "createElement" || method == "createElementNS") {
         const mlir::Value tag = arg(method == "createElement" ? 0 : 1);
@@ -208,6 +222,7 @@ bool createsCode(llvm::StringRef key) {
 /// global) may create code, or empty: each use must call it, and that call
 /// must be one methodCall() admits.
 std::string usedFunction(mlir::Value function, llvm::StringRef name,
+                         globals_detail::ClosureValues & closures,
                          llvm::SmallVectorImpl<std::pair<mlir::Operation *, std::string>> & sites) {
     auto uses = registerFlowUses(function);
     if (!uses) { return "`" + name.str() + "` moves through too many registers to follow"; }
@@ -226,7 +241,7 @@ std::string usedFunction(mlir::Value function, llvm::StringRef name,
             }
             continue;
         }
-        if (std::string why = methodCall(name, call); !why.empty()) {
+        if (std::string why = methodCall(name, call, closures); !why.empty()) {
             sites.push_back({call, std::move(why)});
         }
     }
@@ -239,7 +254,22 @@ bool wholePage(mlir::ModuleOp module) {
     return module->hasAttr(kWholePage);
 }
 
+llvm::StringSet<> pageNamedElements(mlir::ModuleOp module) {
+    llvm::StringSet<> named;
+    auto record = module->getAttrOfType<mlir::DictionaryAttr>(kWholePage);
+    auto list = record ? record.getAs<mlir::ArrayAttr>("named") : mlir::ArrayAttr{};
+    for (mlir::Attribute entry : list ? list.getValue() : llvm::ArrayRef<mlir::Attribute>{}) {
+        if (auto name = mlir::dyn_cast<mlir::StringAttr>(entry)) { named.insert(name.getValue()); }
+    }
+    return named;
+}
+
 llvm::SmallVector<RuntimeCodeSite> markRuntimeCode(mlir::ModuleOp module) {
+    llvm::SmallVector<RuntimeCodeSite> sites;
+    // Only a module that is its whole page keeps the model's promise that no
+    // code is added later; the closure query the timer check makes assumes it.
+    if (!wholePage(module)) { return sites; }
+    globals_detail::ClosureValues closures(module);
     llvm::SmallVector<std::pair<mlir::Operation *, std::string>> found;
     module.walk([&](mlir::Operation * op) {
         if (auto load = mlir::dyn_cast<LoadGlobalOp>(op)) {
@@ -248,7 +278,8 @@ llvm::SmallVector<RuntimeCodeSite> markRuntimeCode(mlir::ModuleOp module) {
             if (name == "eval" || name == "Function") {
                 found.push_back({op, "`" + name.str() + "` compiles a String as code at run time"});
             } else if (name == "setTimeout" || name == "setInterval") {
-                if (std::string why = usedFunction(load.getResult(), name, found); !why.empty()) {
+                if (std::string why = usedFunction(load.getResult(), name, closures, found);
+                    !why.empty()) {
                     found.push_back({op, std::move(why)});
                 }
             }
@@ -261,7 +292,8 @@ llvm::SmallVector<RuntimeCodeSite> markRuntimeCode(mlir::ModuleOp module) {
         if (auto read = mlir::dyn_cast<GetPropertyOp>(op)) {
             const llvm::StringRef key = constantKey(read.getKey());
             if (createsCode(key)) {
-                if (std::string why = usedFunction(read.getResult(), key, found); !why.empty()) {
+                if (std::string why = usedFunction(read.getResult(), key, closures, found);
+                    !why.empty()) {
                     found.push_back({op, std::move(why)});
                 }
             }
@@ -289,7 +321,6 @@ llvm::SmallVector<RuntimeCodeSite> markRuntimeCode(mlir::ModuleOp module) {
             }
         }
     });
-    llvm::SmallVector<RuntimeCodeSite> sites;
     mlir::Builder builder(module.getContext());
     for (auto & [op, why] : found) {
         why += " (" + describe(op) + ")";

@@ -1,17 +1,20 @@
 // --ctjs-resolve-globals folds a read of an absent global through the global
-// object, `window.NAME`, to `undefined`.
+// object, `window.NAME`, to `undefined`, on a whole page (--whole-page,
+// WholePage.h).
 //
-// In a module where nothing writes the globals table dynamically (clause 5),
-// a name the program never binds and the native realm does not provide is no
-// property of the window either, so `window.jQuery` is undefined. Bootstrap's
-// getjQuery() is the shape this is for: once its probe folds, the helper
-// returns null, and the caller's `if ($) { ... }` that registers a jQuery
-// plugin drops out of the native lowering, taking the plugin's closure with it.
+// In a whole page where nothing writes the globals table dynamically
+// (clause 5), a name the program never binds and the native realm does not
+// provide is no property of the window either, so `window.jQuery` is
+// undefined. Bootstrap's getjQuery() is the shape this is for: once its probe
+// folds, the helper returns null, and the caller's `if ($) { ... }` that
+// registers a jQuery plugin drops out of the native lowering, taking the
+// plugin's closure with it.
 //
 // Each negative control keeps the read: a module that can write any global
 // (eval reachable), a name written through the window, a name declared with
-// `var`, a name the host provides, and a name every object inherits from
-// Object.prototype.
+// `var`, a name the host provides, a name every object inherits from
+// Object.prototype, a name the page names an element by, and a module that
+// is only part of its page.
 //
 // A module that can reach the run-time compiler through a function's
 // `.constructor` and call it (compiled.js) writes no global the VM can rule
@@ -26,35 +29,39 @@
 // that finds writes through the window stops early, so nothing is marked.
 //
 // RUN: split-file %s %t
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/plugin.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/plugin.js --whole-page 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=FOLD
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/plugin.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/plugin.js --whole-page 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=DROP
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/dynamic.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/dynamic.js --whole-page 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/written.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/written.js --whole-page 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/declared.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/declared.js --whole-page 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/host.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/host.js --whole-page 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=HOST
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/inherited.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/inherited.js --whole-page 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=INHERITED
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compiled.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compiled.js --whole-page 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=MARK
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compiled.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compiled.js --whole-page 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=NATIVE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compiled-written.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compiled-written.js --whole-page 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals \
 // RUN:   | FileCheck %s --check-prefix=KEPT --implicit-check-not=ctjs.absent_global_property
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compiled-written.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compiled-written.js --whole-page 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=WRITTEN --implicit-check-not=ctnative.absent_globals
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compiled-eval.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compiled-eval.js --whole-page 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals \
 // RUN:   | FileCheck %s --check-prefix=KEPT --implicit-check-not=ctjs.absent_global_property
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/plugin.js --whole-page --whole-page-named=jQuery 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ELEMENT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/plugin.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ELEMENT
 
 // FOLD: {name = "jQuery", reason = "absent: never stored and not provided by the native realm; 2 read(s) through the global object folded to undefined", resolved = "none", stores = 0 : i32}
 // FOLD-NOT: ctjs.constant #ctjs.string<"jQuery">
@@ -71,6 +78,14 @@
 // DROP: return
 
 // KEPT: ctjs.constant #ctjs.string<"jQuery">
+
+// The fold takes the page to have no element of that id or name (HTML's named
+// access on the Window object, 7.3.3). When the page driver records a
+// `jQuery` element (`--whole-page-named=jQuery`, the `<div id="jQuery">`
+// case) `window.jQuery` is that element, and when the module is only part of
+// its page a later script may bind the name: both keep the read.
+// ELEMENT: ctjs.constant #ctjs.string<"jQuery">
+// ELEMENT: ctjs.get_property
 
 // HOST: ctjs.constant #ctjs.string<"innerWidth">
 

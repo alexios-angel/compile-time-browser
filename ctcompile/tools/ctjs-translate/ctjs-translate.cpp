@@ -46,6 +46,15 @@ llvm::cl::opt<bool> whole_page(
                    "(ctjs.whole_page); the caller checked the page's scripts and handlers"),
     llvm::cl::init(false));
 
+/// The ids and names of the page's elements, for HTML's named access on the
+/// Window object (ctjs.whole_page's `named` array): the page driver lists
+/// every one it found, and a fold of a never-bound global skips these names.
+llvm::cl::list<std::string> whole_page_named(
+    "whole-page-named",
+    llvm::cl::desc("With --whole-page: id or name of an element on the page "
+                   "(repeatable, or comma-separated)"),
+    llvm::cl::CommaSeparated);
+
 /// Records the functions the importer could not compile, in three places: a
 /// warning per function for a person, the module's `ctjs.skipped` attribute
 /// for lit tests and later passes (such as --ctjs-resolve-globals), and
@@ -123,10 +132,14 @@ mlir::OwningOpRef<mlir::Operation *> import_source(llvm::StringRef text, llvm::S
         adopt(ctcompile::js::import_program(compiled, name, context));
     if (module && whole_page) {
         mlir::Builder builder(context);
-        module.get()->setAttr(
-            ctcompile::ctjs::kWholePage,
-            builder.getDictionaryAttr(
-                {builder.getNamedAttr("scripts", builder.getStrArrayAttr({name}))}));
+        llvm::SmallVector<mlir::Attribute> named;
+        for (const std::string & element : whole_page_named) {
+            named.push_back(builder.getStringAttr(element));
+        }
+        module.get()->setAttr(ctcompile::ctjs::kWholePage,
+                              builder.getDictionaryAttr(
+                                  {builder.getNamedAttr("scripts", builder.getStrArrayAttr({name})),
+                                   builder.getNamedAttr("named", builder.getArrayAttr(named))}));
     }
     return module;
 }

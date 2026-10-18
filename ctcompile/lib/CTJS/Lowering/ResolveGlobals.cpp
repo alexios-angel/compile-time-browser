@@ -928,18 +928,6 @@ std::optional<std::string> dynamic_global_writes(
     llvm::MapVector<mlir::StringAttr, bound_write> & bound_through,
     llvm::SmallVectorImpl<std::string> & every, llvm::SmallVectorImpl<std::string> & map_reads) {
     std::optional<std::string> reason;
-    // On a whole page, code the module may create at run time counts as a
-    // dynamic global write, as eval would: the new code could bind any
-    // global, so no name resolves (WholePage.h). Each site is marked for
-    // native admission with its own reason, and the first is the verdict.
-    if (wholePage(module)) {
-        for (const RuntimeCodeSite & site : markRuntimeCode(module)) {
-            const std::string why = "the module may create code at run time: " + site.why;
-            if (!reason) { reason = why; }
-            every.push_back(why);
-        }
-        if (reason) { return reason; }
-    }
     // Computed once: it is a question about the whole module, and
     // may_be_function() is asked once per `.constructor` read.
     const bool super_is_open = prototype_replaced(module);
@@ -1672,6 +1660,10 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         // before anything could bind a global (global_prefix): a UMD wrapper's
         // `typeof define` at the top of its body. Its row says which rule
         // folded it.
+        //
+        // Only a whole page folds (WholePage.h): on a module that is only part
+        // of one, a later script can bind the name this one never stores.
+        const bool whole_page = wholePage(module);
         llvm::DenseMap<mlir::StringAttr, std::size_t> folded;
         global_prefix prefix(module, world);
         if (dynamic && world.top) { prefix.enter(world.top); }
@@ -1687,7 +1679,7 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         }
         {
             for (auto & [name, facts] : world.bindings) {
-                if (!facts.stores.empty() || world.refused.contains(name) ||
+                if (!whole_page || !facts.stores.empty() || world.refused.contains(name) ||
                     declared.contains(name) || (!dynamic && bound_through.contains(name)) ||
                     nativeRealmProvides(name.getValue())) {
                     continue;
@@ -1729,8 +1721,15 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         // or a refused body that may store any global stops it first, and a
         // name written through the global object would then look unbound.
         // A mark already on the input is no verdict of this run.
+        //
+        // The fold takes the page to have no element of that id or name
+        // (HTML's named access on the Window object): only a whole page, whose
+        // driver recorded the page's elements, supports that, and a name the
+        // page does name an element by is kept.
         llvm::MapVector<mlir::StringAttr, std::size_t> folded_through;
-        bool walked = !world.opaque_skip;
+        bool walked = whole_page && !world.opaque_skip;
+        const llvm::StringSet<> named =
+            whole_page ? pageNamedElements(module) : llvm::StringSet<>{};
         module.walk([&](mlir::Operation * op) {
             op->removeAttr(kAbsentGlobalProperty);
             auto load = mlir::dyn_cast<LoadGlobalOp>(op);
@@ -1747,9 +1746,10 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
             module.walk([&](GetPropertyOp get) {
                 auto holder = get.getObject().getDefiningOp<LoadGlobalOp>();
                 const llvm::StringRef key = constantKey(get.getKey());
-                if (!holder || !names_global_object(holder.getName()) ||
-                    bound(holder.getNameAttr()) || key.empty() || inheritedFromObject(key) ||
-                    nativeRealmProvides(key) || bound(mlir::StringAttr::get(context, key))) {
+                if (!whole_page || !holder || !names_global_object(holder.getName()) ||
+                    bound(holder.getNameAttr()) || key.empty() || named.contains(key) ||
+                    inheritedFromObject(key) || nativeRealmProvides(key) ||
+                    bound(mlir::StringAttr::get(context, key))) {
                     return;
                 }
                 reads.push_back(get);
