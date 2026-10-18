@@ -863,10 +863,54 @@ struct bound_write {
 /// define_global(name, value). A computed key, `__proto__`, a delete, an
 /// accessor definition, ctjs.set_proto and ctjs.copy_props still refuse every
 /// name.
+/// Whether the computed key \p key can never be the string `Map`: every value
+/// that reaches it is a constant other than that string, through block
+/// arguments and through a cell of this function that only constants are
+/// written to and that no closure captures (Popper's `A[E]`, where E is
+/// "clientHeight" or "scrollHeight").
+bool never_names_map(mlir::Value key) {
+    llvm::SmallVector<mlir::Value> work{key};
+    llvm::DenseSet<mlir::Value> seen;
+    while (!work.empty()) {
+        const mlir::Value value = work.pop_back_val();
+        if (!seen.insert(value).second) { continue; }
+        if (seen.size() > 32) { return false; }
+        if (auto constant = value.getDefiningOp<ConstantOp>()) {
+            auto text = mlir::dyn_cast<StringAttr>(constant.getValue());
+            if (text && text.getValue() == "Map") { return false; }
+            continue;
+        }
+        if (auto read = value.getDefiningOp<CellGetOp>()) {
+            auto cell = read.getCell().getDefiningOp<CreateCellOp>();
+            if (!cell) { return false; }
+            work.push_back(cell.getInitial());
+            for (mlir::Operation * user : cell.getResult().getUsers()) {
+                if (mlir::isa<CellGetOp>(user)) { continue; }
+                auto write = mlir::dyn_cast<CellSetOp>(user);
+                if (!write || write.getCell() != cell.getResult()) { return false; }
+                work.push_back(write.getValue());
+            }
+            continue;
+        }
+        auto argument = mlir::dyn_cast<mlir::BlockArgument>(value);
+        mlir::Block * block = argument ? argument.getOwner() : nullptr;
+        if (!block || block->isEntryBlock()) { return false; }
+        for (auto it = block->pred_begin(), end = block->pred_end(); it != end; ++it) {
+            auto branch = mlir::dyn_cast<mlir::BranchOpInterface>((*it)->getTerminator());
+            if (!branch) { return false; }
+            const mlir::Value incoming =
+                branch.getSuccessorOperands(it.getSuccessorIndex())[argument.getArgNumber()];
+            if (!incoming) { return false; }
+            work.push_back(incoming);
+        }
+    }
+    return true;
+}
+
 std::optional<std::string> dynamic_global_writes(
     mlir::ModuleOp module, const census & world,
     llvm::MapVector<mlir::StringAttr, bound_write> & bound_through,
-    llvm::SmallVectorImpl<std::string> & every) {
+    llvm::SmallVectorImpl<std::string> & every, llvm::SmallVectorImpl<std::string> & map_reads) {
     std::optional<std::string> reason;
     // Computed once: it is a question about the whole module, and
     // may_be_function() is asked once per `.constructor` read.
@@ -1267,6 +1311,14 @@ std::optional<std::string> dynamic_global_writes(
                 // comes out belongs to another object; it is marked
                 // conservatively.
                 const llvm::StringRef key = constantKey(get.getKey());
+                // A read that may yield the realm's `Map` hands its prototype
+                // to whatever reads `.prototype` next, which this walk does
+                // not follow; the native Map proof (Analysis/NativeMap.cpp)
+                // refuses it.
+                if (kind != watched::compiler && use.getOperandNumber() == 0 &&
+                    (key == "Map" || (key.empty() && !never_names_map(get.getKey())))) {
+                    map_reads.push_back(describe(op));
+                }
                 const bool hands_back = kind == watched::compiler
                                             ? hands_back_the_compiler(key)
                                             : hands_back_the_global_object(key);
@@ -1539,8 +1591,18 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         // it, and refuses nothing else.
         llvm::MapVector<mlir::StringAttr, bound_write> bound_through;
         llvm::SmallVector<std::string> escapes;
+        llvm::SmallVector<std::string> map_reads;
         const std::optional<std::string> dynamic =
-            dynamic_global_writes(module, world, bound_through, escapes);
+            dynamic_global_writes(module, world, bound_through, escapes, map_reads);
+        // The reads off the global object that may yield `Map`, for the
+        // native Map proof.
+        if (map_reads.empty()) {
+            module->removeAttr("ctjs.global_map_reads");
+        } else {
+            module->setAttr(
+                "ctjs.global_map_reads",
+                builder.getStrArrayAttr(llvm::to_vector_of<llvm::StringRef>(map_reads)));
+        }
         // Every clause 5 refusal, for a reader deciding what to widen next;
         // the rows below carry only the first.
         if (escapes.empty()) {
@@ -1627,9 +1689,26 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         // not only `typeof`. The holder must be the global object itself (a
         // load of `window`, `self` or `globalThis` the program never binds),
         // and a name that the global object inherits from Object.prototype is
-        // never absent.
+        // never absent. The fold also takes the page to have no element named
+        // like the property: HTML's named access on the Window object (7.3.3),
+        // which the shell's window implements, makes `window.jQuery` an
+        // element whose id or name is "jQuery".
+        //
+        // When clause 5 refused the module, each such read is marked
+        // kAbsentGlobalProperty instead, for the native lowering to fold. That
+        // needs the walk that collects the writes through the global object to
+        // have run to the end: a load of `Function` or `eval`, a dynamic import
+        // or a refused body that may store any global stops it first, and a
+        // name written through the global object would then look unbound.
+        // A mark already on the input is no verdict of this run.
         llvm::MapVector<mlir::StringAttr, std::size_t> folded_through;
-        if (!dynamic) {
+        bool walked = !world.opaque_skip;
+        module.walk([&](mlir::Operation * op) {
+            op->removeAttr(kAbsentGlobalProperty);
+            auto load = mlir::dyn_cast<LoadGlobalOp>(op);
+            walked &= !(load && names_eval(load.getName())) && !mlir::isa<DynamicImportOp>(op);
+        });
+        if (!dynamic || walked) {
             const auto bound = [&](mlir::StringAttr name) {
                 const auto facts = world.bindings.find(name);
                 return (facts != world.bindings.end() && !facts->second.stores.empty()) ||
@@ -1648,6 +1727,10 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
                 reads.push_back(get);
             });
             for (GetPropertyOp get : reads) {
+                if (dynamic) {
+                    get->setAttr(kAbsentGlobalProperty, builder.getUnitAttr());
+                    continue;
+                }
                 mlir::OpBuilder at(get);
                 auto undefined = ConstantOp::create(at, get.getLoc(), get.getType(),
                                                     UndefinedAttr::get(context));

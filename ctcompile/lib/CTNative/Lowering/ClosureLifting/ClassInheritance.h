@@ -9,6 +9,8 @@
 
 #pragma once
 
+#include "ctcompile/CTNative/IR/CTNativeAttrNames.h"
+
 #include "mlir/IR/BuiltinOps.h"
 #include "llvm/ADT/StringRef.h"
 
@@ -33,12 +35,6 @@ inline constexpr llvm::StringLiteral kNativeCopies = "ctnative.copies";
 /// On the module: the symbols of the source functions flattening erased as
 /// unreachable, whose copies stand for them.
 inline constexpr llvm::StringLiteral kNativeErasedSources = "ctnative.inheritance_erased";
-
-/// On each ctjs.call_direct the class statics rewrite (ClassStatics.cpp) makes
-/// of a static member, where the source read the member through the class: a
-/// refused caller may call such a member through a closure instead, as it
-/// did through the class (closeNativeSet in LowerToEmitC.cpp).
-inline constexpr llvm::StringLiteral kNativeStaticMemberCall = "ctnative.static_member_call";
 
 /// Flattens every class whose parent is a class this module defines, parents
 /// first, and records kNativeInheritanceReason on each class it leaves alone.

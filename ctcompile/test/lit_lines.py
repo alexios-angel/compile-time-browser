@@ -7,6 +7,7 @@ lines check what that step wrote. So a test there copies all of its case's
 RUN lines and runs them through run() below.
 """
 
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -62,9 +63,13 @@ def run(lit, case, lines, mains):
         for key in FIRST:
             line = line.replace(key, lit.substitutions[key])
         command = lit.expand(tool.sub(lambda match: lit.tools[match[0]], line))
+        # lit runs its commands without LANG or LC_*, in the C locale, where
+        # GCC quotes names in ASCII; under a UTF-8 locale it uses typographic
+        # quotes, and a diagnostic would differ between the runners.
         done = subprocess.run(
             ["bash", "-c", "set -o pipefail; " + command],
             cwd=Path(lit.substitutions["%t"]).parent,
+            env=dict(os.environ, LC_ALL="C"),
             capture_output=True,
             text=True,
         )

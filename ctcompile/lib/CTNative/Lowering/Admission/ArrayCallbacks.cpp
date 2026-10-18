@@ -6,7 +6,9 @@
 // returns. The runtime (Runtime/Array.hpp) requires map and find not to
 // shorten the array; the element-vector proof gives that for free, since the
 // callback reaches the array only as a read-only parameter and refuses any
-// member of the array in another function.
+// member of the array in another function. sort orders by the Number of what
+// its comparator returns. A capture the callback takes by address is a shared
+// binding of this frame, as a direct call's cell argument is.
 //
 //===----------------------------------------------------------------------===//
 
@@ -28,6 +30,21 @@ bool arrayCallbackOperation(admission & self, ctjs::CallOp call) {
         return self.refuse("the receiver of " + method + " is " + printed(array) +
                            ", not an array of Strings, Numbers or rows");
     }
+    // Operations.cpp asks the same of a direct call's cell arguments: the
+    // lift listed them, and a refusal since then can have opened the binding.
+    for (const int32_t index : listedSlots(call, kNativeCellArgs)) {
+        const mlir::Value captured = call->getOperand(static_cast<unsigned>(index));
+        if (!admission::namesASharedCell(captured)) {
+            return self.refuse("the callback of " + method +
+                               " takes by address something that is not a shared binding of "
+                               "this frame");
+        }
+        if (carrierOf(self.typeOf(captured)) == carrier::none) {
+            return self.refuse("the callback of " + method +
+                               " takes by address a binding of type " +
+                               printed(self.typeOf(captured)) + ", which has no native carrier");
+        }
+    }
     auto callback = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
         call, call->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativeArrayCallback));
     mlir::Type returned;
@@ -41,6 +58,14 @@ bool arrayCallbackOperation(admission & self, ctjs::CallOp call) {
         if (tested != carrier::boolean && tested != carrier::number && tested != carrier::string) {
             return self.refuse("the callback of " + method + " returns " + printed(returned) +
                                ", not a Boolean, a Number or a String");
+        }
+    }
+    if (key == "sort") {
+        // The runtime orders by ToNumber of the result, spelled for these two.
+        const carrier order = carrierOf(returned);
+        if (order != carrier::number && order != carrier::boolean) {
+            return self.refuse("the comparator of " + method + " returns " + printed(returned) +
+                               ", not a Number or a Boolean");
         }
     }
     if (key == "filter" || key == "map") {

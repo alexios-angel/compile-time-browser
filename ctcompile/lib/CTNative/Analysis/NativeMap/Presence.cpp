@@ -263,6 +263,9 @@ struct presenceAnalysis {
     llvm::function_ref<mlir::Value(mlir::Value)> familyOf;
     const llvm::DenseSet<mlir::Operation *> & snapshotCopies;
     llvm::function_ref<bool(mlir::Operation *)> hostTyped;
+    /// Each read of a run-once static that holds a Map, mapped to the value
+    /// the static's one write stored (see provePresence).
+    const llvm::DenseMap<mlir::Value, mlir::Value> * staticOrigins = nullptr;
 
     presenceAnalysis(llvm::function_ref<mlir::Value(mlir::Value)> family,
                      const llvm::DenseSet<mlir::Operation *> & copies,
@@ -275,6 +278,9 @@ struct presenceAnalysis {
     /// identity; parameters and returns share only a schema.
     mlir::Value instanceOf(mlir::Value value, const state & current) const {
         while (true) {
+            if (staticOrigins) {
+                if (const auto stored = staticOrigins->lookup(value)) { value = stored; }
+            }
             if (const auto origin = current.aliases.lookup(value)) { return origin; }
             auto call = value.getDefiningOp<ctjs::CallOp>();
             if (!call || actions.lookup(call) != "set") { break; }
@@ -745,9 +751,11 @@ std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> ca
                           llvm::function_ref<mlir::Value(mlir::Value)> familyOf,
                           const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & parameters,
                           const OwnedGlobalRoots * globals,
-                          llvm::function_ref<bool(mlir::Operation *)> hostTyped) {
+                          llvm::function_ref<bool(mlir::Operation *)> hostTyped,
+                          const llvm::DenseMap<mlir::Value, mlir::Value> * staticOrigins) {
     if (calls.empty()) { return {}; }
     presenceAnalysis analysis(familyOf, snapshotCopies, hostTyped);
+    analysis.staticOrigins = staticOrigins;
     for (ctjs::GetPropertyOp size : sizes) { analysis.sizes.insert(size); }
     for (ctjs::CallOp call : calls) { analysis.actions[call] = mapMethodName(call); }
     analysis.buildSummaries(module);

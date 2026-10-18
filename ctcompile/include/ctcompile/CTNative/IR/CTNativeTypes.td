@@ -311,16 +311,18 @@ def CTNative_OptType : CTNative_WrapperType<"Opt", "opt", (ins "::mlir::Type":$e
 }
 
 def CTNative_VariantType : CTNative_Type<"Variant", "variant"> {
-  let summary = "`std::variant<T...>` - the polymorphic fallback below `json`";
+  let summary = "A union of two to four types - the polymorphic fallback below `json`";
   let description = [{
     Where two unrelated static types meet. A register that holds a boolean
-    on one path and a string on the other is genuinely both, and a
-    `std::variant` says so in a form the emitted C++ can `visit`.
+    on one path and a string on the other is genuinely both, and this type
+    says so. Emitted code holds one in a tagged struct whose enum class tag
+    says which alternative it is, such as `ctnative::string_union` for
+    Boolean|String.
 
     IT IS CAPPED, and the cap is in one place -
     `kMaxVariantAlternatives` in CTNativeLattice.h. Beyond it the answer is
-    `json`. Two reasons, and neither is arithmetic: a five-way `std::variant`
-    in generated code is not what part 24 means by "looks and performs as if
+    `json`. Two reasons, and neither is arithmetic: a five-way union in
+    generated code is not what part 24 means by "looks and performs as if
     it were originally written in C++", and an uncapped union makes the
     lattice infinitely tall, so the Phase 54 dataflow analysis has no
     termination argument. A finite height is what makes it terminate.
@@ -514,7 +516,7 @@ def CTNative_ClosureType
 }
 
 def CTNative_ClosureSetType : CTNative_Type<"ClosureSet", "closure_set"> {
-  let summary = "One of a finite, proved set of callables - a std::variant dispatched by std::visit";
+  let summary = "One of a finite, proved set of callables - a struct that switches on a tag";
   let description = [{
     Where two `closure` types meet, or a `closure` meets a `closure_set`: a
     value that is one of several lifted callables, each bound to its own

@@ -35,6 +35,7 @@
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/EscapeAnalysis.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
+#include "ctcompile/CTNative/Analysis/Instances.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
 #include "ctcompile/CTNative/Analysis/NativeDictionary.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
@@ -663,6 +664,21 @@ mlir::Type TypeInference::mapTypeOf(mlir::Operation * op, mlir::Value map) {
 
 void TypeInference::setToEntryState(TypeLattice * lattice) {
     auto value = lattice->getAnchor();
+    // The receiver of a proved registry class's method that no call resolved,
+    // which the closure lift leaves public: the registry proof
+    // (Analysis/Instances.h) checked that the method runs only on an instance
+    // of the class, so its receiver is one, never null or undefined.
+    if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
+        argument && argument.getArgNumber() == ctjs::arg_receiver &&
+        argument.getOwner()->isEntryBlock()) {
+        auto fn = llvm::dyn_cast<ctjs::FuncOp>(argument.getOwner()->getParentOp());
+        auto name = fn ? fn->getAttrOfType<mlir::StringAttr>(kNativeInstanceMethod) : nullptr;
+        if (name && fn->hasAttr(kNativeReceiver)) {
+            const mlir::Type instance = InstanceType::get(value.getContext(), name.getValue());
+            propagateIfChanged(lattice, lattice->join(TypeValue{instance}));
+            return;
+        }
+    }
     if (isArrayCallbackParameter(value) || isHostCallbackParameter(value)) { return; }
     if (isPromiseCallbackParameter(value)) { return; }
     // A specialised replace callback's parameters come from its call.

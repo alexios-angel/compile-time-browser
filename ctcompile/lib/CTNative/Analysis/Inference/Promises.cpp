@@ -9,12 +9,13 @@
 //
 // - an executor's resolve function is a `promise_resolve<T>`, where T is the
 //   join of every value it is called with (the value of a promise, which it
-//   adopts), and `new Promise(f)` answers `promise<T>`;
+//   adopts), by the executor or by a then-handler that captured it, and
+//   `new Promise(f)` answers `promise<T>`;
 // - a handler's value parameter is the T of the promise `then` is called on,
 //   and `then` answers a promise of what the handler returns (again the value
 //   of a returned promise);
 // - `Promise.resolve(v)` answers `promise<type of v>`, or v's own type when v
-//   is a promise.
+//   is a promise, and `Promise.resolve()` a promise of undefined.
 //
 //===----------------------------------------------------------------------===//
 
@@ -58,19 +59,24 @@ mlir::Type settledValue(mlir::Type resolution) {
     return resolution;
 }
 
-/// Whether `call` calls a lifted executor's resolve function.
+/// Whether `call` calls a lifted executor's resolve function, in the executor
+/// or through a then-handler's capture of it (kNativePromiseResolveArgs). A
+/// handler's own value parameter is not one, even when it is called.
 bool callsResolveFunction(ctjs::CallOp call) {
     auto parameter = llvm::dyn_cast<mlir::BlockArgument>(call.getCallee());
     if (!parameter || !parameter.getOwner()->isEntryBlock()) { return false; }
-    auto executor = llvm::dyn_cast<ctjs::FuncOp>(parameter.getOwner()->getParentOp());
-    return executor && executor->hasAttr(kNativePromiseParameter) &&
-           promiseParameter(executor) == parameter;
+    auto callback = llvm::dyn_cast<ctjs::FuncOp>(parameter.getOwner()->getParentOp());
+    auto resolves =
+        callback ? callback->getAttrOfType<mlir::DenseI64ArrayAttr>(kNativePromiseResolveArgs)
+                 : mlir::DenseI64ArrayAttr{};
+    return resolves && llvm::is_contained(resolves.asArrayRef(), parameter.getArgNumber());
 }
 
-/// Whether `call` is `Promise.resolve(v)` on the realm's own Promise.
+/// Whether `call` is `Promise.resolve(v)` or `Promise.resolve()` on the
+/// realm's own Promise.
 bool callsPromiseResolve(ctjs::CallOp call) {
     auto read = ctjs::receiverMethod(call);
-    return read && call.getArgs().size() == 1 && read.getObject() == call.getReceiver() &&
+    return read && call.getArgs().size() <= 1 && read.getObject() == call.getReceiver() &&
            ctjs::constantKey(read.getKey()) == "resolve" &&
            TypeInference::isRealmGlobal(call.getReceiver().getDefiningOp(), "Promise");
 }
@@ -114,12 +120,26 @@ mlir::Type TypeInference::promiseType(mlir::Operation * op,
             // The value is whatever the resolve function is called with, or
             // the value of a promise it is called with, which it adopts.
             mlir::Type value = BottomType::get(c);
-            if (parameter) {
-                for (mlir::Operation * user : parameter.getUsers()) {
+            const auto joinCalls = [&](mlir::Value resolve) {
+                for (mlir::Operation * user : resolve.getUsers()) {
                     auto call = llvm::dyn_cast<ctjs::CallOp>(user);
-                    if (call && call.getCallee() == parameter && call.getArgs().size() == 1) {
+                    if (call && call.getCallee() == resolve && call.getArgs().size() == 1) {
                         value = meet(value, settledValue(joinLattices(op, call.getArgs(), {})));
                     }
+                }
+            };
+            if (parameter) {
+                joinCalls(parameter);
+                // A then-handler that captured the resolve function calls it
+                // through its capture parameter.
+                for (mlir::OpOperand & use : parameter.getUses()) {
+                    ctjs::FuncOp handler = llvm::isa<ctjs::CallOp>(use.getOwner())
+                                               ? promiseCallback(use.getOwner())
+                                               : ctjs::FuncOp{};
+                    if (!handler || use.getOperandNumber() < 2) { continue; }
+                    mlir::Block & entry = handler.getBody().front();
+                    const unsigned index = ctjs::implicit_arguments + use.getOperandNumber() - 2;
+                    if (index < entry.getNumArguments()) { joinCalls(entry.getArgument(index)); }
                 }
                 join(parameter, PromiseResolveType::get(c, value));
             }
@@ -143,6 +163,9 @@ mlir::Type TypeInference::promiseType(mlir::Operation * op,
     if (!call) { return {}; }
     if (callsResolveFunction(call)) { return OptType::get(c, BottomType::get(c)); }
     if (callsPromiseResolve(call)) {
+        if (call.getArgs().empty()) {
+            return PromiseType::get(c, OptType::get(c, BottomType::get(c)));
+        }
         // An argument not yet visited answers nothing yet; bottom is the
         // identity of the join.
         const mlir::Type value = operands[2]->getValue().getType();

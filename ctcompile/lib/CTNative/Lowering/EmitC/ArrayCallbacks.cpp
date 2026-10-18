@@ -6,8 +6,10 @@
 //   ctnative::Array.prototype.filter.call(a, std::bind_front(callback, e))
 //
 // The runtime (Runtime/Array.hpp) calls the callback with as many of
-// (element, index, array) as it declares; reduce passes its accumulator first.
-// A captured array is lent as a std::span, as a direct call lends one.
+// (element, index, array) as it declares; reduce passes its accumulator first,
+// and sort its comparator two elements. A captured array is lent as a
+// std::span, as a direct call lends one, and a binding the callback or its
+// frame writes is passed by address (`std::bind_front(callback, &n)`).
 //
 //===----------------------------------------------------------------------===//
 
@@ -52,7 +54,22 @@ bool replaceArrayCallback(lowering & lower, mlir::Operation * o) {
     const auto any = ec::OpaqueType::get(context, "auto");
     mlir::Value bound = ec::LiteralOp::create(b, where, any, callback);
     llvm::SmallVector<mlir::Value> captured{bound};
+    // Captures are operands 2 onwards; the lift lists those passed by address.
+    unsigned operand = 2;
     for (auto [capture, span] : llvm::zip(call.getArgs(), spans)) {
+        if (listsSlot(o, kNativeCellArgs, operand++)) {
+            // The variable in this frame, or the pointer this frame was given.
+            captured.push_back(
+                llvm::isa<ec::PointerType>(capture.getType())
+                    ? capture
+                    : ec::AddressOfOp::create(
+                          b, where,
+                          ec::PointerType::get(
+                              llvm::cast<ec::LValueType>(capture.getType()).getValueType()),
+                          capture)
+                          .getResult());
+            continue;
+        }
         captured.push_back(span.empty() ? capture
                                         : callValue(b, where, ec::OpaqueType::get(context, span),
                                                     span, lowering::cellPlace(b, where, capture)));
@@ -65,8 +82,11 @@ bool replaceArrayCallback(lowering & lower, mlir::Operation * o) {
         operands.push_back(lower.convertScalar(b, where, call.getArgs().back(), result));
     }
     const std::string name = ("ctnative::Array.prototype." + method + ".call").str();
-    if (o->getResult(0).use_empty()) {
+    if (o->getResult(0).use_empty() || method == "sort") {
+        // An unused answer, or `a.sort(f)`, which sorts `a` in place and
+        // answers it.
         callWithConstValueOperands(b, where, mlir::TypeRange{}, b.getStringAttr(name), operands);
+        o->getResult(0).replaceAllUsesWith(operands[0]);
         lowering::eraseIfUnused(o);
         return true;
     }

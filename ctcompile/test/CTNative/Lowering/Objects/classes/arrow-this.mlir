@@ -42,6 +42,16 @@
 // RUN: %t/borrowed-clang | FileCheck %s --check-prefix=BORROWEDOUT
 // RUN: %native_reference %t/borrowed.js | FileCheck %s --check-prefix=BORROWEDOUT
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/borrowed.js | FileCheck %s --check-prefix=BORROWEDOUT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/unread.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/unread.mlir
+// RUN: FileCheck %s --check-prefix=UNREAD --implicit-check-not=ctnative.not_native < %t/unread.mlir
+// RUN: ctjs-opt %t/unread.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/unread.cpp
+// RUN: %gxx -O2 %t/unread.cpp -o %t/unread-gcc
+// RUN: %t/unread-gcc | FileCheck %s --check-prefix=UNREADOUT
+// RUN: %clangxx -O2 %t/unread.cpp -o %t/unread-clang
+// RUN: %t/unread-clang | FileCheck %s --check-prefix=UNREADOUT
+// RUN: %native_reference %t/unread.js | FileCheck %s --check-prefix=UNREADOUT
+// RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/unread.js | FileCheck %s --check-prefix=UNREADOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/stored.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=STORED --implicit-check-not="reads its lexical"
@@ -92,6 +102,14 @@
 // NESTEDCPP: fn_5([[OUTER]])
 // NESTEDCPP: fn_5(Box* const
 // NESTEDOUT: r=5
+
+// A method makes an arrow that never reads `this`. Nothing can observe the
+// `this` it would capture, so it captures none: its `$enclosing_this` is
+// undefined, the method's receiver does not reach the closure, and the method
+// lifts taking only its instance pointer and argument.
+// UNREAD: emitc.class @Tally
+// UNREAD: emitc.func @add_{{[0-9]+}}(%arg0: !emitc.ptr<!emitc.opaque<"Tally">>, %arg1: !emitc.opaque<"ctnative::js_num">)
+// UNREADOUT: r=13
 
 // Negative: the arrow is stored on the instance and called later, so it is
 // a closure value with no call site to move its capture to. The constructor
@@ -169,6 +187,22 @@ function run() {
         total() { const outer = () => { const inner = () => this._x; this.keep = inner; return this._x; }; return outer(); }
     }
     return new Box(4).total();
+}
+var r = run();
+
+//--- unread.js
+function run() {
+    class Tally {
+        constructor(start) { this.total = start; }
+        add(n) {
+            const step = n * 2;
+            const twice = () => step + step;
+            this.total = this.total + twice();
+            return this.total;
+        }
+    }
+    const t = new Tally(1);
+    return t.add(3);
 }
 var r = run();
 

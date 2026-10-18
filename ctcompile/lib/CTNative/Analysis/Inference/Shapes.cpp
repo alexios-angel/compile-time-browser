@@ -117,6 +117,22 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> TypeInference::gr
             classes.unionSets(call->getOperand(at), entry.getArgument(at));
         }
     });
+    // A specialised Array-method call passes its callback the captures it
+    // lists the same way, in its own operand numbers: capture k is operand
+    // 2 + k and the callback's entry argument 3 + k (ArrayCallbacks.cpp).
+    top->walk([&](ctjs::CallOp call) {
+        auto listed = call->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.cell_args");
+        auto name = call->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativeArrayCallback);
+        if (!listed || !name) { return; }
+        auto fn = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, name);
+        if (!fn || fn.getBody().empty()) { return; }
+        mlir::Block & entry = fn.getBody().front();
+        for (int32_t index : listed.asArrayRef()) {
+            const auto at = static_cast<unsigned>(index);
+            if (at >= call->getNumOperands() || at + 1 >= entry.getNumArguments()) { continue; }
+            classes.unionSets(call->getOperand(at), entry.getArgument(at + 1));
+        }
+    });
     return flatten<4>(classes);
 }
 

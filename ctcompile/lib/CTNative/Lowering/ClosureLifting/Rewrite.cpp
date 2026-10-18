@@ -12,6 +12,24 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
+/// The constructor whose prototype holds method closure `m`: the closure that
+/// a `prototype` store attaches the object holding `m` to. Null for a method
+/// of an object no constructor has as its prototype.
+static ctjs::CreateClosureOp prototypeOwner(ctjs::CreateClosureOp m) {
+    for (mlir::Operation * user : m.getResult().getUsers()) {
+        auto field = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+        if (!field || field.getValue() != m.getResult()) { continue; }
+        for (mlir::Operation * holder : field.getObject().getUsers()) {
+            auto attachment = llvm::dyn_cast<ctjs::SetPropertyOp>(holder);
+            if (attachment && attachment.getValue() == field.getObject() &&
+                ctjs::constantKey(attachment.getKey()) == "prototype") {
+                return attachment.getObject().getDefiningOp<ctjs::CreateClosureOp>();
+            }
+        }
+    }
+    return {};
+}
+
 /// Lifts every admissible closure in the module and returns the counts.
 liftReport closureLifter::run() {
     liftReport out;
@@ -61,6 +79,9 @@ liftReport closureLifter::run() {
         makeRunOnceCellsStatic(out, /*functions=*/false);
         makeRunOnceCellsStatic(out, /*functions=*/true);
     }
+    // A capture of a binding that no write can change once the closure exists
+    // takes a cell of its own, which the by-value rules below accept.
+    snapshotSettledCaptures();
     specializeCallbacks(out);
     if (!allowSiblingCaptures && bindLocalFunctions(out, true)) {
         // Erasing a sibling's callable binding is valid only when both sides
@@ -107,6 +128,10 @@ liftReport closureLifter::run() {
         }
     }
     bindLocalFunctions(out);
+    // Tests of a closure value, `typeof` and truthiness, are answered here
+    // (ConstantTests.cpp), so a closure that is tested and then called is only
+    // called by the time the censuses read its uses.
+    foldConstantTests();
     // A listener that removes itself through its own binding names itself
     // directly (HostCallbacks.cpp), before the censuses read the binding.
     bindSelfRemovingListeners();
@@ -202,6 +227,29 @@ liftReport closureLifter::run() {
         llvm::DenseMap<mlir::Operation *, std::string> blocked;
         reasonOf.clear();
         chainedThrough.clear();
+        // A prototype method's receiver is an instance of its class, which
+        // only the constructor lift makes, so the method lifts with its class
+        // or not at all: lifted alone, its calls would pass receivers no
+        // native code holds. A method that cannot lift keeps its own reason;
+        // one that could is refused with its class's. One verdict per class
+        // per round.
+        llvm::DenseMap<mlir::Operation *, std::optional<std::string>> classVerdicts;
+        const auto whyNotLiftableClassMethod =
+            [&](ctjs::CreateClosureOp m) -> std::optional<std::string> {
+            if (auto why = whyNotLiftableMethod(m)) { return why; }
+            ctjs::CreateClosureOp owner = prototypeOwner(m);
+            if (!owner || !constructorClosures.contains(owner.getOperation()) ||
+                lifted.contains(owner.getOperation())) {
+                return std::nullopt;
+            }
+            if (!classVerdicts.count(owner.getOperation())) {
+                classVerdicts[owner.getOperation()] = whyNotLiftableConstructor(owner);
+            }
+            if (const auto & why = classVerdicts[owner.getOperation()]) {
+                return "its class does not lift: " + *why;
+            }
+            return std::nullopt;
+        };
         for (ctjs::CreateClosureOp c : closures) {
             // A declaration is a binding, not a value, and already lowers to
             // nothing; admission::isDeclarationClosure handles it.
@@ -218,7 +266,7 @@ liftReport closureLifter::run() {
             const std::optional<std::string> why =
                 returnedClosures.contains(c.getOperation())      ? whyNotReturnedClosure(c)
                 : constructorClosures.contains(c.getOperation()) ? whyNotLiftableConstructor(c)
-                : methodClosures.contains(c.getOperation())      ? whyNotLiftableMethod(c)
+                : methodClosures.contains(c.getOperation())      ? whyNotLiftableClassMethod(c)
                 : arrayCallbacks.contains(c.getOperation())      ? whyNotArrayCallback(c)
                 : borrowedCallbacks.contains(c.getOperation())   ? whyNotBorrowedCallback(c)
                 : stringCallbacks.contains(c.getOperation())     ? whyNotStringCallback(c)
@@ -470,7 +518,15 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     // "capture 0 is !ctnative.boxed - no caller proves it". ResolveGlobals
     // does the same under the same condition, which the checks above have
     // established: every caller of this function is visible.
-    mlir::SymbolTable::setSymbolVisibility(target, mlir::SymbolTable::Visibility::Private);
+    //
+    // A proved registry class's method that lifts with no call stays public:
+    // a private function nothing calls is dead to that analysis, and its
+    // receiver's type comes from the registry proof at that entry state, not
+    // from callers.
+    const bool registryEntry = liftsOnRegistryReceiver(made.front());
+    if (!registryEntry) {
+        mlir::SymbolTable::setSymbolVisibility(target, mlir::SymbolTable::Visibility::Private);
+    }
     ++out.functions;
 
     if (arrayCallbacks.contains(made.front())) {
@@ -510,7 +566,9 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     const bool constructor = llvm::all_of(made, [&](ctjs::CreateClosureOp c) {
         return constructorClosures.contains(c.getOperation());
     });
-    const bool method = !constructor && callsOfTarget.count(target.getOperation()) != 0 &&
+    const bool method = !constructor &&
+                        (callsOfTarget.count(target.getOperation()) != 0 ||
+                         copiedAwayMethods.contains(target.getOperation()) || registryEntry) &&
                         llvm::all_of(made, [&](ctjs::CreateClosureOp c) {
                             return methodClosures.contains(c.getOperation());
                         });
@@ -664,7 +722,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             ++out.methods;
         }
         const auto captured = liftedCaptures(made.front());
-        for (methodCall at : callsOfTarget[target.getOperation()]) {
+        for (methodCall at : callsOfTarget.lookup(target.getOperation())) {
             mlir::OpBuilder builder(at.call);
             // Constructor lifting may already have replaced and erased the
             // receiver the census recorded; the live call operand is current.

@@ -18,7 +18,12 @@
 // and every capture rule (constant cells, carried cells, captures relayed
 // from an enclosing closure, bound local functions) decides it as it decides
 // any other. A `this` no rule can carry, such as the boxed receiver of a
-// function no caller proves, is refused there with that rule's reason.
+// function no caller proves, is refused there with that rule's reason. An
+// arrow that never reads its receiver gets an undefined `$enclosing_this` and
+// no capture, since nothing can observe that value. Either way the function is
+// first marked `ctnative.arrow` (kNativeArrow): the operand was the importer's
+// only record that it is an arrow, and the constructor rule still needs that,
+// because `new` on an arrow throws.
 //
 // One case needs more than the capture rules: an arrow that reads its
 // method's (or constructor's) `this` through constant keys, as in
@@ -64,20 +69,32 @@ bool listsObjectArg(mlir::Operation * op, unsigned index) {
 /// `$enclosing_this` is undefined, so a second run finds nothing to do.
 void closureLifter::captureLexicalThis() {
     llvm::SmallVector<ctjs::CreateClosureOp> arrows;
+    llvm::SmallVector<ctjs::CreateClosureOp> unread;
     module.walk([&](ctjs::CreateClosureOp c) {
         if (ctjs::isUndefinedConstant(c.getEnclosingThis())) { return; }
         ctjs::FuncOp target = targetOf(c);
+        if (target) { target->setAttr(kNativeArrow, mlir::UnitAttr::get(context)); }
         // A target with no body, or whose capture list disagrees with the
         // closure's, keeps its operand: whyTargetIsNotLiftable refuses it for
         // that, and the new slot's number would be ambiguous.
         if (!target || target.getBody().empty() ||
             c.getUpvalues().size() != static_cast<size_t>(target.getUpvalueCount()) ||
-            target.getBody().front().getNumArguments() < ctjs::implicit_arguments ||
-            target.getBody().front().getArgument(ctjs::arg_receiver).use_empty()) {
+            target.getBody().front().getNumArguments() < ctjs::implicit_arguments) {
+            return;
+        }
+        // An arrow that never reads its receiver (nor hands it to an arrow it
+        // makes) cannot observe the `this` it would capture, so it captures
+        // none, and the creating frame's receiver does not reach it.
+        if (target.getBody().front().getArgument(ctjs::arg_receiver).use_empty()) {
+            unread.push_back(c);
             return;
         }
         arrows.push_back(c);
     });
+    for (ctjs::CreateClosureOp c : unread) {
+        mlir::OpBuilder at(c);
+        c.getEnclosingThisMutable().assign(undefinedAt(at, c.getLoc()));
+    }
     const auto valueType = ctjs::ValueType::get(context);
     // Every closure of one target has the same capture count (checked above),
     // so they all append the same slot; the target is rewritten once.
