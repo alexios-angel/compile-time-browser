@@ -28,7 +28,8 @@ struct TestInstanceRegistries final
     void runOnOperation() override {
         if (lifted) {
             // The steps closureLifter::run() takes before its censuses, up to
-            // the object-table calls, after flattening inheritance.
+            // the object-table calls and the class statics rewrite, after
+            // flattening inheritance.
             lowering_detail::flattenClassInheritance(getOperation());
             lowering_detail::closureLifter lifter{getOperation()};
             lowering_detail::liftReport out;
@@ -38,6 +39,7 @@ struct TestInstanceRegistries final
             lifter.specializeCallbacks(out);
             lifter.bindLocalFunctions(out);
             lifter.bindSingletonMethods(out);
+            lifter.bindClassStatics(out);
         }
         mlir::Builder builder(&getContext());
         for (const InstanceRegistry & registry : proveInstanceRegistries(getOperation())) {

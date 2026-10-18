@@ -10,6 +10,7 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   ClassInheritance.h
   ClassStatics.cpp
   ClosureSets.cpp
+  ConstantTests.cpp
   Bindings.cpp
   BorrowedCallbacks.cpp
   Captures.cpp

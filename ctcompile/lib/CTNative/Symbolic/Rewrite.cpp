@@ -52,9 +52,10 @@ struct Precompute : mlir::OpRewritePattern<Root> {
     }
 };
 
-/// Replaces `branch` with the contents of its `take` region. Moving a region
-/// and remapping its yield is control-flow surgery, so it stays a hand-written
-/// rewrite rather than a pattern.
+} // namespace
+
+// Moving a region and remapping its yield is control-flow surgery, so it
+// stays a hand-written rewrite rather than a pattern.
 bool select(mlir::scf::IfOp branch, bool take) {
     auto & selected = take ? branch.getThenRegion() : branch.getElseRegion();
     if (selected.empty()) {
@@ -71,7 +72,6 @@ bool select(mlir::scf::IfOp branch, bool take) {
     branch.erase();
     return true;
 }
-} // namespace
 
 Changes rewrite(mlir::ModuleOp module, const Analysis & analysis, WorkBudget & budget) {
     // The patterns capture this invocation's analysis by reference; the

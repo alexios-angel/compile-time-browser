@@ -16,9 +16,9 @@ from .execution import *
 from ..harness.map_results import check_result_calls
 
 
-def main():
+def main(argv=None):
     """Run one --group, or else every positive program and then CONTROLS."""
-    args, node, reference, compilers, nm = setup()
+    args, node, reference, compilers, nm = setup(argv)
     if args.group:
         GROUPS[args.group](args, node, reference, compilers, nm)
         return
