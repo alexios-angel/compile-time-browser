@@ -32,8 +32,10 @@
 #include "EmitC/Emitter.h"
 #include "EmitC/Vectors.h"
 #include "Exceptions/Recovery.h"
+#include "Exceptions/TypeErrors.h"
 #include "ForOf.h"
 #include "Refinements.h"
+#include "ctcompile/CTJS/Transforms/Passes.h"
 #include "ctcompile/CTNative/Analysis/StaticTables.h"
 #include "ctcompile/CTNative/Analysis/WorkBudget.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
@@ -453,6 +455,18 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 lifted.cells += locals.cells;
             }
         }
+        // Before the lift: an object parameter must be read only through
+        // constant keys, which `config[key]` in a loop over a table parameter
+        // becomes only once the loop is written out per key.
+        // A `throw new TypeError(message)` the lift left beside the
+        // function's returns is put in a saved-throw region, and the
+        // functions are lifted again (Exceptions/TypeErrors.h).
+        if (!hostContract && structureTypeErrorThrows(module)) {
+            mlir::OpPassManager relift(mlir::ModuleOp::getOperationName());
+            relift.addPass(ctjs::createCTJSLiftToSCF());
+            if (failed(runPipeline(relift, module))) { return signalPassFailure(); }
+        }
+        if (!hostContract) { unrollParameterTableLoops(module); }
         closureLifter lifter{module, census};
         if (!hostContract) { lifted = lifter.run(); }
         // Method and local-binding lifts expose the complete direct caller set.
@@ -601,8 +615,10 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 : nullptr;
         // Data records returned by value join their callers' groups.
         TypeInference::markRecordReturns(module);
-        TypeInference::markStringMethodCalls(module);
+        // After the table loops are unrolled, so a pattern read from a
+        // constant table is a constant (`new RegExp(expected).test(type)`).
         markStaticTables(module);
+        TypeInference::markStringMethodCalls(module);
         // After markStaticTables, whose unrolled loops over a constant table
         // read `config[key]` under each key as a constant: a literal read only
         // that way is a record, not a table.
@@ -891,6 +907,9 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                             TypeInference::consumedByStringCallback(load)) {
                             return;
                         }
+                        // Nor is the TypeError a `throw new TypeError(m)`
+                        // spells itself (Exceptions/TypeErrors.h).
+                        if (consumedByTypeErrorThrow(load)) { return; }
                         // Nor are `document` and `window` when only their
                         // page reads use them; those lower to runtime calls.
                         if (!hostContract && isPageGlobal(load)) { return; }

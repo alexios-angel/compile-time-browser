@@ -259,20 +259,29 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
             // A constant table only where its proof marked the call.
             const bool table =
                 held == carrier::staticTable && call->hasAttr(kNativeStaticTableEnumeration);
+            // A primitive is also a String union, a std::variant the runtime's
+            // overload visits.
+            const bool primitive = printable || held == carrier::numberString ||
+                                   held == carrier::nullableNumberString ||
+                                   held == carrier::booleanString ||
+                                   held == carrier::nullableBooleanString;
             const bool fits = kind == Param::string   ? isString(argument)
                               : kind == Param::number ? held == carrier::number
                               : kind == Param::element
                                   ? held == carrier::domElement || held == carrier::nullableElement
                               : kind == Param::staticTable ? table
+                              : kind == Param::primitive   ? primitive
                                                            : printable;
             if (!fits) {
                 return self.refuse(name + "'s argument " + std::to_string(index) + " is " +
                                    printed(self.typeOf(argument)) + ", not " +
-                                   (kind == Param::string    ? "a String"
-                                    : kind == Param::number  ? "a Number"
-                                    : kind == Param::element ? "an Element"
-                                    : kind == Param::staticTable
-                                        ? "a constant table of Strings"
+                                   (kind == Param::string        ? "a String"
+                                    : kind == Param::number      ? "a Number"
+                                    : kind == Param::element     ? "an Element"
+                                    : kind == Param::staticTable ? "a constant table of Strings"
+                                    : kind == Param::primitive
+                                        ? "a String, Number, Boolean, null, undefined or a "
+                                          "union of a String with a Number or a Boolean"
                                         : "a String, Number, Boolean, null "
                                           "or undefined"));
             }

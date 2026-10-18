@@ -970,6 +970,10 @@ struct closureLifter {
     struct closureSet {
         llvm::SmallVector<ctjs::CreateClosureOp, 4> members;
         llvm::SetVector<ctjs::CallOp> calls;
+        /// The function every value of the set, and every object holding
+        /// one, lives in, or null when they span functions. A member may
+        /// bind its lexical `this` as a pointer only then (ArrowThis.cpp).
+        mlir::Operation * frame = nullptr;
     };
     llvm::DenseMap<mlir::Operation *, std::shared_ptr<closureSet>> closureSets;
     void closureSetCensus();

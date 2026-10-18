@@ -36,6 +36,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 
 #include <array>
+#include <functional>
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -59,12 +60,17 @@ std::array<mlir::Value, 2> sourcesOf(mlir::OpResult merge) {
 
 } // namespace
 
-/// Groups the closures whose values meet at scf.if results or in a field of
-/// an object literal, and are otherwise only called, and keeps the groups of
-/// two or more closures with at least one call.
+/// Groups the closures whose values meet at scf.if results, in a field of an
+/// object literal or at a parameter that stores them, and are otherwise only
+/// called, and keeps the groups of two or more closures with at least one
+/// call.
 ///
-/// A field counts when the object is a literal of this program used only
-/// through constant keys, so every write of the field is visible: its writes
+/// A parameter counts when every call of its function is known and passes a
+/// value of the group, as an event registry's `on(reg, h) { reg.click = h; }`
+/// receives each handler. A field counts when the object is a literal of this
+/// program, named directly, through a constant cell or through parameters
+/// every call passes it for, and used only through constant keys or passed
+/// to such a parameter, so every write of the field is visible: its writes
 /// are the group's values and each read is one of the group's values, or
 /// absent when no write has run. A call through a field of the object with
 /// the object as its receiver passes it only as `this`, which no closure the
@@ -73,8 +79,122 @@ std::array<mlir::Value, 2> sourcesOf(mlir::OpResult merge) {
 void closureLifter::closureSetCensus() {
     closureSets.clear();
     llvm::DenseSet<mlir::Operation *> seen;
-    // The constant key of a property access on an object literal, or empty.
-    const auto fieldOf = [](mlir::Operation * access, mlir::Value & object) -> llvm::StringRef {
+    // A function's parameters receive only what its calls pass when every use
+    // of each closure of it is a call of that closure, or the one store of a
+    // function declaration whose calls --ctjs-resolve-globals made direct
+    // (objectArgumentDeclarations). The calls are read from the IR as it is
+    // now: this census also runs on trial lifts.
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> callsOf;
+    llvm::DenseSet<mlir::Operation *> calledOtherwise;
+    module.walk([&](mlir::Operation * op) {
+        if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
+            if (auto target = direct.getTarget()) { callsOf[target.getOperation()].push_back(op); }
+            return;
+        }
+        if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
+            if (auto made = call.getCallee().getDefiningOp<ctjs::CreateClosureOp>()) {
+                if (ctjs::FuncOp target = targetOf(made)) {
+                    callsOf[target.getOperation()].push_back(op);
+                }
+            }
+            return;
+        }
+        auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(op);
+        ctjs::FuncOp target = made ? targetOf(made) : ctjs::FuncOp{};
+        if (!target) { return; }
+        for (mlir::OpOperand & use : made.getResult().getUses()) {
+            mlir::Operation * user = use.getOwner();
+            const bool called =
+                (llvm::isa<ctjs::CallOp>(user) && use.getOperandNumber() == 0) ||
+                (llvm::isa<ctjs::CallDirectOp>(user) && use.getOperandNumber() == 2 &&
+                 llvm::cast<ctjs::CallDirectOp>(user).getTarget() == target);
+            auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(user);
+            const bool declared =
+                store && objectArgumentDeclarations.lookup(store.getName()) == made;
+            if (!called && !declared) { calledOtherwise.insert(target.getOperation()); }
+        }
+    });
+    // The values every call passes for `parameter`, a declared parameter of
+    // such a function; false when that is not proved.
+    const auto passedFor = [&](mlir::BlockArgument parameter,
+                               llvm::SmallVectorImpl<mlir::Value> & passed) {
+        auto function = llvm::dyn_cast<ctjs::FuncOp>(parameter.getOwner()->getParentOp());
+        if (!function || !parameter.getOwner()->isEntryBlock() ||
+            parameter.getArgNumber() < ctjs::implicit_arguments ||
+            calledOtherwise.contains(function.getOperation())) {
+            return false;
+        }
+        const auto calls = callsOf.find(function.getOperation());
+        if (calls == callsOf.end()) { return false; }
+        const unsigned j = parameter.getArgNumber() - ctjs::implicit_arguments;
+        for (mlir::Operation * call : calls->second) {
+            const mlir::ValueRange args = argsOfCallSite(call);
+            if (j >= args.size()) { return false; }
+            passed.push_back(args[j]);
+        }
+        return true;
+    };
+    // The parameter `use`, an argument of a call, is passed to, or null.
+    const auto parameterOf = [&](mlir::OpOperand & use) -> mlir::BlockArgument {
+        mlir::Operation * user = use.getOwner();
+        ctjs::FuncOp target;
+        unsigned first = 0;
+        if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(user)) {
+            target = direct.getTarget();
+            first = ctjs::implicit_arguments;
+        } else if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
+            if (auto made = call.getCallee().getDefiningOp<ctjs::CreateClosureOp>()) {
+                target = targetOf(made);
+            }
+            first = 2;
+        }
+        if (!target || target.getBody().empty() || use.getOperandNumber() < first) { return {}; }
+        mlir::Block & entry = target.getBody().front();
+        const unsigned at = use.getOperandNumber() - first + ctjs::implicit_arguments;
+        return at < entry.getNumArguments() ? entry.getArgument(at) : mlir::BlockArgument{};
+    };
+    // The object literal `object` names: the literal itself, or a parameter
+    // every call passes that one literal for, as `on(h) { reg.click = h; }`
+    // receives a registry it captured once lifted. Null otherwise.
+    const std::function<mlir::Value(mlir::Value, unsigned)> literalOf =
+        [&](mlir::Value object, unsigned depth) -> mlir::Value {
+        if (object.getDefiningOp<ctjs::CreateObjectOp>()) { return object; }
+        // A read of a constant cell, such as a `const` a function captures.
+        if (auto read = object.getDefiningOp<ctjs::CellGetOp>()) {
+            auto cell = read.getCell().getDefiningOp<ctjs::CreateCellOp>();
+            if (!cell || depth > 8 || !isConstantCell(cell)) { return {}; }
+            return literalOf(constantValueOf(cell), depth + 1);
+        }
+        auto parameter = llvm::dyn_cast<mlir::BlockArgument>(object);
+        llvm::SmallVector<mlir::Value> passed;
+        if (!parameter || depth > 8 || !passedFor(parameter, passed)) { return {}; }
+        mlir::Value literal;
+        for (mlir::Value value : passed) {
+            const mlir::Value each = literalOf(value, depth + 1);
+            if (!each || (literal && each != literal)) { return {}; }
+            literal = each;
+        }
+        return literal;
+    };
+    // Each literal and the parameters that name it.
+    llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value>> aliases;
+    module.walk([&](ctjs::CreateObjectOp made) { aliases[made.getResult()].push_back(made); });
+    module.walk([&](ctjs::CellGetOp read) {
+        if (const mlir::Value literal = literalOf(read, 0)) { aliases[literal].push_back(read); }
+    });
+    for (ctjs::FuncOp function : module.getOps<ctjs::FuncOp>()) {
+        if (function.getBody().empty()) { continue; }
+        for (mlir::BlockArgument parameter :
+             function.getBody().front().getArguments().drop_front(ctjs::implicit_arguments)) {
+            if (const mlir::Value literal = literalOf(parameter, 0);
+                literal && literal != mlir::Value(parameter)) {
+                aliases[literal].push_back(parameter);
+            }
+        }
+    }
+    // The constant key of a property access on an object literal, or empty;
+    // `object` is set to the literal.
+    const auto fieldOf = [&](mlir::Operation * access, mlir::Value & object) -> llvm::StringRef {
         mlir::Value key;
         if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(access)) {
             object = get.getObject();
@@ -85,8 +205,21 @@ void closureLifter::closureSetCensus() {
         } else {
             return {};
         }
-        if (!object.getDefiningOp<ctjs::CreateObjectOp>()) { return {}; }
+        object = literalOf(object, 0);
+        if (!object) { return {}; }
         return ctjs::constantKey(key);
+    };
+    // Whether `use` passes the literal `object` on to a parameter that names
+    // the same literal, or is the one write of a constant cell holding it,
+    // whose reads name it too.
+    const auto passesOn = [&](mlir::OpOperand & use, mlir::Value object) {
+        if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(use.getOwner());
+            write && use.getOperandNumber() == 1) {
+            auto cell = write.getCell().getDefiningOp<ctjs::CreateCellOp>();
+            return cell && isConstantCell(cell) && constantValueOf(cell) == object;
+        }
+        const mlir::BlockArgument parameter = parameterOf(use);
+        return parameter && literalOf(parameter, 0) == object;
     };
     // Whether `object`, the receiver of `call`, is unseen by the callee: the
     // callee is a constant-key read of `object` whose every write is a
@@ -99,10 +232,12 @@ void closureLifter::closureSetCensus() {
         const llvm::StringRef key = read ? fieldOf(read, on) : llvm::StringRef{};
         if (key.empty() || on != object) { return false; }
         llvm::SmallVector<mlir::Value> sources;
-        for (mlir::Operation * user : object.getUsers()) {
-            if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
-                set && set.getObject() == object && fieldOf(user, on) == key) {
-                sources.push_back(set.getValue());
+        for (mlir::Value name : aliases.lookup(object)) {
+            for (mlir::Operation * user : name.getUsers()) {
+                if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+                    set && set.getObject() == name && fieldOf(user, on) == key) {
+                    sources.push_back(set.getValue());
+                }
             }
         }
         if (sources.empty()) { return false; }
@@ -119,6 +254,10 @@ void closureLifter::closureSetCensus() {
                     if (!source) { return false; }
                     sources.push_back(source);
                 }
+            } else if (auto parameter = llvm::dyn_cast<mlir::BlockArgument>(sources[i])) {
+                llvm::SmallVector<mlir::Value> passed;
+                if (sources.size() > 64 || !passedFor(parameter, passed)) { return false; }
+                sources.append(passed.begin(), passed.end());
             } else {
                 return false;
             }
@@ -137,10 +276,31 @@ void closureLifter::closureSetCensus() {
         llvm::SetVector<mlir::Value> values;
         llvm::SetVector<std::pair<mlir::Value, llvm::StringRef>> fields;
         bool closed = true;
-        // A value of the group is a closure, a merge or a read of a field.
+        // A value of the group is a closure, a merge, a read of a field, or a
+        // parameter whose every call passes a value of the group.
         const auto add = [&](mlir::Value v) {
             mlir::Operation * def = v ? v.getDefiningOp() : nullptr;
             mlir::Value object;
+            if (auto parameter = llvm::dyn_cast_or_null<mlir::BlockArgument>(v)) {
+                // Type inference types the parameter as the set only when more
+                // than one value reaches it; one closure alone types it as that
+                // closure, which no set field or call takes.
+                llvm::SmallVector<mlir::Value> passed;
+                // A parameter that is only called is a borrowed callback's
+                // (BorrowedCallbacks.cpp); one that is stored needs the set.
+                const bool stored = llvm::any_of(v.getUses(), [](mlir::OpOperand & use) {
+                    return llvm::isa<ctjs::SetPropertyOp>(use.getOwner()) &&
+                           use.getOperandNumber() == 2;
+                });
+                if (!stored || !passedFor(parameter, passed) ||
+                    (llvm::all_equal(passed) &&
+                     passed.front().getDefiningOp<ctjs::CreateClosureOp>())) {
+                    closed = false;
+                    return;
+                }
+                values.insert(v);
+                return;
+            }
             if (!llvm::isa_and_nonnull<ctjs::CreateClosureOp, mlir::scf::IfOp>(def) &&
                 !(llvm::isa_and_nonnull<ctjs::GetPropertyOp>(def) &&
                   !fieldOf(def, object).empty())) {
@@ -153,13 +313,15 @@ void closureLifter::closureSetCensus() {
         for (size_t i = 0, f = 0; closed && (i < values.size() || f < fields.size());) {
             if (f < fields.size()) {
                 const auto [object, key] = fields[f++];
-                for (mlir::Operation * user : object.getUsers()) {
-                    mlir::Value on;
-                    if (fieldOf(user, on) != key || on != object) { continue; }
-                    if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
-                        add(set.getValue());
-                    } else {
-                        add(user->getResult(0));
+                for (mlir::Value name : aliases.lookup(object)) {
+                    for (mlir::Operation * user : name.getUsers()) {
+                        mlir::Value on;
+                        if (fieldOf(user, on) != key || on != object) { continue; }
+                        if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
+                            if (set.getObject() == name) { add(set.getValue()); }
+                        } else if (llvm::cast<ctjs::GetPropertyOp>(user).getObject() == name) {
+                            add(user->getResult(0));
+                        }
                     }
                 }
                 continue;
@@ -176,6 +338,9 @@ void closureLifter::closureSetCensus() {
                     // decides; it does not let the value out.
                 } else if (const mlir::Value merged = mergedBy(use)) {
                     add(merged);
+                } else if (const mlir::BlockArgument parameter = parameterOf(use)) {
+                    // An argument: the parameter it is passed to.
+                    add(parameter);
                 } else if (llvm::isa<ctjs::SetPropertyOp>(use.getOwner()) &&
                            use.getOperandNumber() == 2 &&
                            !fieldOf(use.getOwner(), object).empty()) {
@@ -189,24 +354,46 @@ void closureLifter::closureSetCensus() {
                 closed && merge && llvm::isa<mlir::scf::IfOp>(merge.getOwner())) {
                 for (mlir::Value source : sourcesOf(merge)) { add(source); }
             }
+            // A parameter is fed by every call's argument.
+            llvm::SmallVector<mlir::Value> passed;
+            if (auto parameter = llvm::dyn_cast<mlir::BlockArgument>(v);
+                closed && parameter && passedFor(parameter, passed)) {
+                for (mlir::Value source : passed) { add(source); }
+            }
         }
         // Each field's object: used only through constant keys, or as the
         // receiver of a call that cannot see it.
         // A read no write dominates may find the field absent: type inference
         // types it opt<closure_set>, and a call through it is refused until a
         // typeof test narrows it.
+        // Passing the object to a parameter that names it is no escape: that
+        // parameter's uses are checked here too.
         for (const auto & entry : fields) {
             const mlir::Value object = entry.first;
-            for (mlir::OpOperand & use : object.getUses()) {
-                if (!closed) { break; }
-                mlir::Operation * user = use.getOwner();
-                if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
-                    closed &= use.getOperandNumber() == 1 && receiverIsUnread(call, object);
-                    continue;
+            for (mlir::Value name : aliases.lookup(object)) {
+                for (mlir::OpOperand & use : name.getUses()) {
+                    if (!closed) { break; }
+                    mlir::Operation * user = use.getOwner();
+                    if (passesOn(use, object)) { continue; }
+                    if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
+                        closed &= use.getOperandNumber() == 1 && receiverIsUnread(call, object);
+                        continue;
+                    }
+                    mlir::Value on;
+                    closed &= use.getOperandNumber() == 0 && !fieldOf(user, on).empty();
                 }
-                mlir::Value on;
-                closed &= use.getOperandNumber() == 0 && !fieldOf(user, on).empty();
             }
+        }
+        // The one function the set lives in, when it lives in one.
+        const auto frameOf = [](mlir::Value v) -> mlir::Operation * {
+            return v.getParentRegion()->getParentOfType<ctjs::FuncOp>();
+        };
+        group.frame = frameOf(start.getResult());
+        for (mlir::Value v : values) {
+            if (frameOf(v) != group.frame) { group.frame = nullptr; }
+        }
+        for (const auto & entry : fields) {
+            if (frameOf(entry.first) != group.frame) { group.frame = nullptr; }
         }
         for (mlir::Value v : values) {
             if (auto made = v.getDefiningOp<ctjs::CreateClosureOp>()) {
@@ -221,6 +408,14 @@ void closureLifter::closureSetCensus() {
         bool eligible = true;
         for (ctjs::CreateClosureOp c : group.members) {
             ctjs::FuncOp target = targetOf(c);
+            // A closure another rule takes keeps that rule (a callee that only
+            // calls its parameter borrows it, BorrowedCallbacks.cpp).
+            eligible &= !borrowedCallbacks.contains(c.getOperation()) &&
+                        !arrayCallbacks.contains(c.getOperation()) &&
+                        !stringCallbacks.contains(c.getOperation()) &&
+                        !hostCallbacks.contains(c.getOperation()) &&
+                        !promiseCallbacks.contains(c.getOperation()) &&
+                        !returnedClosures.contains(c.getOperation());
             eligible &= target && !lifted.contains(c.getOperation()) && !isDeclarationClosure(c) &&
                         uniqueClosureByTarget.lookup(target.getOperation()) == c &&
                         !target.getBody().empty() &&
@@ -245,9 +440,14 @@ std::optional<std::string> closureLifter::whyNotClosureSetMember(ctjs::CreateClo
     if (!entry.getArgument(ctjs::arg_new_target).use_empty()) {
         return "a closure called through a set of closures reads new.target";
     }
-    // An arrow's lexical `this` (ArrowThis.cpp) is an object capture, which
-    // a member's by-value copy does not carry yet.
-    if (target->hasAttr("ctnative.lexical_this")) {
+    // An arrow's lexical `this` (ArrowThis.cpp) is an object capture. A member
+    // binds it as the pointer lift() passes (lexicalThisObjectArgs) when the
+    // whole set lives in the frame that made the closure, the method whose
+    // `this` it is: no value of the set leaves that frame, so no call through
+    // the set outlives the receiver. Anything else is not carried.
+    if (target->hasAttr("ctnative.lexical_this") &&
+        (closureSets.lookup(c.getOperation())->frame != c->getParentOfType<ctjs::FuncOp>() ||
+         lexicalThisObjectArgs(std::array<ctjs::CreateClosureOp, 1>{c}).empty())) {
         return "a closure called through a set of closures captures its lexical `this`, which a "
                "member does not carry";
     }

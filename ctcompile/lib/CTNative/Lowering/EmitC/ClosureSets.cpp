@@ -36,12 +36,24 @@ std::string lowering::closureSetMemberSpelling(llvm::StringRef target) {
                                  target + "` has no closure that makes it");
     }
     const auto named = names.find(target);
-    std::string spelling =
-        "ctnative::bound<" + (named == names.end() ? cIdentifier(target) : named->second);
-    for (mlir::Value captured : made.getUpvalues()) {
-        spelling += ", " + callableTypeSpelling(typeOf(captured));
+    const std::string function = named == names.end() ? cIdentifier(target) : named->second;
+    // A capture with no value carrier, such as the pointer an arrow's lexical
+    // `this` is bound as (ArrowThis.cpp), is spelled by the lifted function's
+    // own signature (ctnative::bound_prefix).
+    const bool byValue = llvm::all_of(made.getUpvalues(), [&](mlir::Value captured) {
+        return isCallableCarrier(carrierOf(typeOf(captured)));
+    });
+    std::string spelling;
+    if (byValue) {
+        spelling = "ctnative::bound<" + function;
+        for (mlir::Value captured : made.getUpvalues()) {
+            spelling += ", " + callableTypeSpelling(typeOf(captured));
+        }
+        spelling += ">";
+    } else {
+        spelling = "ctnative::bound_prefix<" + function + ", " +
+                   std::to_string(made.getUpvalues().size()) + ">";
     }
-    spelling += ">";
     closureSetMembers[target] = spelling;
     return spelling;
 }
@@ -141,11 +153,20 @@ bool lowering::retypeClosureSet(mlir::Value v) {
 /// Declares each closure-set member's function ahead of the shape classes:
 /// a class field of a set's variant names them, and the prototypes that
 /// follow the classes come too late for it. A second prototype of the same
-/// function is valid C++.
+/// function is valid C++. A member bound to a receiver pointer is left to
+/// the prototypes after the classes, since its signature names a class: its
+/// set lives in the method's frame (ClosureLifting/ClosureSets.cpp), so only
+/// function bodies spell it.
+/// ponytail: a class field holding such a set would need the class declared
+/// ahead; forward-declare the classes here if a set ever reaches one.
 void lowering::declareClosureSetMembers(mlir::OpBuilder & b, llvm::ArrayRef<ec::FuncOp> lowered) {
     if (!closureSetGroups || closureSetGroups->empty()) { return; }
     llvm::StringSet<> members;
     for (const auto & target : *closureSetGroups) {
+        if (llvm::StringRef(closureSetMemberSpelling(target.getKey()))
+                .starts_with("ctnative::bound_prefix<")) {
+            continue;
+        }
         const auto named = names.find(target.getKey());
         members.insert(named == names.end() ? cIdentifier(target.getKey()) : named->second);
     }

@@ -1,7 +1,8 @@
 //===- RegExp.hpp - RegExp literals and String.prototype.replace -*- C++ -*-===//
 //
-// The RegExp a generated program builds for `text.replace(/pattern/g, fn)`,
-// and String.prototype.replace with a function replacement. Only programs that
+// The RegExp a generated program builds for `text.replace(/pattern/g, fn)` or
+// `new RegExp(source)`, String.prototype.replace with a function replacement,
+// String.prototype.match, and RegExp.prototype.test. Only programs that
 // lower such a call include this header, so the others never parse <regex>.
 //
 // std::regex with the ECMAScript grammar runs the pattern. The compiler admits
@@ -17,33 +18,77 @@
 
 #pragma once
 
-#include "String.hpp"
+#include "ctcompile/CTNative/Runtime/ctnative.hpp"
 
 #include <concepts>
+#include <cstddef>
+#include <optional>
 #include <regex>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace ctnative {
 
-/// A RegExp literal with the subset of flags the compiler admits: `g` or none.
+/// A RegExp with the subset of flags the compiler admits: `g`, or `i` where
+/// the text is ASCII (std::regex folds case per byte), or none.
 class reg_exp {
     std::regex pattern;
     bool global_flag;
 
 public:
     reg_exp(std::string_view source, std::string_view flags)
-        : pattern(std::string{source}, std::regex::ECMAScript),
+        : pattern(std::string{source}, flags.find('i') != std::string_view::npos
+                                           ? std::regex::ECMAScript | std::regex::icase
+                                           : std::regex::ECMAScript),
           global_flag(flags.find('g') != std::string_view::npos) {}
 
     const std::regex & engine() const { return pattern; }
     bool global() const { return global_flag; }
 };
 
+/// What String.prototype.match answers for a RegExp without `g`
+/// (RegExpBuiltinExec, ECMA-262 22.2.7.2): the matched text and each group, or
+/// null when nothing matched.
+class match_result {
+    std::optional<std::vector<js_string>> parts;
+
+public:
+    explicit match_result(std::optional<std::vector<js_string>> found) : parts(std::move(found)) {}
+
+    /// `m[k]` where the compiler proved group `k` takes part in every match:
+    /// its text, or, when nothing matched, the TypeError reading `k` of null
+    /// throws (ECMA-262 7.1.18 ToObject), with the interpreter's message.
+    const js_string & group(std::size_t k) const {
+        if (!parts) {
+            throw type_error("Cannot read properties of null (reading '" + std::to_string(k) +
+                             "')");
+        }
+        return (*parts)[k];
+    }
+};
+
+/// RegExp.prototype.test (ECMA-262 22.2.6.16) of a RegExp without `g`:
+/// whether the pattern matches anywhere in the text (RegExpBuiltinExec from
+/// lastIndex 0, which a non-global RegExp never moves).
+struct reg_exp_test_method {
+    js_boolean_t call(const reg_exp & self, const js_string & text) const {
+        return js_boolean_t{std::regex_search(text.value(), self.engine())};
+    }
+};
+
+/// The RegExp prototype's methods native code calls.
+struct reg_exp_prototype {
+    reg_exp_test_method test;
+};
+
 /// The RegExp constructor's call, as the literal `/source/flags` evaluates
-/// (ECMA-262 22.2.3.1 RegExpCreate).
+/// (ECMA-262 22.2.3.1 RegExpCreate), and `new RegExp(source)`, whose flags are
+/// empty.
 struct reg_exp_constructor {
-    reg_exp operator()(std::string_view source, std::string_view flags) const {
+    reg_exp_prototype prototype;
+    reg_exp operator()(std::string_view source, std::string_view flags = {}) const {
         return reg_exp{source, flags};
     }
 };
@@ -117,6 +162,18 @@ inline void append_substitution(std::string & out, std::string_view replacement,
     }
 }
 } // namespace detail
+
+/// String.prototype.match (ECMA-262 22.1.3.13) with a RegExp without `g`:
+/// RegExpExec from lastIndex 0, the first match and its groups.
+inline match_result match_method::call(const js_string & self, const reg_exp & pattern) const {
+    std::smatch found;
+    if (!std::regex_search(self.value(), found, pattern.engine())) {
+        return match_result{std::nullopt};
+    }
+    std::vector<js_string> parts;
+    for (const auto & part : found) { parts.emplace_back(part.str()); }
+    return match_result{std::move(parts)};
+}
 
 /// String.prototype.replace (ECMA-262 22.1.3.19) with a RegExp and a String
 /// replacement, through RegExp.prototype[@@replace] (22.2.6.11): each match
