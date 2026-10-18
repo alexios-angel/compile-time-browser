@@ -25,6 +25,8 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   RunOnce.cpp
   SelfCalls.cpp
   Singletons.cpp
+  SpreadParameters.cpp
+  SpreadParameters.h
   StringCallbacks.cpp
   ClosureLifter.h
 )
