@@ -2,6 +2,7 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   ArrayCallbacks.cpp
   ArrowThis.cpp
   Calls.cpp
+  CallSiteCopies.cpp
   Callbacks.cpp
   Cells.cpp
   Classes.cpp

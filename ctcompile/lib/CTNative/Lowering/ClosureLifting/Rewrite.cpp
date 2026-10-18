@@ -97,6 +97,9 @@ liftReport closureLifter::run() {
     // Static members of a class are called directly (ClassStatics.cpp), so
     // that the class census below can prove the class.
     bindClassStatics(out);
+    // A closure handed down a chain of functions to where it is stored is
+    // made there instead, in a copy of the chain per call (CallSiteCopies.cpp).
+    copyCallSitesForClosures();
     // A class held in a static variable is constructed by name where it is
     // read (Singletons.cpp), for the constructor census below.
     markStaticClassReads();
