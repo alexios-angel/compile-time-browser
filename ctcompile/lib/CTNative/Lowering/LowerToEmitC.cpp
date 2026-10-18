@@ -37,12 +37,15 @@
 #include "Exceptions/TypeErrors.h"
 #include "ForOf.h"
 #include "Refinements.h"
+#include "ctcompile/CTJS/Lowering/NativeRealm.h"
 #include "ctcompile/CTJS/Transforms/Passes.h"
 #include "ctcompile/CTNative/Analysis/StaticTables.h"
 #include "ctcompile/CTNative/Analysis/WorkBudget.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Pass/PassManager.h"
+#include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Support/MemoryBuffer.h"
 
 #include <optional>
@@ -54,6 +57,61 @@ namespace ctcompile::ctnative {
 
 namespace {
 using namespace lowering_detail;
+
+/// Folds to undefined each read of a global object property that
+/// --ctjs-resolve-globals marked kAbsentGlobalProperty: a name no script
+/// writes and the native realm does not provide, left for the VM only because
+/// something could write the globals table dynamically. Native code cannot:
+/// every such write is refused where it sits, and a program with a refused
+/// function has no native build. A key that something else in the module
+/// spells (a write by that name through another value, or a call that passes
+/// it) keeps its reads. The folded names go on the module as
+/// ctnative.absent_globals. As in --ctjs-resolve-globals' own fold, the page
+/// is taken to have no element of that id or name, which named access on the
+/// Window object (HTML 7.3.3) would return.
+void foldAbsentGlobalReads(mlir::ModuleOp module) {
+    llvm::SmallVector<ctjs::GetPropertyOp> marked;
+    module.walk([&](ctjs::GetPropertyOp get) {
+        if (get->hasAttr(ctjs::kAbsentGlobalProperty)) { marked.push_back(get); }
+    });
+    if (marked.empty()) { return; }
+    llvm::StringSet<> spelled;
+    module.walk([&](ctjs::ConstantOp constant) {
+        auto text = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue());
+        if (!text) { return; }
+        for (mlir::OpOperand & use : constant.getResult().getUses()) {
+            auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
+            if (!llvm::isa<ctjs::RootOp>(use.getOwner()) &&
+                (!get || use.getOperandNumber() != 1 ||
+                 !get->hasAttr(ctjs::kAbsentGlobalProperty))) {
+                spelled.insert(text.getValue());
+                return;
+            }
+        }
+    });
+    llvm::SetVector<mlir::Attribute> folded;
+    for (ctjs::GetPropertyOp get : marked) {
+        get->removeAttr(ctjs::kAbsentGlobalProperty);
+        const llvm::StringRef key = ctjs::constantKey(get.getKey());
+        auto holder = get.getObject().getDefiningOp<ctjs::LoadGlobalOp>();
+        if (!holder || key.empty() || spelled.contains(key) || ctjs::nativeRealmProvides(key)) {
+            continue;
+        }
+        mlir::OpBuilder at(get);
+        auto undefined = ctjs::ConstantOp::create(at, get.getLoc(), get.getType(),
+                                                  ctjs::UndefinedAttr::get(module.getContext()));
+        get.getResult().replaceAllUsesWith(undefined.getResult());
+        folded.insert(mlir::StringAttr::get(module.getContext(), key));
+        mlir::Operation * keyed = get.getKey().getDefiningOp();
+        get.erase();
+        if (keyed && keyed->use_empty()) { keyed->erase(); }
+        if (holder->use_empty()) { holder->erase(); }
+    }
+    if (!folded.empty()) {
+        module->setAttr("ctnative.absent_globals",
+                        mlir::ArrayAttr::get(module.getContext(), folded.getArrayRef()));
+    }
+}
 
 /// Replaces host-declared undefined bindings (and absent bindings read through
 /// `typeof`) with an `undefined` constant, and `typeof` of a proved fresh owner
@@ -362,6 +420,11 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             }
             domEntry = std::make_unique<DOMEntryAnalysis>(module, *hostContract, hostMaxSteps);
         }
+
+        // Before the default optimizations, so that precomputation drops the
+        // branches the folded reads guard, and before the closure lift, so that
+        // the helpers the class statics rewrite copies have lost them too.
+        if (!hostContract) { foldAbsentGlobalReads(module); }
 
         // Run the default optimizations here, so clients do not need to
         // rebuild them in a shell or test pipeline. They run before closure
