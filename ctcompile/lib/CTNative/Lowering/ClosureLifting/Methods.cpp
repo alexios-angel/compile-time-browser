@@ -479,6 +479,9 @@ bool closureLifter::retainedByLocalMap(mlir::OpOperand & use,
 bool closureLifter::usesCloseTheShape(mlir::Value object) {
     for (mlir::OpOperand & use : object.getUses()) {
         if (isConstantKeyAccess(use)) { continue; }
+        // The receiver of a call of a per-site copy that keeps it
+        // (CallSiteCopies.cpp), as for a method call.
+        if (carriesReceiverToCopy(use)) { continue; }
         // The instance its function returns by value (returnsAnInstance).
         if (auto ret = llvm::dyn_cast<ctjs::ReturnOp>(use.getOwner());
             ret && returnsAnInstance(ret)) {
@@ -1116,6 +1119,21 @@ void closureLifter::methodCensus() {
                 }
             }
         }
+        // A per-site copy that keeps its method call's receiver
+        // (CallSiteCopies.cpp) receives what that receiver names.
+        for (mlir::Operation * op : receiverCopyCalls) {
+            auto call = llvm::cast<ctjs::CallDirectOp>(op);
+            ctjs::FuncOp target = call.getTarget();
+            if (!target || target.getBody().empty()) { continue; }
+            llvm::SmallVector<mlir::Value, 2> & named =
+                behind[target.getBody().front().getArgument(ctjs::arg_receiver)];
+            for (mlir::Value object : behind.lookup(call.getReceiver())) {
+                if (!llvm::is_contained(named, object)) {
+                    named.push_back(object);
+                    changed = true;
+                }
+            }
+        }
     }
     // Record the resolved calls once `behind` has stopped changing.
     for (ctjs::CallOp call : allCalls) {
@@ -1182,6 +1200,9 @@ std::optional<std::string> closureLifter::whyThisLeaks(ctjs::FuncOp target) {
             if (use.getOperandNumber() == 1 && resolveMethod(call)) { continue; }
             return "it passes `this` to a call this rewrite cannot make direct";
         }
+        // The receiver of a per-site copy of a method (CallSiteCopies.cpp)
+        // that uses it only as this method may.
+        if (carriesReceiverToCopy(use)) { continue; }
         // `f(this)` is usually a ctjs.call_direct by now, because
         // --ctjs-resolve-globals already named the callee. Give it its own
         // sentence; the default one ("it reaches `ctjs.call_direct`") names
@@ -1242,8 +1263,6 @@ std::optional<std::string> closureLifter::whyNotLiftableMethod(ctjs::CreateClosu
             return whyNotAMethodField(set);
         }
     }
-    // Condition 3.
-    if (const std::optional<std::string> leak = whyThisLeaks(target)) { return leak; }
     // Every call of it must be one resolveMethod resolved. A method field
     // nothing calls has nowhere to move the receiver to, and an unresolved
     // call would be left dispatching through a closure that is about to lower
@@ -1253,6 +1272,11 @@ std::optional<std::string> closureLifter::whyNotLiftableMethod(ctjs::CreateClosu
     const auto calls = callsOfTarget.find(target.getOperation());
     const bool copiedAway =
         calls == callsOfTarget.end() && copiedAwayMethods.contains(target.getOperation());
+    // Condition 3. A method whose calls all call copies carries no receiver
+    // any more; each copy that keeps one was asked when it was made.
+    if (!copiedAway) {
+        if (const std::optional<std::string> leak = whyThisLeaks(target)) { return leak; }
+    }
     if (calls == callsOfTarget.end()) {
         // A method read as a value: `var g = o.m;` loads the field without
         // calling it, so there is no call site for the receiver to move to,

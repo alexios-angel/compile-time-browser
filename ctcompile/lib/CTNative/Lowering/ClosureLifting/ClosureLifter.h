@@ -573,6 +573,18 @@ struct closureLifter {
     /// Rewrites each call of Bootstrap's execute helper with a function and
     /// nothing else into a call of that function (ExecuteCalls.cpp).
     void callExecutedFunctions();
+    /// Whether execute(f) may become f() in this module; decided once.
+    bool executeCallsRewritable();
+    std::optional<bool> executeRewritable;
+    /// A per-call-site copy's callback made where it is called
+    /// (ExecuteCalls.cpp): whether the last link's `parameter` allows it, and
+    /// the rewrite of the copy once `inside`, made from `cells`, replaced it,
+    /// copying functions with the copy's `cloneDeep`; it returns the execute
+    /// helpers whose calls it replaced.
+    bool relaysCallback(mlir::BlockArgument parameter);
+    llvm::SetVector<mlir::Operation *>
+    relayCallback(ctjs::CreateClosureOp inside, llvm::ArrayRef<mlir::Value> cells,
+                  llvm::function_ref<ctjs::FuncOp(ctjs::FuncOp)> cloneDeep);
     void hostCallbackCensus();
     std::optional<std::string> whyNotHostCallback(ctjs::CreateClosureOp c);
     void rewriteHostCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
@@ -593,6 +605,10 @@ struct closureLifter {
     void singleWriteCensus();
 
     void sharedCellCensus();
+
+    /// Gives each capture of a binding that no write can change once the
+    /// closure exists a never-written cell of its own (Cells.cpp).
+    void snapshotSettledCaptures();
 
     ctjs::CellSetOp dominatingWriteOf(ctjs::CreateCellOp cell);
 
@@ -1074,6 +1090,12 @@ struct closureLifter {
     /// Whether every object the receiver of `call` may name is known (after
     /// methodCensus).
     bool knowsEveryReceiver(ctjs::CallOp call);
+    /// The direct calls copyCallSitesForClosures made of copies that keep
+    /// their method call's receiver (operand 0, marked kNativeReceiver).
+    llvm::DenseSet<mlir::Operation *> receiverCopyCalls;
+    /// Whether `use` is the receiver of one of those calls whose copy uses
+    /// `this` only as a method's receiver may.
+    bool carriesReceiverToCopy(mlir::OpOperand & use);
     /// The calls a closure passed to `first` at parameter `at` is handed on
     /// through, with the position each passes it at, when copies of that chain
     /// would let the closure lift where the last one uses it.

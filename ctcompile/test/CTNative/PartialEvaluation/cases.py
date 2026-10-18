@@ -1,11 +1,12 @@
 # CASES below copies each case's RUN lines from its .mlir file until that
 # case's switch commit deletes them there; until then, edit both copies.
-"""The CTNative/PartialEvaluation lit cases whose Python step runs among other RUN
-lines, as pytest tests. test_case is parametrized over CASES, whose keys are
-the cases' lit paths relative to this folder without .mlir: `test_case[long-
-keys]` is lit's `ctcompile :: CTNative/PartialEvaluation/long-keys.mlir`. Each
-test runs all of its case's RUN lines in order through lit_lines.run, every
-line under bash, as lit runs them.
+"""The CTNative/PartialEvaluation lit cases, with and without a Python step
+among their RUN lines, as pytest tests. test_case is parametrized over CASES,
+whose keys are the cases' lit paths relative to this folder without .mlir:
+`test_case[long-keys]` is lit's `ctcompile ::
+CTNative/PartialEvaluation/long-keys.mlir`. Each test runs all of its case's
+RUN lines in order through lit_lines.run, every line under bash, as lit runs
+them.
 """
 
 from pathlib import Path
@@ -52,6 +53,53 @@ CASES = {
         "ctjs-opt %t/unknown.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=UNKNOWN",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/specialized.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-specialize --ctnative-partial-evaluate | FileCheck %s --check-prefix=SPECIALIZED",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/specialized.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-specialize --ctnative-partial-evaluate --ctnative-partial-evaluate | FileCheck %s --check-prefix=SPECIALIZED",
+    ],
+    "closures": [
+        "ctjs-translate --ctbrowser-js-to-ctjs %S/../Fixtures/Optimization/partial/closures.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-partial-evaluate | FileCheck %s --check-prefix=HEAP",
+        "ctjs-translate --ctbrowser-js-to-ctjs %S/../Fixtures/Optimization/partial/closures.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-partial-evaluate --ctnative-partial-evaluate | FileCheck %s --check-prefix=HEAP",
+        "ctjs-translate --ctbrowser-js-to-ctjs %S/../Fixtures/Optimization/partial/closures.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-binding-time-analysis | FileCheck %s --check-prefix=BTA",
+        "split-file %s %t",
+        "ctjs-opt %t/mutable.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=MUTABLE",
+        "ctjs-opt %t/write.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=WRITE",
+        "ctjs-opt %t/duplicate.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=DUPLICATE",
+        "ctjs-opt %t/ambiguous.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=AMBIGUOUS",
+        "ctjs-opt %t/cycle.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=CYCLE",
+        "ctjs-opt %t/pending.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=PENDING",
+        "ctjs-opt %t/unknown.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=UNKNOWN",
+        "ctjs-opt %t/cycle.mlir '--ctnative-partial-evaluate=max-nodes=1' | FileCheck %s --check-prefix=BUDGET",
+    ],
+    "entry-prefix": [
+        "ctjs-translate --ctbrowser-js-to-ctjs %S/../Fixtures/Optimization/partial/prefix.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-partial-evaluate | FileCheck %s --check-prefix=PREFIX",
+        "ctjs-translate --ctbrowser-js-to-ctjs %S/../Fixtures/Optimization/partial/prefix.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-partial-evaluate --ctnative-partial-evaluate | FileCheck %s --check-prefix=REPEAT",
+        "split-file %s %t",
+        "ctjs-opt %t/rollback.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=ROLLBACK",
+        "ctjs-opt %t/cycle.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=CYCLE",
+        "ctjs-opt %t/cycle.mlir '--ctnative-partial-evaluate=max-nodes=0' | FileCheck %s --check-prefix=NODES",
+        "ctjs-opt %t/control.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=CONTROL",
+    ],
+    "heap-evaluation": [
+        "ctjs-translate --ctbrowser-js-to-ctjs %S/../Fixtures/Optimization/partial/evaluation.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-partial-evaluate | FileCheck %s --check-prefix=HEAP",
+        "ctjs-translate --ctbrowser-js-to-ctjs %S/../Fixtures/Optimization/partial/evaluation.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-partial-evaluate --ctnative-partial-evaluate | FileCheck %s --check-prefix=REPEAT",
+        "split-file %s %t",
+        "ctjs-opt %t/cycle.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=CYCLE",
+        "ctjs-opt %t/effect.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=EFFECT",
+        "ctjs-opt %t/arguments.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=ARGS",
+        "ctjs-opt %t/loop.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=LOOP",
+        "ctjs-opt %t/loop.mlir '--ctnative-partial-evaluate=max-steps=8' | FileCheck %s --check-prefix=BUDGET",
+        "ctjs-opt %t/cycle.mlir '--ctnative-partial-evaluate=max-nodes=0' | FileCheck %s --check-prefix=NODES",
+        "ctjs-opt %t/depth.mlir '--ctnative-partial-evaluate=max-depth=1' | FileCheck %s --check-prefix=DEPTH",
+        "ctjs-opt %t/prototype.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=PROTO",
+        "ctjs-opt %t/primitives.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=PRIMITIVE",
+        "ctjs-opt %t/unknown.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=UNKNOWN",
+    ],
+    "implicit-effects": [
+        "split-file %s %t",
+        "ctjs-opt %t/accessor.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=ACCESSOR",
+        "ctjs-opt %t/coercion.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=COERCION",
+        "ctjs-opt %t/returned.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=RETURNED",
+        "ctjs-opt %t/rebound.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=REBOUND",
+        "ctjs-opt %t/declaration.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=DECLARATION",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/accessor.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-partial-evaluate | FileCheck %s --check-prefix=SOURCE",
     ],
     "long-keys": [
         "split-file %s %t",
