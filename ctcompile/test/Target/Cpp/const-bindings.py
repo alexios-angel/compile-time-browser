@@ -4,7 +4,7 @@
 import argparse
 from pathlib import Path
 
-from harness import FLAGS, find_compilers, run
+from Target.Cpp.harness import FLAGS, find_compilers, run
 
 MAIN = """
 int main() {
@@ -39,11 +39,11 @@ int main() {
 """
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fixtures", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     args.work.mkdir(parents=True, exist_ok=True)
     compilers = find_compilers()
     flags = [*FLAGS, "-I", str(args.fixtures.resolve())]
