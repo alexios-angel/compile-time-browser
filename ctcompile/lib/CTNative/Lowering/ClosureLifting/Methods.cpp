@@ -82,13 +82,13 @@ std::string functionOf(mlir::Operation * op) {
 } // namespace
 
 bool closureLifter::ownsByValue(ctjs::SetPropertyOp set,
-                                llvm::SmallVectorImpl<ctjs::GetPropertyOp> * reads,
+                                llvm::SmallVectorImpl<mlir::Operation *> * uses,
                                 std::string * why) {
     if (const auto known = refusedInstanceUses.find(set); known != refusedInstanceUses.end()) {
         if (why) { *why = known->second; }
         return false;
     }
-    llvm::SmallVector<ctjs::GetPropertyOp> found;
+    llvm::SmallVector<mlir::Operation *> found;
     const std::optional<std::string> refusal = [&]() -> std::optional<std::string> {
         const llvm::StringRef key = ctjs::constantKey(set.getKey());
         if (key.empty() || ctjs::reservedKey(key)) {
@@ -105,40 +105,43 @@ bool closureLifter::ownsByValue(ctjs::SetPropertyOp set,
             !self.getOwner()->isEntryBlock()) {
             return "it is stored into an object other than `this`";
         }
-        if (set->getBlock() != self.getOwner()) {
-            return ("the store to `" + key + "` does not run on every path through " +
-                    functionOf(set))
-                .str();
-        }
+        // The class whose constructor, or a method of whose prototype, makes
+        // the store.
         auto owner = llvm::dyn_cast<ctjs::FuncOp>(self.getOwner()->getParentOp());
-        const ctjs::CreateClosureOp closure = owner ? uniqueClosureByTarget.lookup(owner) : nullptr;
-        const auto prototype = closure ? immutablePrototype(closure) : std::nullopt;
-        if (!prototype) {
-            return functionOf(set) +
-                   " is not the constructor of a class whose prototype is proved immutable";
+        ctjs::CreateClosureOp constructor = owner ? uniqueClosureByTarget.lookup(owner) : nullptr;
+        const bool inConstructor =
+            constructor && (constructorClosures.contains(constructor.getOperation()) ||
+                            jsClasses.count(constructor.getOperation()));
+        if (!inConstructor) {
+            constructor = nullptr;
+            for (const auto & entry : jsClasses) {
+                if (llvm::any_of(entry.second.methods, [&](const auto & method) {
+                        return targetOf(method.second) == owner;
+                    })) {
+                    constructor = entry.second.constructor;
+                    break;
+                }
+            }
         }
-        // The store runs unconditionally in the constructor, and nothing
-        // before it can reach the field: until then `this` is used only to
-        // read and write other keys, so no method runs and nothing else holds
-        // the instance. A read that ran earlier would find no field, where the
-        // member already exists.
-        for (mlir::OpOperand & use : self.getUses()) {
-            mlir::Operation * at = self.getOwner()->findAncestorOpInBlock(*use.getOwner());
-            if (!at || at == set.getOperation() || !at->isBeforeInBlock(set)) { continue; }
-            if (!isConstantKeyAccess(use)) {
-                return ("`this` reaches `" + use.getOwner()->getName().getStringRef() +
-                        "` before the store to `" + key +
-                        "`, so code could read the field before it exists")
-                    .str();
-            }
-            if (ctjs::constantKey(ctjs::propertyKey(use.getOwner())) == key) {
-                return ("`" + key + "` is used before the store to it").str();
-            }
+        if (!constructor) {
+            return functionOf(set) + " is neither the constructor nor a method of a class";
+        }
+        const auto prototype = immutablePrototype(constructor);
+        if (!prototype) {
+            return "the class " + functionOf(set) +
+                   " belongs to is not proved, so its prototype is not known to be immutable";
         }
         // Only the constructor and the methods of its prototype read the
         // field, and only through their own `this`: another object has no
-        // such field.
-        llvm::SmallPtrSet<mlir::Operation *, 8> readers{owner.getOperation()};
+        // such field. A read before the store, or after a store of null,
+        // finds the field undefined or null, which the member records
+        // (Runtime/Owned.hpp), and throws the interpreter's TypeError. A store
+        // in the constructor runs once per instance, so no method of an
+        // instance the field held is still running when it is replaced; a
+        // store in a method can replace one whose method is running, so the
+        // field keeps every instance it held alive (ctnative::replaceable).
+        if (!inConstructor) { replaceableStores.insert(set.getOperation()); }
+        llvm::SmallPtrSet<mlir::Operation *, 8> readers{targetOf(constructor).getOperation()};
         for (ctjs::SetPropertyOp field : prototype->fields) {
             if (auto method = field.getValue().getDefiningOp<ctjs::CreateClosureOp>()) {
                 if (ctjs::FuncOp target = targetOf(method)) {
@@ -146,40 +149,61 @@ bool closureLifter::ownsByValue(ctjs::SetPropertyOp set,
                 }
             }
         }
+        const auto readersThis = [&](mlir::Value object) {
+            auto from = llvm::dyn_cast<mlir::BlockArgument>(object);
+            return from && from.getArgNumber() == ctjs::arg_receiver &&
+                   from.getOwner()->isEntryBlock() &&
+                   readers.contains(from.getOwner()->getParentOp());
+        };
         std::optional<std::string> open;
         module.walk([&](mlir::Operation * op) {
             const mlir::Value named = ctjs::propertyKey(op);
             if (!named || ctjs::constantKey(named) != key || op == set) {
                 return mlir::WalkResult::advance();
             }
-            // Another store of the key could replace or share the instance.
+            // A store of null through the class's own `this`, as a dispose
+            // method makes, leaves the instance alive in the member.
+            if (auto disown = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
+                disown && readersThis(disown.getObject()) &&
+                ctjs::constantAttr<ctjs::NullAttr>(disown.getValue())) {
+                found.push_back(op);
+                return mlir::WalkResult::advance();
+            }
+            // Any other store of the key could replace or share the instance.
             auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
             if (!read) {
                 open =
                     ("field `" + key + "` is also written or deleted in " + functionOf(op)).str();
                 return mlir::WalkResult::interrupt();
             }
-            auto from = llvm::dyn_cast<mlir::BlockArgument>(read.getObject());
-            if (!from || from.getArgNumber() != ctjs::arg_receiver ||
-                !from.getOwner()->isEntryBlock() ||
-                !readers.contains(from.getOwner()->getParentOp())) {
+            if (!readersThis(read.getObject())) {
                 open = ("field `" + key + "` is read in " + functionOf(op) +
                         " through something other than the `this` of the class's constructor "
                         "or methods")
                            .str();
                 return mlir::WalkResult::interrupt();
             }
+            // A read only tested for truth asks whether the field holds the
+            // instance (ctnative::held); any other read reaches it only
+            // through constant keys and method calls.
+            const auto tested = [](mlir::OpOperand & use) {
+                return llvm::isa<ctjs::TruthyOp>(use.getOwner());
+            };
+            const bool test =
+                !read.getResult().use_empty() && llvm::all_of(read.getResult().getUses(), tested);
             for (mlir::OpOperand & use : read.getResult().getUses()) {
                 auto method = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-                if (!isConstantKeyAccess(use) &&
+                if (!test && !isConstantKeyAccess(use) &&
                     !(method && use.getOperandNumber() == 1 && methodCallOn(method, use.get()))) {
                     open = ("a read of field `" + key + "` in " + functionOf(op) + " is " +
-                            describeUse(use) + ", so the instance would be shared")
+                            (tested(use) ? std::string("tested for truth and also used")
+                                         : describeUse(use)) +
+                            ", so the instance would be shared")
                                .str();
                     return mlir::WalkResult::interrupt();
                 }
             }
-            found.push_back(read);
+            found.push_back(op);
             return mlir::WalkResult::advance();
         });
         return open;
@@ -189,7 +213,7 @@ bool closureLifter::ownsByValue(ctjs::SetPropertyOp set,
         refusedInstanceUses[set.getOperation()] = *refusal;
         return false;
     }
-    if (reads) { reads->append(found.begin(), found.end()); }
+    if (uses) { uses->append(found.begin(), found.end()); }
     return true;
 }
 
@@ -1003,10 +1027,14 @@ void closureLifter::methodCensus() {
             continue;
         }
         auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(*built.getResult().getUsers().begin());
-        llvm::SmallVector<ctjs::GetPropertyOp> reads;
-        if (!set || set.getValue() != built.getResult() || !ownsByValue(set, &reads)) { continue; }
-        for (ctjs::GetPropertyOp read : reads) { behind[read.getResult()] = {built.getResult()}; }
-        ownedStores[set.getOperation()] = std::move(reads);
+        llvm::SmallVector<mlir::Operation *> uses;
+        if (!set || set.getValue() != built.getResult() || !ownsByValue(set, &uses)) { continue; }
+        for (mlir::Operation * use : uses) {
+            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(use)) {
+                behind[read.getResult()] = {built.getResult()};
+            }
+        }
+        ownedStores[set.getOperation()] = std::move(uses);
     }
     // A record read back from a local Map keeps naming the record it got,
     // even after the entry is overwritten, deleted or cleared: the enclosing
