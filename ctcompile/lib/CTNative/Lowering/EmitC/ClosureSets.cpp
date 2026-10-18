@@ -1,17 +1,32 @@
 //===- EmitC/ClosureSets.cpp - Closure-set lowering ------------*- C++ -*-===//
 //
 // Spells a value of the lattice's `closure_set` type, and each closure that
-// makes one of its members, as one std::variant of ctnative::bound members
-// (Runtime/Callable.hpp), one alternative per target in the set's sorted
-// order:
+// makes one of its members, as one struct emitted per set. Its enum class tag
+// says which member the value is, each member's captures are named fields,
+// each member has a factory, and its call operator switches on the tag and
+// calls the member's lifted function directly with that member's captures:
 //
-//   std::variant<ctnative::bound<fn_2, ctnative::js_num>, ctnative::bound<fn_3>>
+//   struct closure_set_fn_2_fn_3 {
+//     enum class member : unsigned char { fn_2, fn_3 };
+//     member tag{};
+//     ctnative::js_num c0_0{};
+//     static closure_set_fn_2_fn_3 make_fn_2(ctnative::js_num c0) { ... }
+//     static closure_set_fn_2_fn_3 make_fn_3() { ... }
+//     template <class... A> auto operator()(A &&... args) const {
+//       switch (tag) {
+//       case member::fn_2: return fn_2(c0_0, std::forward<A>(args)...);
+//       case member::fn_3: return fn_3(std::forward<A>(args)...);
+//       }
+//       std::terminate();
+//     }
+//   };
 //
-// A member closure becomes `variant(ctnative::bind<fn_2>(captures...))`. A
+// A member closure becomes `closure_set_fn_2_fn_3::make_fn_2(captures...)`. A
 // call through the set is the borrowed call's `ctnative::invoke_callable`,
-// whose std::variant overload dispatches with std::visit
-// (Environments.cpp). ClosureLifting/ClosureSets.cpp says which closures and
-// calls these are.
+// which calls the struct (Environments.cpp). Admission proved that every
+// member takes the same arguments and returns one type, so each case of the
+// call returns the same C++ type. ClosureLifting/ClosureSets.cpp says which
+// closures and calls these are.
 //
 //===----------------------------------------------------------------------===//
 
@@ -21,9 +36,9 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
-/// `ctnative::bound<f, captures...>` for the member whose lifted function is
-/// `target`, read from the closure that makes it.
-std::string lowering::closureSetMemberSpelling(llvm::StringRef target) {
+/// The member whose lifted function is `target`, read from the closure that
+/// makes it: the function's C++ name and its captures' fields.
+const lowering::closureSetMember & lowering::closureSetMemberOf(llvm::StringRef target) {
     if (const auto found = closureSetMembers.find(target); found != closureSetMembers.end()) {
         return found->second;
     }
@@ -36,47 +51,91 @@ std::string lowering::closureSetMemberSpelling(llvm::StringRef target) {
                                  target + "` has no closure that makes it");
     }
     const auto named = names.find(target);
-    const std::string function = named == names.end() ? cIdentifier(target) : named->second;
+    closureSetMember member;
+    member.function = named == names.end() ? cIdentifier(target) : named->second;
     // A capture with no value carrier, such as the pointer an arrow's lexical
-    // `this` is bound as (ArrowThis.cpp), is spelled by the lifted function's
-    // own signature (ctnative::bound_prefix).
-    const bool byValue = llvm::all_of(made.getUpvalues(), [&](mlir::Value captured) {
+    // `this` is bound as (ArrowThis.cpp), is declared as the lifted function's
+    // own parameter type (ctnative::parameter_t).
+    member.receiver = !llvm::all_of(made.getUpvalues(), [&](mlir::Value captured) {
         return isCallableCarrier(carrierOf(typeOf(captured)));
     });
-    std::string spelling;
-    if (byValue) {
-        spelling = "ctnative::bound<" + function;
-        for (mlir::Value captured : made.getUpvalues()) {
-            spelling += ", " + callableTypeSpelling(typeOf(captured));
+    for (auto [i, captured] : llvm::enumerate(made.getUpvalues())) {
+        if (member.receiver) {
+            member.captures.push_back(
+                {"ctnative::parameter_t<" + member.function + ", " + std::to_string(i) + ">",
+                 "{}"});
+            continue;
         }
-        spelling += ">";
-    } else {
-        spelling = "ctnative::bound_prefix<" + function + ", " +
-                   std::to_string(made.getUpvalues().size()) + ">";
+        // The fields of the members a value does not hold are initialized
+        // too. An Element view has no default, so it starts unbound, which no
+        // call reads.
+        const bool element = carrierOf(typeOf(captured)) == carrier::domElement;
+        member.captures.push_back({callableTypeSpelling(typeOf(captured)),
+                                   element ? " = ctnative::js_element_t::unbound()" : "{}"});
     }
-    closureSetMembers[target] = spelling;
-    return spelling;
+    return closureSetMembers.try_emplace(target, std::move(member)).first->second;
 }
 
-/// The std::variant spelling of a set of `targets`, in the given order.
+/// The struct of the set of `targets`, in the given order: its name, after
+/// recording its definition for declareClosureSetMembers or
+/// defineReceiverClosureSets to emit.
 std::string lowering::closureSetSpelling(llvm::ArrayRef<llvm::StringRef> targets) {
-    std::string spelling = "std::variant<";
-    for (auto [i, target] : llvm::enumerate(targets)) {
-        if (i != 0) { spelling += ", "; }
-        spelling += closureSetMemberSpelling(target);
+    llvm::SmallVector<const closureSetMember *> members;
+    llvm::SmallVector<llvm::StringRef> functions;
+    for (llvm::StringRef target : targets) {
+        members.push_back(&closureSetMemberOf(target));
+        functions.push_back(members.back()->function);
     }
-    return spelling + ">";
+    const std::string name = "closure_set_" + llvm::join(functions, "_");
+    if (closureSetDefinitions.count(name)) { return name; }
+    std::string text;
+    llvm::raw_string_ostream out(text);
+    out << "// A value of the closure set {" << llvm::join(functions, ", ")
+        << "}: which member it is, and each member's captures.\n"
+        << "struct " << name << " {\n"
+        << "  enum class member : unsigned char { " << llvm::join(functions, ", ") << " };\n"
+        << "  member tag{};\n";
+    bool receiver = false;
+    for (auto [m, member] : llvm::enumerate(members)) {
+        receiver |= member->receiver;
+        for (auto [c, capture] : llvm::enumerate(member->captures)) {
+            out << "  " << capture.first << " c" << m << "_" << c << capture.second << ";\n";
+        }
+    }
+    for (auto [m, member] : llvm::enumerate(members)) {
+        out << "  static " << name << " make_" << member->function << "(";
+        for (auto [c, capture] : llvm::enumerate(member->captures)) {
+            out << (c != 0 ? ", " : "") << capture.first << " c" << c;
+        }
+        out << ") {\n    return {.tag = member::" << member->function;
+        for (unsigned c = 0; c < member->captures.size(); ++c) {
+            out << ", .c" << m << "_" << c << " = std::move(c" << c << ")";
+        }
+        out << "};\n  }\n";
+    }
+    out << "  template <class... A> auto operator()(A &&... args) const {\n"
+        << "    switch (tag) {\n";
+    for (auto [m, member] : llvm::enumerate(members)) {
+        out << "    case member::" << member->function << ": return " << member->function << "(";
+        for (unsigned c = 0; c < member->captures.size(); ++c) {
+            out << "c" << m << "_" << c << ", ";
+        }
+        out << "std::forward<A>(args)...);\n";
+    }
+    out << "    }\n    std::terminate();\n  }\n};\n";
+    closureSetDefinitions[name] = {text, receiver};
+    return name;
 }
 
-/// The std::variant carrier of `v` when it is one of a proved closure set:
-/// a member's closure, or a value (a merge, a field read, a struct field's
-/// write) whose type is a set of members. Null otherwise; a borrowed
-/// parameter that callers fill with different callbacks has a `closure_set`
-/// type too, and stays the borrowed function_ref.
+/// The struct of the set `v` belongs to: a member's closure, or a value (a
+/// merge, a field read, a struct field's write) whose type is a set of
+/// members. Null otherwise; a borrowed parameter that callers fill with
+/// different callbacks has a `closure_set` type too, and stays the borrowed
+/// function_ref.
 mlir::Type lowering::closureSetCarrierOf(mlir::Value v) {
     // Gathered on the first query, from the shape census or the first value
     // lowered, before any member's closure has been replaced. Every value of
-    // a set gets the variant of the whole set, which each member's closure
+    // a set gets the struct of the whole set, which each member's closure
     // names: a merge of two members has a type naming only those two, and a
     // field holds every member any of its writes stores.
     if (!closureSetGroups) {
@@ -114,7 +173,7 @@ mlir::Type lowering::closureSetCarrierOf(mlir::Value v) {
     return ec::OpaqueType::get(context, spelling);
 }
 
-/// The join of two field carriers when both are one closure set's variant,
+/// The join of two field carriers when both are one closure set's struct,
 /// possibly absent: the set itself, or std::optional of it. Null otherwise.
 mlir::Type lowering::joinClosureSetCarriers(mlir::Type a, mlir::Type b) {
     auto left = llvm::dyn_cast<ec::OpaqueType>(a);
@@ -125,19 +184,17 @@ mlir::Type lowering::joinClosureSetCarriers(mlir::Type a, mlir::Type b) {
         return spelling;
     };
     const llvm::StringRef set = present(left.getValue());
-    if (!set.starts_with("std::variant<ctnative::bound<") || set != present(right.getValue())) {
-        return {};
-    }
+    if (!closureSetDefinitions.count(set.str()) || set != present(right.getValue())) { return {}; }
     return ec::OpaqueType::get(context, ("std::optional<" + set + ">").str());
 }
 
-/// A set's variant stored where the set may be absent becomes the engaged
+/// A set's struct stored where the set may be absent becomes the engaged
 /// std::optional of it. Null for any other conversion.
 mlir::Value lowering::convertClosureSet(mlir::OpBuilder & b, mlir::Location where,
                                         mlir::Value value, mlir::Type target) {
     auto from = llvm::dyn_cast<ec::OpaqueType>(value.getType());
     auto to = llvm::dyn_cast<ec::OpaqueType>(target);
-    if (!from || !to || !from.getValue().starts_with("std::variant<ctnative::bound<") ||
+    if (!from || !to || !closureSetDefinitions.count(from.getValue().str()) ||
         to.getValue() != ("std::optional<" + from.getValue() + ">").str()) {
         return {};
     }
@@ -150,30 +207,38 @@ bool lowering::retypeClosureSet(mlir::Value v) {
     return static_cast<bool>(set);
 }
 
-/// Declares each closure-set member's function ahead of the shape classes:
-/// a class field of a set's variant names them, and the prototypes that
-/// follow the classes come too late for it. A second prototype of the same
-/// function is valid C++. A member bound to a receiver pointer is left to
-/// the prototypes after the classes, since its signature names a class: its
-/// set lives in the method's frame (ClosureLifting/ClosureSets.cpp), so only
-/// function bodies spell it.
+/// Declares each closure-set member's function ahead of the shape classes,
+/// then defines the sets whose captures all have value carriers: a class
+/// field of a set's struct names them, and the prototypes that follow the
+/// classes come too late for it. A second prototype of the same function is
+/// valid C++. A member bound to a receiver pointer is left to the prototypes
+/// after the classes, since its signature names a class, and so is its set's
+/// struct (defineReceiverClosureSets): such a set lives in the method's frame
+/// (ClosureLifting/ClosureSets.cpp), so only function bodies spell it.
 /// ponytail: a class field holding such a set would need the class declared
 /// ahead; forward-declare the classes here if a set ever reaches one.
 void lowering::declareClosureSetMembers(mlir::OpBuilder & b, llvm::ArrayRef<ec::FuncOp> lowered) {
     if (!closureSetGroups || closureSetGroups->empty()) { return; }
     llvm::StringSet<> members;
     for (const auto & target : *closureSetGroups) {
-        if (llvm::StringRef(closureSetMemberSpelling(target.getKey()))
-                .starts_with("ctnative::bound_prefix<")) {
-            continue;
-        }
-        const auto named = names.find(target.getKey());
-        members.insert(named == names.end() ? cIdentifier(target.getKey()) : named->second);
+        const closureSetMember & member = closureSetMemberOf(target.getKey());
+        if (!member.receiver) { members.insert(member.function); }
     }
     for (ec::FuncOp f : lowered) {
         if (!members.contains(f.getSymName())) { continue; }
         ec::DeclareFuncOp::create(b, f.getLoc(),
                                   mlir::FlatSymbolRefAttr::get(context, f.getSymName()));
+    }
+    for (const auto & [name, definition] : closureSetDefinitions) {
+        if (!definition.second) { verbatim(b, definition.first); }
+    }
+}
+
+/// Defines the closure sets a member of which binds a receiver pointer, after
+/// the function prototypes that declare every member.
+void lowering::defineReceiverClosureSets(mlir::OpBuilder & b) {
+    for (const auto & [name, definition] : closureSetDefinitions) {
+        if (definition.second) { verbatim(b, definition.first); }
     }
 }
 
@@ -181,15 +246,11 @@ bool lowering::replaceClosureSetMember(mlir::Operation * op) {
     auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(op);
     if (!made || !op->hasAttr(kNativeClosureSet)) { return false; }
     mlir::OpBuilder at(op);
-    const auto any = ec::OpaqueType::get(context, "auto");
-    const auto target = borrowedTarget(op);
-    const auto named = names.find(target);
-    const std::string binder =
-        "ctnative::bind<" + (named == names.end() ? cIdentifier(target) : named->second) + ">";
-    const mlir::Value bound = callValue(at, op->getLoc(), any, binder, made.getUpvalues());
     const mlir::Type set = made.getResult().getType();
+    const std::string factory =
+        (opaqueSpelling(set) + "::make_" + closureSetMemberOf(borrowedTarget(op)).function).str();
     made.getResult().replaceAllUsesWith(
-        callValue(at, op->getLoc(), set, opaqueSpelling(set), mlir::ValueRange{bound}));
+        callValue(at, op->getLoc(), set, factory, made.getUpvalues()));
     eraseIfUnused(op);
     return true;
 }

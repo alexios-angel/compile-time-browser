@@ -1178,7 +1178,7 @@ bool admission::closedObject(ctjs::CreateObjectOp object) {
                 continue;
             }
             // A field one of a proved set of closures (ClosureSets.cpp) is
-            // stored as that set's std::variant, whether the stored value is
+            // stored as that set's struct, whether the stored value is
             // the set or one member's closure.
             if ((c == carrier::closureSet && isProvedClosureSet(set, typeOf(set.getValue()))) ||
                 (c == carrier::closure && set.getValue().getDefiningOp() &&

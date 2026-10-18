@@ -87,6 +87,9 @@ void lowering::finish() {
             ec::DeclareFuncOp::create(b, f.getLoc(),
                                       mlir::FlatSymbolRefAttr::get(context, f.getSymName()));
         }
+        // A closure set whose member binds a receiver names that member's
+        // function, which only the prototypes above declare.
+        defineReceiverClosureSets(b); // ClosureSets.cpp
         if (!domSessionDefinition.empty()) { verbatim(b, domSessionDefinition); }
         for (const std::string & builder : callableBuilders) { verbatim(b, builder); }
     }
