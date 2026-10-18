@@ -12,11 +12,11 @@ nesting limit are checked. --regexp-only runs only the regexp cases.
 from CTNative.Browser.dom.string.provenance import *
 
 
-def main():
+def main(argv=None):
     vendor = dom.BOOTSTRAP
     if any(source not in vendor.read_text() for source in (BOOTSTRAP_F, BOOTSTRAP_H_WRITES)):
         raise RuntimeError("original Bootstrap F/H source changed")
-    args = dom.parse_args(__doc__, oracles=True, switches=("regexp-only",))
+    args = dom.parse_args(__doc__, oracles=True, switches=("regexp-only",), argv=argv)
     if not args.nm:
         raise RuntimeError("native DOM String gate requires nm")
     check_regexp_matching(args)

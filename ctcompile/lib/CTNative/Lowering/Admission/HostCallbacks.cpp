@@ -53,7 +53,12 @@ bool hostCallbackOperation(admission & self, ctjs::CallOp call) {
     }
     auto captures = call.getArgs().drop_front();
     // The listener's identity, which the lowering makes from its closure.
-    if (call->hasAttr(kNativeHostIdentified)) { captures = captures.drop_front(); }
+    // A listener that removes itself also receives it among its captures.
+    mlir::Value identity;
+    if (call->hasAttr(kNativeHostIdentified)) {
+        identity = captures.front();
+        captures = captures.drop_front();
+    }
     if (call->hasAttr(kNativeHostCapture)) {
         const mlir::Value flag = captures.back();
         if (carrierOf(self.typeOf(flag)) != carrier::boolean) {
@@ -63,6 +68,7 @@ bool hostCallbackOperation(admission & self, ctjs::CallOp call) {
         captures = captures.drop_back();
     }
     for (mlir::Value capture : captures) {
+        if (capture == identity) { continue; }
         switch (carrierOf(self.typeOf(capture))) {
         case carrier::number:
         case carrier::boolean:

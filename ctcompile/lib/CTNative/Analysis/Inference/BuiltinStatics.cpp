@@ -52,12 +52,13 @@ constexpr TypeInference::BuiltinStatic builtinStatics[] = {
      1,
      Result::string,
      true},
-    // Object.prototype.toString (20.1.3.6) of a primitive, or of a union of
-    // them: Bootstrap's toType reads the type name out of "[object Number]".
+    // Object.prototype.toString (20.1.3.6) of a primitive: Bootstrap's toType
+    // reads the type name out of "[object Number]". A toType called with
+    // several kinds is copied per kind (Lowering/ArgumentTypeCopies.cpp).
     {"Object",
      "toString",
      "ctnative::Object.prototype.toString.call",
-     {Param::primitive},
+     {Param::printable},
      1,
      1,
      Result::string,

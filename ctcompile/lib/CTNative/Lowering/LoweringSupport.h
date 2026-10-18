@@ -76,7 +76,7 @@ enum class carrier {
     map,
     closure,
     /// One of a proved set of callables (Analysis lattice `closure_set`), a
-    /// std::variant spelled per set by EmitC/ClosureSets.cpp.
+    /// struct emitted per set by EmitC/ClosureSets.cpp.
     closureSet,
     methodTable,
     objectIdentity,
@@ -134,8 +134,7 @@ inline constexpr llvm::StringLiteral kSymbolType = "ctnative::js_symbol_t";
 inline constexpr llvm::StringLiteral kBooleanStringType = "ctnative::boolean_string";
 inline constexpr llvm::StringLiteral kNullableBooleanStringType =
     "ctnative::nullable_boolean_string";
-inline constexpr llvm::StringLiteral kBooleanStringMapType =
-    "std::variant<ctnative::js_boolean_t, std::string>";
+inline constexpr llvm::StringLiteral kBooleanStringMapType = "ctnative::boolean_or_string";
 inline constexpr llvm::StringLiteral kNumberStringType = "ctnative::number_string";
 inline constexpr llvm::StringLiteral kNullableNumberStringType = "ctnative::nullable_number_string";
 inline constexpr llvm::StringLiteral kNullableStringType = "ctnative::nullable_string";
@@ -159,7 +158,7 @@ inline constexpr llvm::StringLiteral kStaticTableType = "ctnative::static_table_
 inline constexpr llvm::StringLiteral kObjectIdentityType =
     "std::shared_ptr<ctnative::identity_object>";
 /// One row per carrier, in enum order: its C++ spelling (empty when the
-/// carrier has no fixed one) and whether it is a String-union variant.
+/// carrier has no fixed one) and whether it is a String union.
 struct carrierRow {
     carrier which;
     llvm::StringLiteral spelling;
@@ -409,5 +408,13 @@ bool domBookkeeping(const DOMEntryAnalysis & entry, mlir::Operation * op);
 /// narrower result never selects storage shared by other allocations.
 llvm::StringMap<mlir::Type> identityFieldStoreTypes(mlir::DataFlowSolver & solver,
                                                     llvm::ArrayRef<ctjs::FuncOp> functions);
+
+/// Copies each private function called directly with arguments of different
+/// exact types, where its parameter would need a String-union carrier or has
+/// none, once per type, and sends each call to the copy for its argument's
+/// type (ArgumentTypeCopies.cpp). Skips a function `keepsOriginal` names.
+/// Records each copy in ctnative.copies; true when it made one.
+bool copyPerArgumentType(mlir::ModuleOp module,
+                         llvm::function_ref<bool(ctjs::FuncOp)> keepsOriginal);
 
 } // namespace ctcompile::ctnative::lowering_detail

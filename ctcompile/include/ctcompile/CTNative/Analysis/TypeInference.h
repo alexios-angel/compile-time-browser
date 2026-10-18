@@ -87,7 +87,8 @@ inline constexpr llvm::StringLiteral kRecordReturn = "ctnative.record_return";
 /// `ctjs.func` it is a unit attribute.
 inline constexpr llvm::StringLiteral kNativeStringCallback = "ctnative.string_callback";
 /// The String.prototype method a `ctjs.call` invokes on its receiver, written
-/// by TypeInference::markStringMethodCalls: "toLowerCase", "trim", or
+/// by TypeInference::markStringMethodCalls: "toLowerCase", "toUpperCase",
+/// "trim", or
 /// "replace" with a RegExp literal and a replacement that is not a function.
 /// "test" marks RegExp.prototype.test on a RegExp made from a constant source
 /// (`new RegExp("a|b").test(text)` or `/a|b/.test(text)`).
@@ -262,7 +263,7 @@ public:
                                          unsigned group);
     /// Whether `op` is a replace call closure lifting specialised.
     static bool isStringCallbackCall(mlir::Operation * op);
-    /// Marks each `text.toLowerCase()`, `text.trim()`,
+    /// Marks each `text.toLowerCase()`, `text.toUpperCase()`, `text.trim()`,
     /// `text.replace(/re/, replacement)` and `new RegExp("re").test(text)` call
     /// with kNativeStringMethod, while its key is still a constant the lowering
     /// has not rewritten.
@@ -341,10 +342,6 @@ public:
             /// What console.log prints (Runtime/Console.hpp): a String, a
             /// Number, a Boolean, null or undefined, or an optional of them.
             printable,
-            /// A printable value, or a union of a String with a Number or a
-            /// Boolean, optional or not (Runtime/ctnative.hpp's std::variant
-            /// carriers): what Object.prototype.toString takes.
-            primitive,
             /// A run-once static's constant table whose fields are all
             /// Strings, proved by Inference/StaticTables.cpp, which marks the
             /// call (kNativeStaticTableEnumeration).

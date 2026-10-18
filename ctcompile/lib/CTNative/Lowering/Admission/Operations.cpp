@@ -259,29 +259,20 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
             // A constant table only where its proof marked the call.
             const bool table =
                 held == carrier::staticTable && call->hasAttr(kNativeStaticTableEnumeration);
-            // A primitive is also a String union, a std::variant the runtime's
-            // overload visits.
-            const bool primitive = printable || held == carrier::numberString ||
-                                   held == carrier::nullableNumberString ||
-                                   held == carrier::booleanString ||
-                                   held == carrier::nullableBooleanString;
             const bool fits = kind == Param::string   ? isString(argument)
                               : kind == Param::number ? held == carrier::number
                               : kind == Param::element
                                   ? held == carrier::domElement || held == carrier::nullableElement
                               : kind == Param::staticTable ? table
-                              : kind == Param::primitive   ? primitive
                                                            : printable;
             if (!fits) {
                 return self.refuse(name + "'s argument " + std::to_string(index) + " is " +
                                    printed(self.typeOf(argument)) + ", not " +
-                                   (kind == Param::string        ? "a String"
-                                    : kind == Param::number      ? "a Number"
-                                    : kind == Param::element     ? "an Element"
-                                    : kind == Param::staticTable ? "a constant table of Strings"
-                                    : kind == Param::primitive
-                                        ? "a String, Number, Boolean, null, undefined or a "
-                                          "union of a String with a Number or a Boolean"
+                                   (kind == Param::string    ? "a String"
+                                    : kind == Param::number  ? "a Number"
+                                    : kind == Param::element ? "an Element"
+                                    : kind == Param::staticTable
+                                        ? "a constant table of Strings"
                                         : "a String, Number, Boolean, null "
                                           "or undefined"));
             }
@@ -784,9 +775,18 @@ bool admission::op(mlir::Operation * o) {
             }
             return numeric(b.getLhs(), "binary") && numeric(b.getRhs(), "binary");
         }
-        case BinaryKind::Concat:
+        case BinaryKind::Concat: {
+            // A template substitution is ToString of its value (ECMA-262
+            // 13.2.8.6). For a Number, a Boolean, null or undefined that is the
+            // text `+` gives it, and the lowering spells both alike.
+            const carrier left = carrierOf(typeOf(b.getLhs()));
+            const carrier right = carrierOf(typeOf(b.getRhs()));
             return stringConcatenation(typeOf(b.getLhs()), typeOf(b.getRhs())) ||
-                   refuse("concatenation requires two proved owning UTF-8 strings");
+                   (left == carrier::string && isScalarCarrier(right)) ||
+                   (right == carrier::string && isScalarCarrier(left)) ||
+                   refuse("concatenation requires a proved owning UTF-8 string and a string, "
+                          "number, boolean, null or undefined");
+        }
         case BinaryKind::Sub:
         case BinaryKind::Mul:
         case BinaryKind::Div:
@@ -1199,7 +1199,7 @@ bool admission::closedObject(ctjs::CreateObjectOp object) {
                 continue;
             }
             // A field one of a proved set of closures (ClosureSets.cpp) is
-            // stored as that set's std::variant, whether the stored value is
+            // stored as that set's struct, whether the stored value is
             // the set or one member's closure.
             if ((c == carrier::closureSet && isProvedClosureSet(set, typeOf(set.getValue()))) ||
                 (c == carrier::closure && set.getValue().getDefiningOp() &&

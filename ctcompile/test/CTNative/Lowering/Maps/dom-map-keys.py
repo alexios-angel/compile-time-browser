@@ -34,8 +34,8 @@ void check_payloads(ctbrowser::element_ref key, ctbrowser::element_ref missing) 
     auto strings = make_map<K, std::string>();
     auto optional = make_map<K, nullable_string>();
     auto scalars = make_map<K, nullable_scalar>();
-    auto mixed = make_map<K, std::variant<js_boolean_t, std::string>>();
-    auto nullable_mixed = make_map<K, std::variant<js_boolean_t, nullable_string>>();
+    auto mixed = make_map<K, boolean_or_string>();
+    auto nullable_mixed = make_map<K, nullable_boolean_or_string>();
     auto objects = make_map<K, object_value>();
     auto identity = std::make_shared<identity_object>();
     const std::string text = "an owning saved payload longer than the small String buffer";
@@ -43,8 +43,8 @@ void check_payloads(ctbrowser::element_ref key, ctbrowser::element_ref missing) 
     map_set(booleans, key, js_boolean_t{false});
     map_set(strings, key, text);
     map_set(optional, key, nullable_string{text});
-    map_set(mixed, key, std::variant<js_boolean_t, std::string>{text});
-    map_set(nullable_mixed, key, std::variant<js_boolean_t, nullable_string>{nullable_string{text}});
+    map_set(mixed, key, boolean_or_string{text});
+    map_set(nullable_mixed, key, nullable_boolean_or_string{nullable_string{text}});
     map_set(objects, key, object_value{identity});
     const auto check = [&](const auto & borrow) {
         const auto number = map_get(borrow(numbers), key);

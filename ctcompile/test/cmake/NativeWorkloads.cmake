@@ -164,10 +164,11 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
   unset(CTCOMPILE_WORKLOAD_GENERATED)
   set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/dom_reads_scripts.cpp"
                               PROPERTIES OBJECT_DEPENDS "${_dom_reads_cpp}")
-  add_executable(ctcompile-test-dom-reads "${_dom_reads_dir}/dom_reads.cpp")
+  # CTNative/Browser/page/CMakeLists.txt adds dom_reads.cpp to both targets.
+  add_executable(ctcompile-test-dom-reads)
   target_link_libraries(ctcompile-test-dom-reads PRIVATE ctbrowser::ctbrowser)
   ctcompile_target(ctcompile-test-dom-reads)
-  add_executable(ctcompile-test-dom-reads-native "${_dom_reads_dir}/dom_reads.cpp"
+  add_executable(ctcompile-test-dom-reads-native
     "${CMAKE_CURRENT_BINARY_DIR}/dom_reads_scripts.cpp")
   target_compile_definitions(ctcompile-test-dom-reads-native PRIVATE CTBROWSER_TEST_NATIVE=1)
   target_link_libraries(ctcompile-test-dom-reads-native PRIVATE ctbrowser::page)
@@ -262,4 +263,6 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
   ctcompile_page_workload(element_fields element_fields_report)
   # for-of and the Array callbacks over an array of elements.
   ctcompile_page_workload(element_arrays element_arrays_report)
+  # A transitionend listener that removes itself, with a fallback timer.
+  ctcompile_page_workload(transitions transitions_report)
 endif()

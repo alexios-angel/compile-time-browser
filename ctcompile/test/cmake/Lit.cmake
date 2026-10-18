@@ -15,10 +15,9 @@
 # find_program caches what it finds, so a build tree configured before the uv
 # environment existed keeps its old lit until `cmake -U CTCOMPILE_LIT`.
 if(CTCOMPILE_ENABLE_MLIR)
-  cmake_path(SET _ctcompile_repo_root NORMALIZE "${CMAKE_CURRENT_LIST_DIR}/../../..")
   find_program(CTCOMPILE_LIT
     NAMES lit llvm-lit
-    HINTS "${_ctcompile_repo_root}/.venv/bin" "$ENV{HOME}/.lit-venv/bin"
+    HINTS "${CTBROWSER_MONOREPO_ROOT}/.venv/bin" "$ENV{HOME}/.lit-venv/bin"
           "${LLVM_TOOLS_BINARY_DIR}"
     DOC "The lit test runner, for check-ctcompile")
 

@@ -119,7 +119,7 @@ void test_generated_table_operations() {
     const auto mixed = ctnative::make_dictionary<ctnative::number_string>();
     ctnative::dictionary_set(mixed, js_string{"w"}, js_string{"10px"});
     const ctnative::nullable_number_string w = ctnative::dictionary_get(mixed, js_string{"w"});
-    CHECK(std::holds_alternative<js_string>(w) && std::get<js_string>(w).value() == "10px");
+    CHECK(w.holds<js_string>() && w.text.value() == "10px");
 }
 
 void test_tables_of_tables() {

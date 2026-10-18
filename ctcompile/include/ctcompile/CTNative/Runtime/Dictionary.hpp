@@ -33,7 +33,6 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
-#include <variant>
 #include <vector>
 
 namespace ctnative {
@@ -149,7 +148,7 @@ inline std::string property_key(js_num key) {
     return ctbrowser::number_to_string(key.value());
 }
 inline std::string property_key(const number_string & key) {
-    return std::visit([](const auto & alternative) { return property_key(alternative); }, key);
+    return key.holds<js_string>() ? property_key(key.text) : property_key(key.scalar);
 }
 
 /// Whether Object.prototype has an own property named `key` (ECMA-262 20.1.3

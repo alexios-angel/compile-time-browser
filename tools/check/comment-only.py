@@ -266,22 +266,8 @@ def main():
 
 if __name__ == "__main__":
     if sys.argv[1:2] == ["--self-test"]:
-        assert check("a.cpp", "int x; // A\n", "int x; // b\n") is None
-        assert check("a.cpp", "int x; // A\n", "int y; // A\n")
-        assert check("a.cpp", 'auto s = R"(// x)";\n', 'auto s = R"(// y)";\n')
-        assert check("a.cpp", "/* a\nb */ int x;\n", "/// a\nint x;\n") is None
-        assert check("a.py", '"""Doc."""\nx = 1  # a\n', '"""Better doc."""\nx = 1  # b\n') is None
-        assert check("a.py", 'S = """a"""\n', 'S = """b"""\n')
-        assert check("t/a.test", "# RUN: x\n# note\n", "# RUN: y\n# note\n")
-        assert check("t/a.mlir", "// note\nfunc\n", "// a\n// b\nfunc\n")
-        assert check("t/a.mlir", "// note\nfunc\n", "// better\nfunc\n") is None
-        assert check("CMakeLists.txt", "add(x) # a\n", "add(x) # b\n") is None
-        assert check("t/b.test", "// RUN: x\n// note\nfoo\n", "// RUN: x\n// better\nfoo\n") is None
-        assert check("t/b.test", "// note\nfoo\n", "// note\nbar\n")
-        assert check("a.cpp", "namespace { // x\n}\n", "namespace {}\n") is None
-        assert check("a.cpp", 'f("a  b");\n', 'f("a b");\n')
-        assert check("a.cpp", "a + b;\n", "a +b;\n") is None
-        assert check("a.cpp", "a + b;\n", "a - b;\n")
-        print("self-test ok")
+        import selftest
+
+        sys.exit(selftest.run(__file__))
     else:
         main()

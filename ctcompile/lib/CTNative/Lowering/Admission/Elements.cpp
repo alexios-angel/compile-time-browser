@@ -87,6 +87,13 @@ std::optional<bool> elementOperation(admission & self, mlir::Operation * o) {
     if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(o)) {
         const bool strict = compare.getKind() == ctjs::CompareKind::StrictEq;
         if (!strict && compare.getKind() != ctjs::CompareKind::Eq) { return std::nullopt; }
+        // Two page elements are the same object exactly when their views name
+        // one node, which js_element_t's == answers; `==` between two objects
+        // is `===` (ECMA-262 7.2.14 step 1).
+        if (carrierOf(self.typeOf(compare.getLhs())) == carrier::domElement &&
+            carrierOf(self.typeOf(compare.getRhs())) == carrier::domElement) {
+            return true;
+        }
         mlir::Value tested = compare.getLhs(), other = compare.getRhs();
         if (carrierOf(self.typeOf(tested)) != carrier::nullableElement) {
             std::swap(tested, other);
