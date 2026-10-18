@@ -171,6 +171,14 @@ struct nullable_scalar {
         if (a.tag != b.tag) { return false; }
         return a.tag == kind::undefined || a.tag == kind::null || a.value == b.value;
     }
+    /// The same against a Number or a Boolean, without converting it: equal
+    /// only when this holds that kind and the same value.
+    friend bool operator==(const nullable_scalar & a, js_num b) {
+        return a.tag == kind::number && a.value == b.value();
+    }
+    friend bool operator==(const nullable_scalar & a, js_boolean_t b) {
+        return a.tag == kind::boolean && (a.value != 0.0) == static_cast<bool>(b);
+    }
 };
 inline nullable_scalar to_nullable(nullable_scalar value) {
     return value;
@@ -781,12 +789,13 @@ js_boolean_t primitive_equal(const L & left, const R & right) {
 // --- ToString and the mixed-kind operators --------------------------------
 //
 // ToString of every primitive carrier, which String(x) (String.hpp) calls,
-// and the arithmetic and relational operators on two primitives of different
-// kinds, which convert through ToNumber (Number(x), Number.hpp) exactly as
-// JavaScript does: `"3" * 2` is 6, `"10" < 9` is false, `null + 1` is 1 and
-// `true - "1"` is 0. None takes an object or a Symbol, whose ToPrimitive
-// could run JavaScript or throw, and none converts implicitly: each operand
-// is a carrier of its own kind.
+// and the arithmetic operators on two primitives of different kinds, which
+// convert through ToNumber (Number(x), Number.hpp) exactly as JavaScript
+// does: `"3" * 2` is 6, `null + 1` is 1 and `true - "1"` is 0. None takes an
+// object or a Symbol, whose ToPrimitive could run JavaScript or throw, and
+// none converts implicitly: each operand is a carrier of its own kind. Mixed
+// kinds have no `<=>` yet: Clang 18 rejects a namespace-scope operator<=>
+// template whenever it is considered for two built-in operands.
 
 template <class T>
 requires std::is_same_v<T, double>
@@ -839,8 +848,8 @@ concept maybe_string = std::is_same_v<T, nullable_string> || primitive_union<T>;
 template <class L, class R>
 concept mixed_numbers = number_operand<L> && number_operand<R> &&
                         !(std::is_same_v<L, js_num> && std::is_same_v<R, js_num>);
-/// The same, for `+` and the relational operators: neither may be or hold a
-/// String, which selects concatenation or String order instead.
+/// The same, for `+`: neither may be or hold a String, which selects
+/// concatenation instead.
 template <class L, class R>
 concept mixed_definite_numbers =
     mixed_numbers<L, R> && !std::is_same_v<L, js_string> && !std::is_same_v<R, js_string> &&
@@ -893,17 +902,6 @@ requires detail::concatenated<T>
 js_string operator+(const T & left, const js_string & right) {
     return to_js_string(left) + right;
 }
-/// `a < b` and the other relational operators (ECMA-262 7.2.13, IsLessThan)
-/// on primitives of different kinds that are not two Strings: ToNumber of
-/// each, so NaN (from undefined or a non-numeric String) is unordered and
-/// every comparison with it is false (`"10" < 9` is false, `null < 1` true).
-template <class L, class R>
-requires(detail::mixed_numbers<L, R> && !detail::maybe_string<L> && !detail::maybe_string<R> &&
-         !(std::is_same_v<L, js_string> && std::is_same_v<R, js_string>))
-std::partial_ordering operator<=>(const L & left, const R & right) {
-    return Number(left).value() <=> Number(right).value();
-}
-
 // --- dense arrays ------------------------------------------------------------
 //
 // Three helpers: vec_push, vec_length and vec_at. vec_at exists instead of

@@ -23,8 +23,8 @@
 // NATIVE: call_opaque "ctnative::string_text"
 // NATIVE: emitc.func @stringFlags_{{[0-9]+}}({{.*}}) -> !emitc.opaque<"ctnative::js_num">
 // NATIVE-DAG: call_opaque "ctnative::primitive_strict_equal"
-// NATIVE-DAG: call_opaque "ctnative::primitive_equal"
-// NATIVE-DAG: call_opaque "ctnative::string_truthy"
+// NATIVE-DAG: call_opaque "ctnative::loose_equals"
+// NATIVE-DAG: cast {{.*}} : !emitc.opaque<"ctnative::nullable_string"> to i1
 // NATIVE-DAG: call_opaque "ctnative::string_typeof"
 // ASSIGNED: ctjs.func private @probe$1
 // ASSIGNED-SAME: ctnative.not_native = "standard Array binding is assigned in this program"
@@ -45,7 +45,7 @@
 // NUMERIC: emitc.func @probe_1
 // NUMERIC: member_call_opaque {{.*}} "to_number"()
 // MIXED: emitc.func @probe_1
-// MIXED: call_opaque "ctnative::primitive_equal"
+// MIXED: call_opaque "ctnative::loose_equals"
 // ADD: emitc.func @probe_1
 // ADD: call_opaque "ctnative::add"
 

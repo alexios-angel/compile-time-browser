@@ -29,7 +29,7 @@
 # RUNTIME-DAG: sub {{.*}} : (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 # RUNTIME-DAG: mul {{.*}} : (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 # RUNTIME-DAG: div {{.*}} : (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
-# RUNTIME-DAG: call_opaque "std::fmod"
+# RUNTIME-DAG: rem {{.*}} : (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 # RUNTIME-DAG: call_opaque "std::pow"
 # RUNTIME-DAG: add {{.*}} : (!emitc.opaque<"ctnative::js_string">, !emitc.opaque<"ctnative::js_boolean_t">) -> !emitc.opaque<"ctnative::js_string">
 # RUNTIME-DAG: add {{.*}} : (!emitc.opaque<"ctnative::js_boolean_t">, !emitc.opaque<"ctnative::js_string">) -> !emitc.opaque<"ctnative::js_string">
@@ -37,7 +37,7 @@
 # OPTIONAL: member_call_opaque {{.*}} "to_number"() : !emitc.opaque<"ctnative::nullable_string">, () -> !emitc.opaque<"ctnative::js_num">
 # CPP: .to_number()
 # MUTATION: global 'product' differs
-# EQUALITY: call_opaque "ctnative::primitive_equal"
+# EQUALITY: call_opaque "ctnative::loose_equals"
 # REFUSED: ctjs.func private @convert$1
 # REFUSED-SAME: ctnative.not_native =
 

@@ -278,15 +278,6 @@ void test_mixed_kind_operators() {
     null_text.tag = nullable_string::kind::null_value;
     CHECK(js_string{"a"} + null_text == js_string{"anull"});
     CHECK(js_string{"x"} + ctnative::number_string{js_num{1.0}} == js_string{"x1"});
-
-    // Relational operators apply ToNumber unless both are Strings.
-    CHECK(!(js_string{"10"} < js_num{9.0}) && js_string{"10"} > js_num{9.0});
-    CHECK(js_string{"10"} < js_string{"9"});
-    CHECK(null < js_num{1.0} && js_string{""} < js_num{1.0});
-    CHECK(!(undef < js_num{1.0}) && !(undef > js_num{1.0}) && !(undef >= js_num{0.0}));
-    CHECK(!(js_string{"abc"} < js_num{1.0}) && !(js_string{"abc"} >= js_num{1.0}));
-    CHECK(js_boolean_t{true} > js_boolean_t{false});
-    CHECK(js_string{"-0"} <= js_num{0.0} && !(js_string{"-0"} < js_num{0.0}));
 }
 
 void test_scalar_truthiness_and_equality() {
@@ -308,6 +299,14 @@ void test_scalar_truthiness_and_equality() {
     // 1 !== true: a Number and a Boolean never compare equal.
     CHECK(!(nullable_scalar{1.0} == nullable_scalar{js_boolean_t{true}}));
     CHECK(nullable_scalar{js_boolean_t{true}} == nullable_scalar{js_boolean_t{true}});
+    // Against a Number or a Boolean directly, in either order.
+    CHECK(nullable_scalar{1.0} == js_num{1.0} && js_num{1.0} == nullable_scalar{1.0});
+    CHECK(!(undef == js_num{nan}) && !(nullable_scalar{nan} == js_num{nan}));
+    CHECK(nullable_scalar{-0.0} == js_num{0.0} && !(null == js_num{0.0}));
+    CHECK(!(nullable_scalar{1.0} == js_boolean_t{true}));
+    CHECK(nullable_scalar{js_boolean_t{false}} == js_boolean_t{false});
+    CHECK(js_boolean_t{true} == nullable_scalar{js_boolean_t{true}} &&
+          !(undef == js_boolean_t{false}));
     CHECK(ctnative::scalar_strict_equal(nullable_scalar{-0.0}, nullable_scalar{0.0}));
     CHECK(!ctnative::scalar_strict_equal(nullable_scalar{nan}, nullable_scalar{nan}));
 }

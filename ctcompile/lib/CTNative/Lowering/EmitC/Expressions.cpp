@@ -74,23 +74,18 @@ mlir::Value lowering::truthy(mlir::OpBuilder & builder, mlir::Location where, ml
     if (isBooleanCarrier(value.getType())) {
         return convertScalar(builder, where, value, builder.getI1Type());
     }
-    static const llvm::StringMap<llvm::StringRef> unionTruthy{
-        {kNullableNumberStringType, "ctnative::nullable_number_string_truthy"},
-        {kNullableBooleanStringType, "ctnative::nullable_boolean_string_truthy"},
-        {kNumberStringType, "ctnative::number_string_truthy"},
-        {kBooleanStringType, "ctnative::boolean_string_truthy"}};
-    if (auto helper = unionTruthy.find(opaqueSpelling(value.getType()));
-        helper != unionTruthy.end()) {
-        return callValue(builder, where, mlir::IntegerType::get(context, 1), helper->second, value);
-    }
     if (isIdentityCarrier(value.getType()) ||
         value.getType() == carrierType(context, carrier::symbol)) {
         return ec::ConstantOp::create(builder, where, mlir::IntegerType::get(context, 1),
                                       builder.getBoolAttr(true));
     }
+    // An optional, union or object carrier's explicit `bool` is ToBoolean of
+    // the kind it holds.
     if (isNullableCarrier(value.getType()) || isObjectValueCarrier(value.getType()) ||
-        isNullableStringCarrier(value.getType())) {
-        return convertScalar(builder, where, value, mlir::IntegerType::get(context, 1));
+        isNullableStringCarrier(value.getType()) || isNumberStringCarrier(value.getType()) ||
+        isNullableNumberStringCarrier(value.getType()) || isBooleanStringCarrier(value.getType()) ||
+        isNullableBooleanStringCarrier(value.getType())) {
+        return ec::CastOp::create(builder, where, mlir::IntegerType::get(context, 1), value);
     }
     if (llvm::isa<mlir::IntegerType>(value.getType())) { return value; }
     if (value.getType() == carrierType(context, carrier::string)) {

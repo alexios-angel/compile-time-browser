@@ -41,7 +41,7 @@
 // checks their runtime answers independently of these structural assertions.
 //
 // EQUALITY: emitc.func @equality_1() -> !emitc.opaque<"ctnative::js_num">
-// EQUALITY: call_opaque "ctnative::scalar_strict_equal"
+// EQUALITY: cmp eq, {{.*}} : (!emitc.opaque<"ctnative::nullable_scalar">, !emitc.opaque<"ctnative::js_num">) -> i1
 // EQUALITY-NOT: ctnative.not_native
 // RELATIONAL: emitc.func @relational_1() -> !emitc.opaque<"ctnative::js_num">
 // RELATIONAL-NOT: ctnative.not_native

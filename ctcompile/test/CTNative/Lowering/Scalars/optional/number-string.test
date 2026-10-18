@@ -34,7 +34,7 @@
 # NUMERIC-MUTATION: global 'numericString' differs
 # STRING-MUTATION: global 'decoratedMissing' differs
 # REFUSED: ctnative.not_native =
-# EQUALITY: call_opaque "ctnative::primitive_equal"
+# EQUALITY: call_opaque "ctnative::loose_equals"
 
 #--- optional-global.js
 // The store join also includes absence at a source global read. Keep the

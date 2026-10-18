@@ -633,7 +633,8 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         case BinaryKind::Sub: swap(ec::SubOp::create(b, where, numeric, l, r)); return;
         case BinaryKind::Mul: swap(ec::MulOp::create(b, where, numeric, l, r)); return;
         case BinaryKind::Div: swap(ec::DivOp::create(b, where, numeric, l, r)); return;
-        case BinaryKind::Mod: swap(libmCall(b, where, "std::fmod", {l, r})); return;
+        // js_num's `%` is fmod, which is what JavaScript's `%` is.
+        case BinaryKind::Mod: swap(ec::RemOp::create(b, where, numeric, l, r)); return;
         case BinaryKind::Pow: swap(exponentiate(b, where, l, r)); return;
         case BinaryKind::BitAnd: swap(ec::BitwiseAndOp::create(b, where, numeric, l, r)); return;
         case BinaryKind::BitOr: swap(ec::BitwiseOrOp::create(b, where, numeric, l, r)); return;
@@ -708,9 +709,27 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                          isNullableCarrier(right.getType()) || left.getType() != right.getType())) {
             needsObjectValue |= objects;
             const bool loose = cmp.getKind() == CompareKind::Eq;
-            const auto helper =
-                objects ? (loose ? "ctnative::object_equal" : "ctnative::object_strict_equal")
-                        : (loose ? "ctnative::scalar_equal" : "ctnative::scalar_strict_equal");
+            // `a === b` is the runtime's `==`, which is IsStrictlyEqual, where
+            // one is declared for the pair: two values of one optional or
+            // object carrier (two object identities are the same object), or
+            // an optional scalar and a Number or a Boolean. Any other pair
+            // keeps the strict helper, and loose `==` is always the named
+            // ctnative::loose_equals.
+            const auto strictPair = [&](mlir::Type a, mlir::Type c) {
+                return isNullableCarrier(a) && (isNumberCarrier(c) || isBooleanCarrier(c));
+            };
+            if (!loose &&
+                ((left.getType() == right.getType() &&
+                  (isNullableCarrier(left.getType()) || isObjectValueCarrier(left.getType()) ||
+                   isIdentityCarrier(left.getType()))) ||
+                 strictPair(left.getType(), right.getType()) ||
+                 strictPair(right.getType(), left.getType()))) {
+                swap(ec::CmpOp::create(b, where, i1, ec::CmpPredicate::eq, left, right));
+                return;
+            }
+            const auto helper = loose     ? "ctnative::loose_equals"
+                                : objects ? "ctnative::object_strict_equal"
+                                          : "ctnative::scalar_strict_equal";
             swap(callValue(b, where, boolean, helper, mlir::ValueRange{left, right}));
             return;
         }

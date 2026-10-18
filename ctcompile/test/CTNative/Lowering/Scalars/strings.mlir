@@ -19,7 +19,7 @@
 // COERCION: add {{.*}} : (!emitc.opaque<"ctnative::js_string">, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_string">
 // COERCION-NOT: ctnative.not_native
 // EQUALITY: emitc.func @compare_1
-// EQUALITY: call_opaque "ctnative::primitive_equal"
+// EQUALITY: call_opaque "ctnative::loose_equals"
 // ORDERING: ctjs.func private @compare$1
 // ORDERING-SAME: ctnative.not_native = "compare operand is !ctnative.str<utf8>, not a number"
 // OPTIONAL: emitc.func @choose_1({{.*}}) -> !emitc.opaque<"ctnative::nullable_string">
@@ -37,7 +37,7 @@
 // Reads keep owning snapshots when captured functions overwrite the union cell.
 // The shared-mixed.js source also executes in Closures/primitive-cells.test.
 // SHARED-MIXED: emitc.func @mixedShared_1
-// SHARED-MIXED: call_opaque "ctnative::primitive_strict_equal"
+// SHARED-MIXED: cmp eq, {{.*}} : (!emitc.opaque<"ctnative::number_string">, !emitc.opaque<"ctnative::number_string">) -> i1
 // SHARED-MIXED: emitc.func @change_2({{.*}}!emitc.ptr<!emitc.opaque<"ctnative::number_string">>{{.*}})
 
 //--- coercion.js

@@ -70,7 +70,7 @@
 // OPTIONAL-SAME: !emitc.opaque<"ctnative::nullable_scalar">
 // OPTIONAL: call_opaque "ctnative::map_size"([[OPTIONAL_MAP]])
 // EQUALITY: emitc.func @probe_1() -> !emitc.opaque<"ctnative::js_boolean_t">
-// EQUALITY: call_opaque "ctnative::scalar_strict_equal"
+// EQUALITY: cmp eq, {{.*}} : (!emitc.opaque<"ctnative::nullable_scalar">, !emitc.opaque<"ctnative::js_num">) -> i1
 // EQUALITY-NOT: ctnative.not_native
 // KEYS: emitc.func @probe_1
 // KEYS: call_opaque "ctnative::map_keys"

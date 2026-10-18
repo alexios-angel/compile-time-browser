@@ -105,7 +105,17 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
         if (compare.getLhs().getType() == string && compare.getRhs().getType() == string) {
             return false;
         }
-        helper = compare.getKind() == ctjs::CompareKind::Eq ? "ctnative::primitive_equal"
+        // `a === b` on two values of one optional String or String union
+        // carrier is that carrier's `==`, which compares the kinds and then
+        // the values, as IsStrictlyEqual does.
+        if (compare.getKind() == ctjs::CompareKind::StrictEq &&
+            compare.getLhs().getType() == compare.getRhs().getType()) {
+            auto same = ec::CmpOp::create(b, where, b.getI1Type(), ec::CmpPredicate::eq,
+                                          compare.getLhs(), compare.getRhs());
+            swap(convertScalar(b, where, same, op->getResult(0).getType()));
+            return true;
+        }
+        helper = compare.getKind() == ctjs::CompareKind::Eq ? "ctnative::loose_equals"
                                                             : "ctnative::primitive_strict_equal";
         operands = {compare.getLhs(), compare.getRhs()};
         result = carrierType(context, carrier::boolean);
