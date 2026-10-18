@@ -541,7 +541,7 @@ INVALID_SELECTOR_CHECKS = r"""
 """
 
 
-def parse_args(description, *, oracles=False, switches=()):
+def parse_args(description, *, oracles=False, switches=(), argv=None):
     """Parse the Browser drivers' command line.
 
     args.compilers is the host compiler pair with --clang (the compiler the
@@ -555,7 +555,7 @@ def parse_args(description, *, oracles=False, switches=()):
     parser.add_argument("--nm", default=shutil.which("nm"))
     for name in switches:
         parser.add_argument("--" + name, action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     args.work = args.work.resolve()
     args.work.mkdir(parents=True, exist_ok=True)
     args.compilers = find_compilers()
@@ -877,8 +877,8 @@ def standalone(
                 raise RuntimeError(f"{name}/{mode}: real DOM observations were not completed")
 
 
-def main():
-    args = parse_args(__doc__)
+def main(argv=None):
+    args = parse_args(__doc__, argv=argv)
     if not args.nm:
         raise RuntimeError("native DOM gate requires nm")
     compilers = args.compilers
@@ -1112,6 +1112,10 @@ def main():
         f"native DOM: {len(entries)} action/identity/attribute/query/error entries, "
         f"both policies/layouts, GCC/Clang, DOM/Core and selector-only Style; {len(refusals) + 7} refusal controls"
     )
+
+
+def test_dom(lit):
+    main(lit.args("%dom_driver"))
 
 
 if __name__ == "__main__":

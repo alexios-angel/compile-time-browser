@@ -76,8 +76,8 @@ REFUSALS = {
 }
 
 
-def main():
-    args = native_args(__doc__)
+def main(argv=None):
+    args = native_args(__doc__, argv=argv)
     native_runs = refusals = 0
     for name, (body, expected) in (
         CASES | {name: (body, None) for name, body in REFUSALS.items()}
@@ -162,6 +162,14 @@ def main():
             native_runs += classes.check_executable(args, f"{name}.{optimize}", native, expected)
     print(
         f"ordinary instanceof: {len(CASES)} Node/VM cases, {native_runs} native runs, {refusals} refusals"
+    )
+
+
+def test_instanceof(lit):
+    main(
+        lit.args(
+            "--translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --work %t"
+        )
     )
 
 

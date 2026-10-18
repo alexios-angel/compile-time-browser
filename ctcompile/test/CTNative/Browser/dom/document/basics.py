@@ -214,8 +214,8 @@ REFUSALS = {
 }
 
 
-def main():
-    args = dom.parse_args(__doc__)
+def main(argv=None):
+    args = dom.parse_args(__doc__, argv=argv)
     compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
     cases = (
@@ -285,6 +285,10 @@ def main():
     print(
         f"Bound document root/query: {16 * len(cases)} native executions, {refusals} refusals; DOM/Core/Style only"
     )
+
+
+def test_basics(lit):
+    main(lit.args("%dom_driver"))
 
 
 if __name__ == "__main__":

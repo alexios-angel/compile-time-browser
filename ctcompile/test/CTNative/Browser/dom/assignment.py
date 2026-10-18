@@ -474,8 +474,8 @@ def check_output(args, output, expected):
     ]
 
 
-def main():
-    args = dom.parse_args(__doc__, oracles=True)
+def main(argv=None):
+    args = dom.parse_args(__doc__, oracles=True, argv=argv)
     vendor = dom.BOOTSTRAP
     assert values.BOOTSTRAP_M in vendor.read_text(), "Bootstrap M source pin changed"
     assert BOOTSTRAP_FILTER in vendor.read_text(), "Bootstrap filter source pin changed"
@@ -617,6 +617,10 @@ def main():
     print(
         f"native DOM assignments: {len(SOURCES)} sources, {len(expected)} Node/VM source-double observations plus Node accessor traces, 8 GCC/Clang binaries, lifetime sanitizer, both providers/policies/layouts, {refusals} refusals"
     )
+
+
+def test_assignment(lit):
+    main(lit.args("%dom_driver --node %node --reference %native_reference"))
 
 
 if __name__ == "__main__":

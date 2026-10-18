@@ -328,8 +328,8 @@ REFUSALS = {
 }
 
 
-def main():
-    args = dom.parse_args(__doc__)
+def main(argv=None):
+    args = dom.parse_args(__doc__, argv=argv)
     vendor = dom.BOOTSTRAP
     if FIND + "," not in vendor.read_text():
         raise RuntimeError("Bootstrap R.find source pin changed")
@@ -425,6 +425,10 @@ def main():
     print(
         f"Bootstrap checked default root: {executions} native executions, {refusals} refusals; DOM/Core/Style only"
     )
+
+
+def test_default(lit):
+    main(lit.args("%dom_driver"))
 
 
 if __name__ == "__main__":

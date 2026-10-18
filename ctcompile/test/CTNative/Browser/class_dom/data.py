@@ -1389,8 +1389,8 @@ def object_constructors(args, constructor):
     return checked
 
 
-def main():
-    args = dom.parse_args(__doc__, oracles=True, switches=("class-families-only",))
+def main(argv=None):
+    args = dom.parse_args(__doc__, oracles=True, switches=("class-families-only",), argv=argv)
     published_families(args)
     published_composite_results(args)
     published_class_fields(args)
@@ -1527,6 +1527,14 @@ def main():
         f"{executions} native object-key executions; unpublished class DOM sessions remain refused"
     )
     published_records(args)
+
+
+def test_data(lit):
+    main(
+        lit.args(
+            "--translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --nm %nm --work %t"
+        )
+    )
 
 
 if __name__ == "__main__":

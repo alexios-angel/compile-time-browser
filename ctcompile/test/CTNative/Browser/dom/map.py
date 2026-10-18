@@ -280,8 +280,8 @@ def execute(args, native, name, checks, includes, libraries):
                 raise RuntimeError(f"{name}/{mode}: real DOM observations were not completed")
 
 
-def main():
-    args = dom.parse_args(__doc__)
+def main(argv=None):
+    args = dom.parse_args(__doc__, argv=argv)
     includes, libraries = dom.link_options(args)
     executions = refusals = 0
     for label, source, parameters, checks in ENTRIES:
@@ -326,6 +326,14 @@ def main():
     print(
         f"native DOM Map: {len(ENTRIES)} entries, {executions} native executions against the "
         f"real DOM (both providers/policies/layouts, GCC/Clang), {refusals} refusals"
+    )
+
+
+def test_map(lit):
+    main(
+        lit.args(
+            "--translate ctjs-translate --opt ctjs-opt --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --work %t --nm %nm"
+        )
     )
 
 

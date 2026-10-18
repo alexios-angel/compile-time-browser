@@ -19,7 +19,9 @@ its case with `_` read as `-` (lit case names use hyphens, modules
 underscores): `test_reads` in Provider/reads.py is `ctcompile ::
 CTNative/HostContract/Provider/reads.test`, and `test_button_probe` is
 `.../button-probe.test`. A test parametrized over cases uses the parameter id
-as the case instead. `--lit-filter REGEX` keeps only the tests whose name it matches, so the
+as the case instead. The suffix is `.mlir` when that file exists (a few
+cases are .mlir files holding only a RUN line and comments), `.test` otherwise.
+`--lit-filter REGEX` keeps only the tests whose name it matches, so the
 `--filter` that tools/check/round-checks.py prints selects the same cases in
 both runners. Each test may run for an hour, as each lit case may
 (lit.cfg.py); pytest-timeout enforces it, and a run without that plugin stops
@@ -102,8 +104,11 @@ def pytest_pycollect_makemodule(module_path, parent):
 def lit_name(item):
     callspec = getattr(item, "callspec", None)
     case = callspec.id if callspec else item.originalname.removeprefix("test_")
-    folder = item.path.parent.relative_to(HERE).as_posix()
-    return f"ctcompile :: {folder}/{case.replace('_', '-')}.test"
+    stem = item.path.parent / case.replace("_", "-")
+    # A few cases are .mlir files holding only a RUN line and comments; .test
+    # otherwise, which also names the case once its .test file has been deleted.
+    suffix = ".mlir" if stem.with_suffix(".mlir").is_file() else ".test"
+    return f"ctcompile :: {stem.relative_to(HERE).as_posix()}{suffix}"
 
 
 def pytest_collection_modifyitems(config, items):

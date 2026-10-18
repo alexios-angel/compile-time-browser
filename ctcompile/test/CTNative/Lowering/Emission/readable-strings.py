@@ -13,12 +13,12 @@ import subprocess
 from CTNative.harness import CORE_INCLUDE, RUNTIME_INCLUDE, run
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--opt", required=True)
     parser.add_argument("--translate", required=True)
     parser.add_argument("--work", type=Path, required=True)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     args.work.mkdir(parents=True, exist_ok=True)
 
     # Input bytes and selected human-readable spellings are independent of the
@@ -104,6 +104,10 @@ int main() {
         )
         run([str(executable)])
     print(f"{len(cases)} native literal cases preserve every byte under GCC and Clang")
+
+
+def test_readable_strings(lit):
+    main(lit.args("--opt ctjs-opt --translate ctjs-translate --work %t"))
 
 
 if __name__ == "__main__":
