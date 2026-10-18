@@ -113,4 +113,50 @@ static_assert(c_string_literal("a)\"b") == "\"a)\\\"b\"");
 static_assert(c_string_literal("?"
                                "?/") == "\"?\\?/\"");
 
+/// The bytes a literal c_string_literal spelled, or false when `spelled` is
+/// not one of its spellings: the inverse, for a backend that reads an emitted
+/// String constant back.
+inline constexpr bool parse_c_string_literal(std::string_view spelled, std::string & bytes) {
+    bytes.clear();
+    if (spelled.starts_with("R\"(") && spelled.ends_with(")\"") && spelled.size() >= 5) {
+        bytes = spelled.substr(3, spelled.size() - 5);
+        return true;
+    }
+    if (spelled.size() < 2 || spelled.front() != '"' || spelled.back() != '"') { return false; }
+    const std::string_view body = spelled.substr(1, spelled.size() - 2);
+    for (std::size_t index = 0; index < body.size(); ++index) {
+        if (body[index] != '\\') {
+            bytes += body[index];
+            continue;
+        }
+        if (++index == body.size()) { return false; }
+        const char next = body[index];
+        if (next == '"' || next == '\\' || next == '?') {
+            bytes += next;
+        } else if (next >= '0' && next <= '7' && index + 2 < body.size()) {
+            int value = 0;
+            for (std::size_t digit = index; digit < index + 3; ++digit) {
+                if (body[digit] < '0' || body[digit] > '7') { return false; }
+                value = value * 8 + (body[digit] - '0');
+            }
+            bytes += static_cast<char>(value);
+            index += 2;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+namespace detail {
+constexpr bool round_trips(std::string_view bytes) {
+    std::string back;
+    return parse_c_string_literal(c_string_literal(bytes), back) && back == bytes;
+}
+} // namespace detail
+static_assert(detail::round_trips("Math") && detail::round_trips("a\"b\\c"));
+static_assert(detail::round_trips(std::string_view("od\001Fd\0\377", 7)));
+static_assert(detail::round_trips("?"
+                                  "?/") &&
+              detail::round_trips("a)\"b") && detail::round_trips(""));
+
 } // namespace ctcompile::cpp

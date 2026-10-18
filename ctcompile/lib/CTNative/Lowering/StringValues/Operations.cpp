@@ -3,13 +3,51 @@
 // lowering::replaceStringValue: lowers ctjs operations on native String
 // carriers (`length`, `text[i]`, concatenation, `typeof` of String unions, and loose or
 // strict equality involving a String) to EmitC calls of ctnative runtime
-// helpers.
+// helpers. A template literal, `a${x}b`, is one
+// `ctnative::format("a{}b", x)` (Runtime/Format.hpp).
 //
 //===----------------------------------------------------------------------===//
 
 #include "../EmitC/Emitter.h"
 
+#include "ctcompile/Support/CppLiterals.hpp"
+
 namespace ctcompile::ctnative::lowering_detail {
+
+namespace {
+/// On a ctnative::format call a template literal made, its format text, so
+/// the literal's next piece extends the call instead of starting another.
+constexpr llvm::StringLiteral kTemplateText = "ctnative.template_text";
+
+/// Appends one piece of a template literal to `text` and `arguments`: a String
+/// constant's bytes, with braces doubled for std::format, or `{}` and a value
+/// whose carrier the formatter prints as ToString. False for anything else.
+bool appendTemplatePiece(mlir::Value piece, std::string & text,
+                         llvm::SmallVectorImpl<mlir::Value> & arguments) {
+    if (auto constant = piece.getDefiningOp<ec::ConstantOp>()) {
+        auto initializer = llvm::dyn_cast<ec::OpaqueAttr>(constant.getValue());
+        llvm::StringRef spelled = initializer ? initializer.getValue() : llvm::StringRef{};
+        // stringConstant's spelling: `ctnative::js_string(<literal>, <size>)`.
+        if (!spelled.consume_front("ctnative::js_string(") || !spelled.consume_back(")")) {
+            return false;
+        }
+        spelled = spelled.rsplit(", ").first;
+        std::string bytes;
+        if (!cpp::parse_c_string_literal(spelled, bytes)) { return false; }
+        for (const char c : bytes) {
+            text += c;
+            if (c == '{' || c == '}') { text += c; }
+        }
+        return true;
+    }
+    if (isFormattableCarrier(piece.getType())) {
+        text += "{}";
+        arguments.push_back(piece);
+        return true;
+    }
+    return false;
+}
+} // namespace
 
 bool lowering::replaceStringValue(mlir::Operation * op) {
     mlir::OpBuilder b(op);
@@ -46,6 +84,32 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
         (binary.getKind() == ctjs::BinaryKind::Add ||
          binary.getKind() == ctjs::BinaryKind::Concat) &&
         binary.getResult().getType() == string) {
+        // A template literal's concatenations become one ctnative::format call:
+        // the first makes it, each later one extends the call its left side
+        // is, and a piece the formatter cannot print keeps `+`.
+        if (binary.getKind() == ctjs::BinaryKind::Concat) {
+            std::string text;
+            llvm::SmallVector<mlir::Value> arguments;
+            auto previous = binary.getLhs().getDefiningOp<ec::CallOpaqueOp>();
+            const bool extends =
+                previous && previous->hasAttr(kTemplateText) && binary.getLhs().hasOneUse();
+            if (extends) {
+                text = previous->getAttrOfType<mlir::StringAttr>(kTemplateText).getValue();
+                llvm::append_range(arguments, previous.getOperands().drop_front());
+            }
+            if ((extends || appendTemplatePiece(binary.getLhs(), text, arguments)) &&
+                appendTemplatePiece(binary.getRhs(), text, arguments) && !arguments.empty()) {
+                llvm::SmallVector<mlir::Value> operands{ec::LiteralOp::create(
+                    b, where, ec::PointerType::get(ec::OpaqueType::get(context, "const char")),
+                    cpp::c_string_literal(text))};
+                operands.append(arguments);
+                mlir::Value formatted = callValue(b, where, string, "ctnative::format", operands);
+                formatted.getDefiningOp()->setAttr(kTemplateText, b.getStringAttr(text));
+                swap(formatted);
+                if (extends) { eraseIfUnused(previous); }
+                return true;
+            }
+        }
         const auto operand = [&](mlir::Value value) {
             // A definite Number or Boolean selects its typed `+` overload. Any
             // other operand (a tagged or optional String) is converted to a

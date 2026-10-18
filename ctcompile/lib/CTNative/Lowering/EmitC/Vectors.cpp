@@ -699,6 +699,26 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
             swap(local);
             return true;
         }
+        // console.log of Strings and scalars nothing reads the result of is
+        // `ctnative::println("{} {}", a, b)`: one `{}` per argument, joined by
+        // one space as console.log joins them.
+        if (callee == "ctnative::console.log" && o->getResult(0).use_empty() &&
+            llvm::all_of(operands,
+                         [](mlir::Value v) { return isFormattableCarrier(v.getType()); })) {
+            std::string text;
+            for (std::size_t index = 0; index < operands.size(); ++index) {
+                text += index == 0 ? "{}" : " {}";
+            }
+            operands.insert(operands.begin(),
+                            ec::LiteralOp::create(
+                                b, where,
+                                ec::PointerType::get(ec::OpaqueType::get(context, "const char")),
+                                "\"" + text + "\""));
+            callWithConstValueOperands(b, where, mlir::TypeRange{},
+                                       b.getStringAttr("ctnative::println"), operands);
+            lowering::eraseIfUnused(o);
+            return true;
+        }
         swap(callValue(b, where, o->getResult(0).getType(), callee, operands));
         return true;
     }

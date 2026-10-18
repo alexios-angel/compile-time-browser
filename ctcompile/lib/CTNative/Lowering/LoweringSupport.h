@@ -268,6 +268,15 @@ inline bool isObjectValueCarrier(mlir::Type type) {
 inline bool isIdentityCarrier(mlir::Type type) {
     return opaqueSpelling(type) == kObjectIdentityType;
 }
+/// Whether std::format's `{}` prints a value of this carrier as JavaScript's
+/// ToString does (the formatters in Runtime/Format.hpp): a String, a Number, a
+/// Boolean, their optional carriers and the String unions.
+inline bool isFormattableCarrier(mlir::Type type) {
+    return isNumberCarrier(type) || isBooleanCarrier(type) || isNullableCarrier(type) ||
+           isNullableStringCarrier(type) || isNumberStringCarrier(type) ||
+           isNullableNumberStringCarrier(type) || isBooleanStringCarrier(type) ||
+           isNullableBooleanStringCarrier(type) || opaqueSpelling(type) == kStringType;
+}
 bool isObjectValueType(mlir::Type type);
 bool identityOrAbsent(mlir::Type type);
 bool onlyAbsent(mlir::Type type);
