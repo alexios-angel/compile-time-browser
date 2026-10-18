@@ -134,8 +134,7 @@ inline constexpr llvm::StringLiteral kSymbolType = "ctnative::js_symbol_t";
 inline constexpr llvm::StringLiteral kBooleanStringType = "ctnative::boolean_string";
 inline constexpr llvm::StringLiteral kNullableBooleanStringType =
     "ctnative::nullable_boolean_string";
-inline constexpr llvm::StringLiteral kBooleanStringMapType =
-    "std::variant<ctnative::js_boolean_t, std::string>";
+inline constexpr llvm::StringLiteral kBooleanStringMapType = "ctnative::boolean_or_string";
 inline constexpr llvm::StringLiteral kNumberStringType = "ctnative::number_string";
 inline constexpr llvm::StringLiteral kNullableNumberStringType = "ctnative::nullable_number_string";
 inline constexpr llvm::StringLiteral kNullableStringType = "ctnative::nullable_string";
