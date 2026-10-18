@@ -308,10 +308,10 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             } else if (expected == ec::OpaqueType::get(context, kPageElementType)) {
                 // An ordinary script's element, such as a folded for-of's
                 // element after the last one: the runtime's unbound view.
-                use.set(
-                    ec::ConstantOp::create(b, where, expected,
-                                           ec::OpaqueAttr::get(context, "ctnative::js_element_t{}"))
-                        .getResult());
+                use.set(ec::ConstantOp::create(
+                            b, where, expected,
+                            ec::OpaqueAttr::get(context, "ctnative::js_element_t::unbound()"))
+                            .getResult());
             } else if (expected == i1 || isBooleanCarrier(expected)) {
                 use.set(convertScalar(
                     b, where, once(emptyBoolean, [&] { return boolConstant(b, where, false); }),
