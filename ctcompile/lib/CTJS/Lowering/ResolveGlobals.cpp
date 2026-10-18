@@ -998,6 +998,9 @@ std::optional<std::string> dynamic_global_writes(
     // verdict. A value that escapes is not followed further.
     const auto escape = [&](std::string why) { every.push_back(std::move(why)); };
     llvm::SmallVector<std::pair<mlir::StringAttr, mlir::Operation *>> inert;
+    // Calls that may convert the global object to a string, as an argument
+    // of a method argument_inert_native admits.
+    llvm::SmallVector<mlir::Operation *> converted;
     binding_names names(module, world);
 
     // Forward SSA reachability from the watched values. A read through one
@@ -1121,6 +1124,19 @@ std::optional<std::string> dynamic_global_writes(
                         continue;
                     }
                 }
+                // An argument of a DOM method that only compares it or converts
+                // it to a string (`parent.contains(child)` with `child` maybe
+                // the window): argument_inert_native shows the method is the
+                // realm's or nothing callable. The conversion uses the realm's
+                // `toString` and `valueOf` unless the program binds a global of
+                // either name (checked once the walk ends).
+                if (use.getOperandNumber() >= 2 && kind != watched::compiler) {
+                    auto read = originOp<GetPropertyOp>(call.getCallee());
+                    if (read && argument_inert_native(writes, constantKey(read.getKey()))) {
+                        converted.push_back(op);
+                        continue;
+                    }
+                }
                 // ctjs.call is (callee, receiver, args...) and the entry block
                 // is (receiver, new.target, callee, parameters...) - the same
                 // remapping ctjs.call_direct is built from.
@@ -1198,6 +1214,18 @@ std::optional<std::string> dynamic_global_writes(
             (row != world.bindings.end() && !row->second.stores.empty())) {
             escape("the global object is the receiver of `" + key.str() +
                    "`, which this program rebinds (" + describe(at) + ")");
+        }
+    }
+    for (mlir::Operation * at : converted) {
+        for (llvm::StringRef name : {"toString", "valueOf"}) {
+            const auto key = mlir::StringAttr::get(module.getContext(), name);
+            const auto row = world.bindings.find(key);
+            if (bound_through.contains(key) ||
+                (row != world.bindings.end() && !row->second.stores.empty())) {
+                escape("the global object may be converted to a string (" + describe(at) +
+                       "), and this program binds `" + name.str() + "`");
+                break;
+            }
         }
     }
     if (every.empty()) { return std::nullopt; }

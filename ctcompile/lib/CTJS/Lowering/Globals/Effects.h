@@ -55,6 +55,10 @@ struct prototype_writes {
     std::string any_key;
     /// The keys the program may write onto an object it did not create.
     llvm::StringSet<> written;
+    /// Every constant key the program writes onto any object, and every key
+    /// string it uses as a value: the properties an object can have that
+    /// the realm did not give it.
+    llvm::StringSet<> defined;
 };
 /// Reads \p module's prototype_writes.
 prototype_writes read_prototype_writes(mlir::ModuleOp module);
@@ -71,6 +75,16 @@ bool compiler_lacks(const prototype_writes & writes, llvm::StringRef key);
 /// Object.prototype's `toString`, which answers a string; and \p writes show
 /// the program cannot add it to a prototype table.
 bool global_object_lacks(const prototype_writes & writes, llvm::StringRef key);
+/// Whether passing a value that may be the global object as an argument of
+/// the method \p key, read off any object, runs no code but the realm's: no
+/// object has a property \p key the program gave it, so the read answers a
+/// realm function or nothing callable, and \p key names a DOM method that
+/// only compares its argument or converts it to a string (Node's `contains`
+/// and `isSameNode`, DOMTokenList's `contains`). The conversion runs no
+/// program code while `toString` and `valueOf` are the realm's, which \p
+/// writes show for prototype tables and the walk checks against the
+/// bindings once it ends.
+bool argument_inert_native(const prototype_writes & writes, llvm::StringRef key);
 /// What the importer's ctjs.skipped rows say about the bodies it refused.
 struct skipped_summary {
     /// Set when some refused body may store any global; the reason text.

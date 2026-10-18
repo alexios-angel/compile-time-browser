@@ -279,8 +279,10 @@ prototype_writes read_prototype_writes(mlir::ModuleOp module) {
             if (key == "prototype" && !set.getValue().getDefiningOp<CreateObjectOp>()) {
                 note(keys.prototypes, "a `prototype` table is replaced", op);
             }
+            if (!key.empty()) { keys.defined.insert(key); }
             if (!key.empty() && !made_here(set.getObject())) { keys.written.insert(key); }
         } else if (auto accessor = mlir::dyn_cast<DefineAccessorOp>(op)) {
+            keys.defined.insert(accessor.getName());
             if (!made_here(accessor.getTarget())) { keys.written.insert(accessor.getName()); }
         } else if (auto copy = mlir::dyn_cast<CopyPropsOp>(op)) {
             if (!made_here(copy.getTarget())) {
@@ -297,6 +299,7 @@ prototype_writes read_prototype_writes(mlir::ModuleOp module) {
                 });
             if (asKey) { return; }
             keys.written.insert(text.getValue());
+            keys.defined.insert(text.getValue());
             if (text.getValue() == "prototype" || text.getValue() == "__proto__") {
                 note(keys.prototypes, "\"" + text.getValue() + "\" is passed as a value", op);
             }
@@ -308,6 +311,13 @@ prototype_writes read_prototype_writes(mlir::ModuleOp module) {
 bool compiler_lacks(const prototype_writes & writes, llvm::StringRef key) {
     return !key.empty() && !realm_function_member(key) && writes.prototypes.empty() &&
            writes.any_key.empty() && !writes.written.contains(key);
+}
+
+bool argument_inert_native(const prototype_writes & writes, llvm::StringRef key) {
+    static const llvm::StringSet<> methods{"contains", "isSameNode"};
+    return methods.contains(key) && writes.prototypes.empty() && writes.any_key.empty() &&
+           !writes.defined.contains(key) && !writes.written.contains("toString") &&
+           !writes.written.contains("valueOf");
 }
 
 bool global_object_lacks(const prototype_writes & writes, llvm::StringRef key) {

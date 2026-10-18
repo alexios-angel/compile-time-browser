@@ -60,6 +60,9 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/window-lacks.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=WINLACKS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/window-lacks-bound.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=WINLACKSBOUND
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/window-lacks-polluted.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=WINLACKSPOLLUTED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/argument-inert.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ARGINERT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/argument-defined.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ARGDEFINED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/argument-tostring.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ARGTOSTRING
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/window-read.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=WINREAD
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/window-alias.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=WINALIAS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-read.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERREAD
@@ -431,6 +434,36 @@
 // WINLACKSPOLLUTED-NOT: call_direct @add
 // WINLACKSPOLLUTED: ctjs.globals = [
 // WINLACKSPOLLUTED-SAME: reason = "the global object escapes into a call whose callee this module does not name{{[^"]*}}"
+
+// --- Positive: the global object as an argument of contains and isSameNode ---------
+//
+// Popper's contains(parent, child) passes a node that may be the window. No
+// object here has a `contains` or `isSameNode` the program gave it, so the
+// method is the realm's (Node's, DOMTokenList's) or nothing callable, and it
+// only compares its argument or converts it to a string with the realm's
+// toString.
+//
+// ARGINERT: ctjs.globals = [
+// ARGINERT-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
+// ARGINERT: ctjs.call_direct @add$1
+
+// --- Negative: unless the program gives some object such a method ------------------
+//
+// `box.contains` is the program's function, and it writes through its
+// argument, the window.
+//
+// ARGDEFINED-NOT: call_direct @add
+// ARGDEFINED: ctjs.globals = [
+// ARGDEFINED-SAME: reason = "the global object escapes into a call whose callee this module does not name{{[^"]*}}"
+
+// --- Negative: or binds a global toString ------------------------------------------
+//
+// A global `toString` is the window's own, so converting the window to a
+// string runs it with `this` = the window.
+//
+// ARGTOSTRING-NOT: call_direct @add
+// ARGTOSTRING: ctjs.globals = [
+// ARGTOSTRING-SAME: reason = "the global object may be converted to a string ({{[^)]*}}), and this program binds `toString`"
 
 // --- Positive: a named read off the global object ----------------------------------
 //
@@ -941,6 +974,25 @@ var z = add(1, 2);
 function add(a, b) { return a + b; }
 Object.assign(Object.prototype, { contains: function () { this.injected = 1; return true; } });
 (function (g) { return g.contains(1); })(globalThis);
+var z = add(1, 2);
+
+//--- argument-inert.js
+function add(a, b) { return a + b; }
+(function (child) {
+    return document.body.contains(child) || document.body.isSameNode(child);
+})(globalThis);
+var z = add(1, 2);
+
+//--- argument-defined.js
+function add(a, b) { return a + b; }
+var box = { contains: function (x) { x.injected = 1; return true; } };
+(function (child) { return box.contains(child); })(globalThis);
+var z = add(1, 2);
+
+//--- argument-tostring.js
+function add(a, b) { return a + b; }
+function toString() { this.injected = 1; return ""; }
+(function (child) { return document.body.classList.contains(child); })(globalThis);
 var z = add(1, 2);
 
 //--- enter-read.js
