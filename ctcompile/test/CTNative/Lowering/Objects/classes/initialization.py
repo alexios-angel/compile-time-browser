@@ -323,6 +323,40 @@ UNTRUSTED_NATIVE.update(dict.fromkeys(("static-defaults", "static-default-fields
 # refused beside the native program.
 UNTRUSTED_PARTIAL.update(dict.fromkeys(("inherited-getter-unused-ambient",), (False,)))
 
+# An arrow helper that captures a binding of the function that also makes the
+# class, called from the class's constructor or a method. The class's
+# function, made in the helper's frame, now captures that binding too
+# (ClosureLifting/Bindings.cpp, sibling captures), so the call has the value
+# to pass, and both modes lower completely and print Node's value. The
+# refusal these had, "it is read from inside another function, and capture 0
+# of the function it holds is not a binding this step erases", stays pinned
+# for a reader nested one function deeper by Closures/sibling-captures.test
+# (MISSING) and Closures/refusals.mlir (BOUNDDEEP).
+UNTRUSTED_NATIVE.update(
+    dict.fromkeys(
+        (
+            "captured-helper-nested",
+            "class-map-helper-chain",
+            "class-map-helper-constructor",
+            "class-map-helper-distinct-mixed",
+            "class-map-helper-loop",
+            "class-map-helper-shared-callers",
+            "nested-helper-primitive",
+            "primitive-capture-computed",
+        ),
+        (False, True),
+    )
+)
+# Leaf's copies of BAD, which throws, and KEY, which reads it, are static
+# getters nothing reads. A refused getter calls the static getters it reads
+# through a closure, so it no longer takes NAME, Leaf's constructor and the
+# program into its refusal: optimization removes the two as unreachable, and
+# without optimization they stay refused beside the native program.
+# Admission/refusal/call-graph.mlir (LEAF) still pins that any other function
+# a refused caller calls directly is refused with it.
+UNTRUSTED_NATIVE.update(dict.fromkeys(("inherited-static-getters-shadow-throwing",), (True,)))
+UNTRUSTED_PARTIAL.update(dict.fromkeys(("inherited-static-getters-shadow-throwing",), (False,)))
+
 # Key-conflict fixtures: the reference interpreter has no `console`, so these
 # fixtures report a conflict by throwing rather than by logging it.
 CONFLICT_OBSERVATIONS = {

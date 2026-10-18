@@ -177,10 +177,14 @@ bool passesAReceiver(mlir::OpOperand & use) {
 /// as a lifted method's receiver or object argument, or as a native Map record
 /// store, so its set of fields is fixed.
 bool TypeInference::hasClosedShape(mlir::Value object) {
-    // A read of a field that owns an instance by value names that instance.
-    const bool ownedRead = object.getDefiningOp() &&
-                           llvm::isa<ctjs::GetPropertyOp>(object.getDefiningOp()) &&
-                           object.getDefiningOp()->hasAttr(kNativeOwnedInstance);
+    // A read of a field that owns an instance names that instance, unless it
+    // only tests whether the field holds one (kOwnedHeld).
+    mlir::Operation * defining = object.getDefiningOp();
+    const auto mark =
+        defining ? defining->getAttrOfType<mlir::StringAttr>(kNativeOwnedInstance) : nullptr;
+    const bool ownedRead = defining && llvm::isa<ctjs::GetPropertyOp>(defining) &&
+                           defining->hasAttr(kNativeOwnedInstance) &&
+                           !(mark && mark.getValue() == kOwnedHeld);
     if (!object.getDefiningOp<ctjs::CreateObjectOp>() && !namesAnObjectParameter(object) &&
         !nativeMapRecordOrigin(object) && !isRecordCall(object) && !ownedRead) {
         return false;
@@ -253,15 +257,20 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> TypeInference::gr
         }
     });
 
-    // A read of a field owning an instance by value is that instance.
+    // A read of a field owning an instance by value is that instance; the
+    // field's null stores store no instance.
     llvm::StringMap<mlir::Value> ownedByKey;
     top->walk([&](ctjs::SetPropertyOp set) {
-        if (set->hasAttr(kNativeOwnedInstance)) {
+        if (set->hasAttr(kNativeOwnedInstance) &&
+            !ctjs::constantAttr<ctjs::NullAttr>(set.getValue())) {
             ownedByKey[ctjs::constantKey(set.getKey())] = set.getValue();
         }
     });
     top->walk([&](ctjs::GetPropertyOp read) {
-        if (!read->hasAttr(kNativeOwnedInstance)) { return; }
+        const auto mark = read->getAttrOfType<mlir::StringAttr>(kNativeOwnedInstance);
+        if (!read->hasAttr(kNativeOwnedInstance) || (mark && mark.getValue() == kOwnedHeld)) {
+            return;
+        }
         if (mlir::Value instance = ownedByKey.lookup(ctjs::constantKey(read.getKey()))) {
             classes.unionSets(instance, read.getResult());
         }

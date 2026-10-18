@@ -118,8 +118,8 @@ def mutations(args, ir):
         yield name, path, verifier_reason
 
 
-def main():
-    args = dom.parse_args(__doc__, oracles=True)
+def main(argv=None):
+    args = dom.parse_args(__doc__, oracles=True, argv=argv)
     includes, libraries = dom.link_options(args)
     checks = (
         callbacks.CHECKS.replace("@STEPS@", "3")
@@ -188,6 +188,10 @@ def main():
     print(
         f"DOM class callback forwarding: {len(CASES)} Node/VM sources, {executions} native executions, {refusals} refusals"
     )
+
+
+def test_forwarding(lit):
+    main(lit.args("%dom_driver --node %node --reference %native_reference"))
 
 
 if __name__ == "__main__":

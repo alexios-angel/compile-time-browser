@@ -1,6 +1,7 @@
 # Sibling closures that share one captured variable receive that same cell as an ordinary
 # lifted parameter. A sibling made in the same frame that captures a different cell
-# captures the callee's cell too; deeper nesting, escape and reassignment are refused.
+# captures the callee's cell too, and a caller one frame further in takes it relayed
+# from the closure it is made in; two frames in, escape and reassignment are refused.
 # RUN: split-file %s %t
 # RUN: %node %t/expected.cjs %t/values.js
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir
@@ -14,7 +15,8 @@
 # RUN: %compilation_unit --cxx %dom_clang --module %t/optimized.mlir --js %t/values.js --work %t --name sibling_optimized_clang --core-build %build
 # RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name sibling_mutation --mutate siblingSnapshot --mutate-as string --core-build %build 2>&1 | FileCheck %s --check-prefix=MUTATION
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/different-cell.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=WIDENED --implicit-check-not=ctnative.not_native
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/deeper.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=MISSING
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/deeper.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=DEEPER --implicit-check-not=ctnative.not_native
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/deepest.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=MISSING
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/escaping-caller.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/reassigned-function.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REASSIGNED
 # RUN: python3 %t/rollback.py ctjs-opt ctjs-translate %dom_clang %build %t %S/../../../Support/aot-entry-table.cmake
@@ -23,6 +25,12 @@
 # NATIVE-DAG: emitc.func @change_
 # CPP: ctnative::number_string*
 # MUTATION: global 'siblingSnapshot' differs
+# `inner`, made in `middle`, calls `read` with the `value` it takes relayed from
+# `middle`; two frames in (deepest.js) nothing relays it and the binding is refused.
+# DEEPER: emitc.func @read_[[READ:[0-9]+]](%arg0: !emitc.opaque<"ctnative::js_num">)
+# DEEPER: emitc.func @inner_{{[0-9]+}}(%arg0: !emitc.opaque<"ctnative::js_num">)
+# DEEPER-NOT: emitc.func
+# DEEPER: call @read_[[READ]](%arg0)
 # MISSING: it is read from inside another function, and capture 0 of the function it holds is not a binding this step erases
 # `middle` captures `other` and calls `read`, which captures `value`: `middle`, made in
 # the frame `value` belongs to, takes `value` as well and passes it to `read`.
@@ -67,11 +75,21 @@ function siblingConstant(text) {
     function middle() { return value + ":" + read(); }
     return middle();
 }
+function relayedCell(start) {
+    var value = start + 1;
+    function read(x) { return x + value; }
+    function middle(y) {
+        function inner(z) { return read(z) * 2; }
+        return inner(y);
+    }
+    return middle(1) + ":" + middle(2);
+}
 var siblingSnapshot = nestedCell("before", 7);
 var siblingNul = nestedCell("a\u0000b", 0);
 var siblingWrites = siblingUpdates(7, 2);
 var siblingNoWrite = siblingUpdates(-0, 0);
 var siblingValue = siblingConstant("unchanged");
+var siblingRelayed = relayedCell(10);
 
 #--- expected.cjs
 const assert = require("node:assert/strict");
@@ -84,6 +102,7 @@ assert.equal(scope.siblingNul, "a\u0000b:0:0");
 assert.equal(scope.siblingWrites, "7:9:9:10:10");
 assert.equal(scope.siblingNoWrite, "0:0:0:1:1");
 assert.equal(scope.siblingValue, "unchanged:unchanged");
+assert.equal(scope.siblingRelayed, "24:26");
 
 #--- different-cell.js
 function distinctCells() {
@@ -106,6 +125,21 @@ function deepCell() {
     return middle();
 }
 deepCell();
+
+#--- deepest.js
+function deepestCell() {
+    var value = 7;
+    function read() { return value; }
+    function middle() {
+        function lower() {
+            function inner() { return value + read(); }
+            return inner();
+        }
+        return lower();
+    }
+    return middle();
+}
+deepestCell();
 
 #--- escaping-caller.js
 function escapingCaller() {

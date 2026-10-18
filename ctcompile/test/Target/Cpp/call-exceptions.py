@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 import re
 
-from harness import run
+from Target.Cpp.harness import run
 
 MISMATCH = "requires each escaping callee throw to match the homogeneous catch payload"
 UNDEFINED = "requires a defined EmitC callee for each protected direct call"
@@ -65,12 +65,12 @@ def chain(size):
     return module(*pieces)
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--opt", required=True)
     parser.add_argument("--fixture", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     args.work.mkdir(parents=True, exist_ok=True)
     reports = []
 
