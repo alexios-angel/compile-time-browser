@@ -7,11 +7,11 @@
 // The proof then stops at the whole-module identity walk, which counts the
 // specialised Array call itself as a call it cannot name.
 // RUN: split-file %s %t
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/captured.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=CAPTURED --implicit-check-not="escapes or is mutated"
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/captured.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true | FileCheck %s --check-prefix=CAPTURED --implicit-check-not="escapes or is mutated"
 //
 // reduce's initial value is an argument of the call, not a capture: a Map
 // passed there still escapes.
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/initial.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=INITIAL
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/initial.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true | FileCheck %s --check-prefix=INITIAL
 
 // CAPTURED: ctnative.map_reason = "standard Map identity is unproved across an unknown call"
 // INITIAL: ctnative.map_reason = "native Map instance escapes or is mutated through `ctjs.call`"

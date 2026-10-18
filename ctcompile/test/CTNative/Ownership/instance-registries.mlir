@@ -12,20 +12,20 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-test-instance-registries \
 // RUN:   | FileCheck %s --check-prefix=PROVED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/proved.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=LIFT --implicit-check-not=ctnative.not_native
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/proved.js --mlir-print-debuginfo 2>/dev/null \
-// RUN:   | ctjs-opt "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ctnative-lower-to-emitc, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))" \
+// RUN:   | ctjs-opt "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ctnative-lower-to-emitc{observe-globals=true}, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))" \
 // RUN:              --mlir-print-debuginfo -o %t/proved.emitc.mlir
 // RUN: %compilation_unit --module %t/proved.emitc.mlir --js %t/proved.js --work %t/proved-native --name proved
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/tells.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=TELLS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/undefined-global.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=UNDEFINED-GLOBAL --implicit-check-not=ctnative.not_native
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/undefined-global.js --mlir-print-debuginfo 2>/dev/null \
-// RUN:   | ctjs-opt "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ctnative-lower-to-emitc, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))" \
+// RUN:   | ctjs-opt "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ctnative-lower-to-emitc{observe-globals=true}, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))" \
 // RUN:              --mlir-print-debuginfo -o %t/undefined-global.emitc.mlir
 // RUN: %compilation_unit --module %t/undefined-global.emitc.mlir --js %t/undefined-global.js --work %t/undefined-global-native --name undefined_global
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/unchecked.js 2>/dev/null \
@@ -101,10 +101,10 @@
 // RUN:              --ctnative-test-instance-registries=lifted=true \
 // RUN:   | FileCheck %s --check-prefix=NEW-THIS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/new-this-native.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=NEW-THIS-NATIVE --implicit-check-not=ctnative.not_native
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/new-this-native.js --mlir-print-debuginfo 2>/dev/null \
-// RUN:   | ctjs-opt "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ctnative-lower-to-emitc, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))" \
+// RUN:   | ctjs-opt "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ctnative-lower-to-emitc{observe-globals=true}, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))" \
 // RUN:              --mlir-print-debuginfo -o %t/new-this-native.emitc.mlir
 // RUN: %compilation_unit --module %t/new-this-native.emitc.mlir --js %t/new-this-native.js --work %t/new-this-native --name new_this_native
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/new-this-stored.js 2>/dev/null \

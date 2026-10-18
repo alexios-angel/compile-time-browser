@@ -62,7 +62,7 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=UNPROVED --implicit-check-not="reads its lexical"
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/calls.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/calls.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/calls.mlir
 // RUN: FileCheck %s --check-prefix=CALLS --implicit-check-not=ctnative.not_native < %t/calls.mlir
 // RUN: ctjs-opt %t/calls.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/calls.cpp
 // RUN: FileCheck %s --check-prefix=CALLSCPP < %t/calls.cpp
@@ -73,7 +73,7 @@
 // RUN: %native_reference %t/calls.js | FileCheck %s --check-prefix=CALLSOUT
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/calls.js | FileCheck %s --check-prefix=CALLSOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/callsstored.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=CALLSSTORED
 
 // A method makes `() => this._x` and calls it twice in its own frame. The

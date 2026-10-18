@@ -151,7 +151,7 @@ with tempfile.TemporaryDirectory(prefix="ctcompile install ") as directory:
         assert "ctjs.func" in raw and "ctjs.skipped" not in raw
         pipeline = (
             "--pass-pipeline=builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,"
-            "ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,"
+            "ctnative-lower-to-emitc{observe-globals=true},emitc.func(canonicalize,convert-scf-to-emitc,"
             "convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))"
         )
         native = run(opt, pipeline, input=raw)

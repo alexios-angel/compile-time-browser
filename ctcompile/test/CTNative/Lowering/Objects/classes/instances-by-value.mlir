@@ -172,7 +172,7 @@
 // the arrow runs while the method's call does, so the instance outlives it:
 // native, and GCC, Clang, the interpreter and Node print the same value.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/arrow.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/arrow.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/arrow.mlir
 // RUN: FileCheck %s --check-prefix=OWNED --implicit-check-not=ctnative.not_native < %t/arrow.mlir
 // RUN: ctjs-opt %t/arrow.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/arrow.cpp
 // RUN: FileCheck %s --check-prefix=ARROW-CPP < %t/arrow.cpp
@@ -196,7 +196,7 @@
 // that makes it is stored, and that one is named.
 // RUN: for name in arrow-stored arrow-passed arrow-nested-stored; do \
 // RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/$name.mlir; done
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/$name.mlir; done
 // RUN: FileCheck %s --check-prefix=ARROW-STORED --implicit-check-not=ctnative.owned_instance < %t/arrow-stored.mlir
 // RUN: FileCheck %s --check-prefix=ARROW-PASSED --implicit-check-not=ctnative.owned_instance < %t/arrow-passed.mlir
 // RUN: FileCheck %s --check-prefix=ARROW-NESTED --implicit-check-not=ctnative.owned_instance < %t/arrow-nested-stored.mlir
