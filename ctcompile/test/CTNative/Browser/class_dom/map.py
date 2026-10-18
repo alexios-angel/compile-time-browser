@@ -75,8 +75,8 @@ def source(body):
     return "function probe(element) {\n" + body + "\n}\n"
 
 
-def main():
-    args = dom.parse_args(__doc__, oracles=True)
+def main(argv=None):
+    args = dom.parse_args(__doc__, oracles=True, argv=argv)
     includes, libraries = dom.link_options(args)
     executions = refusals = 0
     for name, body in CASES.items():
@@ -190,6 +190,14 @@ def main():
             refusals += 1
     print(
         f"DOM class Maps: {len(CASES)} Node/VM sources, {executions} native executions, {refusals} refusals"
+    )
+
+
+def test_map(lit):
+    main(
+        lit.args(
+            "--translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --nm %nm --work %t"
+        )
     )
 
 

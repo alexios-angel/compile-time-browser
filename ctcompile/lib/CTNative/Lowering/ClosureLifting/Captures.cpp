@@ -59,26 +59,62 @@ std::int32_t closureLifter::enclosingIndex(ctjs::CreateClosureOp c, unsigned i) 
     return indices[i];
 }
 
-/// The slot of `holder` that captures the same cell as slot `index` of
-/// `closure`, when both are made in the same function. Matches cell identity,
-/// never its current value or its source spelling.
-// ponytail: only existing direct sibling captures; deeper relays or missing
-// capture slots need an explicit environment propagation proof.
+/// The slot of `holder` that holds the same cell as slot `index` of
+/// `closure`: one that captures it directly when both are made in the same
+/// function, or, for a holder made one frame further in, one filled from the
+/// slot of its enclosing closure (enclosingClosureOf) that captures it
+/// directly. Matches cell identity, never its current value or its source
+/// spelling.
+// ponytail: one frame of relay; a reader two frames in needs every closure
+// on the way to carry the cell.
 std::optional<unsigned> closureLifter::siblingCaptureSlot(ctjs::CreateClosureOp closure,
                                                           unsigned index,
                                                           ctjs::CreateClosureOp holder) {
     if (enclosingIndex(closure, index) >= 0 ||
-        !closure.getUpvalues()[index].getDefiningOp<ctjs::CreateCellOp>() ||
-        closure->getParentOfType<ctjs::FuncOp>() != holder->getParentOfType<ctjs::FuncOp>()) {
+        !closure.getUpvalues()[index].getDefiningOp<ctjs::CreateCellOp>()) {
         return std::nullopt;
     }
-    for (unsigned slot = 0; slot < holder.getUpvalues().size(); ++slot) {
-        if (enclosingIndex(holder, slot) < 0 &&
-            holder.getUpvalues()[slot] == closure.getUpvalues()[index]) {
-            return slot;
+    auto frame = closure->getParentOfType<ctjs::FuncOp>();
+    const mlir::Value cell = closure.getUpvalues()[index];
+    const auto direct = [&](ctjs::CreateClosureOp made) -> std::optional<unsigned> {
+        if (made->getParentOfType<ctjs::FuncOp>() != frame) { return std::nullopt; }
+        for (unsigned slot = 0; slot < made.getUpvalues().size(); ++slot) {
+            if (enclosingIndex(made, slot) < 0 && made.getUpvalues()[slot] == cell) { return slot; }
         }
+        return std::nullopt;
+    };
+    if (const std::optional<unsigned> slot = direct(holder)) { return slot; }
+    // A holder made in this frame, or one with no relayed slot, has none to find.
+    const mlir::DenseI32ArrayAttr relayed = holder.getEnclosingIndicesAttr();
+    if (holder->getParentOfType<ctjs::FuncOp>() == frame || !relayed ||
+        llvm::none_of(relayed.asArrayRef(), [](std::int32_t k) { return k >= 0; })) {
+        return std::nullopt;
+    }
+    const ctjs::CreateClosureOp enclosing = enclosingClosureOf(holder);
+    const std::optional<unsigned> outer = enclosing ? direct(enclosing) : std::nullopt;
+    if (!outer) { return std::nullopt; }
+    for (unsigned slot = 0; slot < holder.getUpvalues().size(); ++slot) {
+        if (enclosingIndex(holder, slot) == static_cast<std::int32_t>(*outer)) { return slot; }
     }
     return std::nullopt;
+}
+
+llvm::DenseMap<mlir::Operation *, ctjs::CreateClosureOp> closureLifter::oneClosurePerFunction() {
+    llvm::DenseMap<mlir::Operation *, ctjs::CreateClosureOp> one;
+    module.walk([&](ctjs::CreateClosureOp c) {
+        if (ctjs::FuncOp target = targetOf(c)) {
+            auto [at, fresh] = one.try_emplace(target.getOperation(), c);
+            if (!fresh) { at->second = {}; }
+        }
+    });
+    return one;
+}
+
+ctjs::CreateClosureOp closureLifter::enclosingClosureOf(ctjs::CreateClosureOp made) {
+    auto frame = made->getParentOfType<ctjs::FuncOp>();
+    if (!frame) { return {}; }
+    return closureOfFunction ? closureOfFunction->lookup(frame.getOperation())
+                             : oneClosurePerFunction().lookup(frame.getOperation());
 }
 
 /// The lifted capture parameter of sibling caller `holder` that already holds

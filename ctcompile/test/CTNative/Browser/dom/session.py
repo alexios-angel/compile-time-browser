@@ -123,8 +123,8 @@ QUERY_CHECKS = r"""
 """
 
 
-def main():
-    args = dom.parse_args(__doc__)
+def main(argv=None):
+    args = dom.parse_args(__doc__, argv=argv)
     compilers = args.compilers
     for name, source, checks in (
         ("action", ACTION, ACTION_CHECKS),
@@ -225,6 +225,10 @@ def main():
     print(
         "owned DOM: 3 sources, 5 retention refusals, both policies/layouts/compilers, ASan/UBSan passed"
     )
+
+
+def test_session(lit):
+    main(lit.args("%dom_driver"))
 
 
 if __name__ == "__main__":

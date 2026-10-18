@@ -317,8 +317,8 @@ def check_native(args, modules, optimize, compilers, includes, libraries):
                 raise RuntimeError("class DOM native observations disagree with source")
 
 
-def main():
-    args = dom.parse_args(__doc__, oracles=True)
+def main(argv=None):
+    args = dom.parse_args(__doc__, oracles=True, argv=argv)
     # The cases copy Bootstrap's minified helpers verbatim, so check they still
     # match the vendored bundle: M decodes a data-attribute value (boolean,
     # Number, null, JSON, URI), F turns a camelCase key into kebab-case, and H is
@@ -708,6 +708,14 @@ def main():
     print(
         f"DOM classes, receivers and fields: {observations} Node/interpreter observations, "
         f"8 combined native executions, {refusals} refusals"
+    )
+
+
+def test_basics(lit):
+    main(
+        lit.args(
+            "--translate ctjs-translate --opt ctjs-opt --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --work %t --nm %nm --node %node --reference %native_reference"
+        )
     )
 
 

@@ -146,8 +146,8 @@ def native_storage(args, ir, requested, name, *, proved=True):
             raise RuntimeError(f"{name}: native refusal emitted a partial module")
 
 
-def main():
-    args = native_args(__doc__)
+def main(argv=None):
+    args = native_args(__doc__, argv=argv)
     js, ir, requested, count = prepare(args, "inputs", SOURCE)
     # The script body, dataEntry, the IIFE, the factory and its three methods.
     if count != 7:
@@ -219,6 +219,14 @@ def main():
         "DOM Data inputs: seven imported functions, two external keys, zero synthetic objects; "
         "Node/VM alias and source-allocation reset observations; eleven source refusals, "
         "stale/budget/forged controls; private native storage revalidated under both policies"
+    )
+
+
+def test_dom_data_inputs(lit):
+    main(
+        lit.args(
+            "--translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --work %t"
+        )
     )
 
 
