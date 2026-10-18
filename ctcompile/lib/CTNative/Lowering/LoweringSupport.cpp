@@ -138,7 +138,7 @@ carrier carrierOf(mlir::Type type) {
     // Number/Boolean unions use the same tags as an optional scalar. The
     // lattice keeps its exact alternatives: choosing this representation
     // neither adds nullability nor admits objects or unknown values. A
-    // Boolean|String or Number|String value has its own owning variant carrier.
+    // Boolean|String or Number|String value has its own owning String union.
     if (auto variant = llvm::dyn_cast<VariantType>(type)) {
         if (pairAlternatives(variant.getAlternatives(), is<BoolType>, [](mlir::Type alternative) {
                 auto string = llvm::dyn_cast<StrType>(alternative);
