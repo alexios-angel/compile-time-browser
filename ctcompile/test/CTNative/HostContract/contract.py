@@ -63,12 +63,12 @@ def analyze(opt, ir, contract, prefix, *, strict=False, success=True, options=""
     return json.loads(report.read_text()) if report.exists() else None, output, result
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--translate", required=True)
     parser.add_argument("--opt", required=True)
     parser.add_argument("--work", type=Path, required=True)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     args.work.mkdir(parents=True, exist_ok=True)
     sources = {
         "ordinary": "var host = {}; host.slot = 42; var trace = host.slot;",
@@ -229,6 +229,10 @@ def main():
     print(
         "host contract: 10 publication positives, 24 source refusals, stale/forged/provider/claim/budget controls passed"
     )
+
+
+def test_contract(lit):
+    main(lit.args("--translate ctjs-translate --opt ctjs-opt --work %t"))
 
 
 if __name__ == "__main__":
