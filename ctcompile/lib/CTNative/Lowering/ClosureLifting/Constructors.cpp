@@ -227,24 +227,23 @@ std::optional<std::string> closureLifter::whyNotLiftableConstructor(ctjs::Create
     if (auto prototype = immutablePrototype(c)) {
         // The reads that could observe a method as a value. In code that runs
         // natively an instance is a struct, reached only through a `new` of
-        // this class and the values `behind` names, a parameter (`this`, an
-        // object argument), a call that returns it by value, or an arrow's
-        // captured `this` (a ctjs.load_upvalue until the arrow lifts): closed
-        // instance uses cannot store or merge it. Admission gives a struct
-        // only constant-key reads (hasClosedShape), so a read through a
-        // computed key cannot observe the method. The prototype is never a
-        // value there: only its definitions use it, only the setup uses the
-        // class, and admission refuses the reads that would reach it from an
-        // instance (`__proto__`, and `constructor` on a struct that does not
-        // own one). Code that admission refuses never runs natively.
-        // ponytail: every parameter, capture and call result counts; a
-        // per-receiver proof could narrow this further.
+        // this class and the values `behind` names (an instance returned or
+        // owned by value, a Map record), or a parameter: `this`, an object
+        // argument, and an arrow's captured `this`, which is a parameter by
+        // the time the class can lift (a method that hands `this` to an arrow
+        // lifts only after the arrow). Closed instance uses cannot store or
+        // merge it. Admission gives a struct only constant-key reads
+        // (hasClosedShape), so a read through a computed key cannot observe
+        // the method. The prototype is never a value there: only its
+        // definitions use it, only the setup uses the class, and admission
+        // refuses the reads that would reach it from an instance
+        // (`__proto__`, and `constructor` on a struct that does not own one).
+        // Code that admission refuses never runs natively. ponytail: every
+        // parameter counts; a per-receiver proof could narrow this further.
         const auto constructSites = constructsOfTarget.lookup(targetOf(c));
         const auto mayNameAnInstance = [&](mlir::Value object) {
             if (llvm::isa<mlir::BlockArgument>(object) ||
-                object == prototype->attachment.getValue() ||
-                llvm::isa_and_nonnull<ctjs::LoadUpvalueOp, ctjs::CallOp, ctjs::CallDirectOp>(
-                    object.getDefiningOp())) {
+                object == prototype->attachment.getValue()) {
                 return true;
             }
             return llvm::any_of(constructSites, [&](ctjs::ConstructOp made) {
