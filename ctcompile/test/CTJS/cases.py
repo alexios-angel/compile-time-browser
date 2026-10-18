@@ -78,6 +78,23 @@ CASES = {
     "Transforms/array-iteration": [
         "ctjs-translate --ctbrowser-js-to-ctjs %s    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf    | FileCheck %s",
     ],
+    "Transforms/closure-values": [
+        "split-file %s %t",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/handlers.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s",
+        "sed 's|// prototypes: ||' %t/handlers.js > %t/prototypes.js",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/prototypes.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=PROTOTYPES",
+        "sed 's|// mutated: ||' %t/handlers.js > %t/mutated.js",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/mutated.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=MUTATED",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/methods.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=METHODS",
+        "sed 's|// self: ||' %t/methods.js > %t/self.js",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/self.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=SELF",
+        "sed 's|// unknown: ||' %t/methods.js > %t/unknown.js",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/unknown.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=UNKNOWN",
+        "sed 's|// inherited: ||' %t/methods.js > %t/inherited.js",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/inherited.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=INHERITED",
+        "sed 's|// escape: ||' %t/methods.js > %t/escape.js",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/escape.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=ESCAPE",
+    ],
     "Transforms/resolve-globals": [
         "split-file %s %t",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/closed.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=CLOSED",
