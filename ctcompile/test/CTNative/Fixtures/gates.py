@@ -11,13 +11,17 @@ GATES holds each case's positive gate RUN lines after the substitution,
 copied verbatim; %S is the case's folder. A case's negative gate lines (`not
 %compilation_unit ... | FileCheck`) and any other RUN line stay in its .test.
 Until a case's switch commit deletes its gate lines from the .test, lit runs
-them too, so an edit to one copy belongs in both.
+them too, so an edit to one copy belongs in both, and run() fails while the
+two differ.
 """
 
 import importlib
 from pathlib import Path
+import re
 
 import pytest
+
+import lit_lines
 
 HERE = Path(__file__).resolve().parent
 # The gate scripts' module names are hyphenated, so import_module, not import.
@@ -27,9 +31,23 @@ MAINS = {
 }
 
 
+def gate_lines(case, gate):
+    """The positive `gate` RUN lines of `case`'s .test as GATES copies them:
+    each `%<gate> ARGS` line with no pipe or redirection, as ARGS."""
+    prefix = f"%{gate} "
+    return [
+        line.removeprefix(prefix)
+        for line in lit_lines.run_lines(HERE / f"{case}.test")
+        if line.startswith(prefix) and not re.search(r"[|<>]", line)
+    ]
+
+
 def run(lit, case, gate):
     """Every `gate` RUN line of `case`, in order, through the gate's main.
-    The substitution itself starts `python3 <script>`, which main drops."""
+    The substitution itself starts `python3 <script>`, which main drops.
+    While the .test still has `gate` lines, they must equal GATES's copy."""
+    if gate_lines(case, gate) not in ([], GATES[case][gate]):
+        raise AssertionError(f"{case}.test: its {gate} RUN lines differ from gates.py's copy")
     folder = str(HERE / case.rpartition("/")[0])
     for line in GATES[case][gate]:
         MAINS[gate](lit.args(f"%{gate} " + line.replace("%S", folder))[2:])
