@@ -1270,6 +1270,12 @@ CASES = {
         "ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MIXED",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/booleans.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=BOOLEANS",
     ],
+    "Objects/array-callback-cells": [
+        "split-file %s %t",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/emit.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EMIT --implicit-check-not=ctnative.not_native",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/shared.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=SHARED",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/stored.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=STORED",
+    ],
     "Objects/array-callbacks": [
         "split-file %s %t",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/emit.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true | FileCheck %s --check-prefix=EMIT --implicit-check-not=ctnative.not_native",

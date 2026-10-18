@@ -49,9 +49,11 @@
 // CHECK-LABEL: ctjs.func @D$3(
 // CHECK: ctjs.call {{.*}} {ctjs.test_closures = ["S$2"]}
 // CHECK: ctjs.call {{.*}} {ctjs.test_closures = ["fn$4"]}
-// The custom-event wrapper calls what it wraps, with `call`.
+// The custom-event wrapper calls what it wraps, with `call`. Its parameter
+// is read in its own call's frame (ClosureValues.cpp, inFrame), so the answer
+// is only what D hands the arrow there, not the wrapper itself.
 // CHECK-LABEL: ctjs.func @fn$5(
-// CHECK: ctjs.call {{.*}} {ctjs.test_closures = ["fn$15", "fn$5", "onClick$10", "onItem$14"]}
+// CHECK: ctjs.call {{.*}} {ctjs.test_closures = ["fn$15", "onClick$10", "onItem$14"]}
 // The delegated and the direct wrapper call the handler with `apply`.
 // CHECK-LABEL: ctjs.func @n$7(
 // CHECK: ctjs.call {{.*}} {ctjs.test_closures = ["fn$15", "fn$5", "onClick$10", "onItem$14"]}

@@ -7,7 +7,8 @@
 // shorten the array; the element-vector proof gives that for free, since the
 // callback reaches the array only as a read-only parameter and refuses any
 // member of the array in another function. sort orders by the Number of what
-// its comparator returns.
+// its comparator returns. A capture the callback takes by address is a shared
+// binding of this frame, as a direct call's cell argument is.
 //
 //===----------------------------------------------------------------------===//
 
@@ -28,6 +29,21 @@ bool arrayCallbackOperation(admission & self, ctjs::CallOp call) {
         }
         return self.refuse("the receiver of " + method + " is " + printed(array) +
                            ", not an array of Strings, Numbers or rows");
+    }
+    // Operations.cpp asks the same of a direct call's cell arguments: the
+    // lift listed them, and a refusal since then can have opened the binding.
+    for (const int32_t index : listedSlots(call, kNativeCellArgs)) {
+        const mlir::Value captured = call->getOperand(static_cast<unsigned>(index));
+        if (!admission::namesASharedCell(captured)) {
+            return self.refuse("the callback of " + method +
+                               " takes by address something that is not a shared binding of "
+                               "this frame");
+        }
+        if (carrierOf(self.typeOf(captured)) == carrier::none) {
+            return self.refuse("the callback of " + method +
+                               " takes by address a binding of type " +
+                               printed(self.typeOf(captured)) + ", which has no native carrier");
+        }
     }
     auto callback = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
         call, call->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativeArrayCallback));

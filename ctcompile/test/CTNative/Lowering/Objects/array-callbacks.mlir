@@ -30,11 +30,16 @@
 // CHECK-DAG: @thisArg${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: Array.prototype.forEach called with a thisArg"
 // CHECK-DAG: @readsThis${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the callback of Array.prototype.map reads `this`"
 // CHECK-DAG: @fourParameters${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the callback of Array.prototype.filter declares 4 parameters - it is passed 3, and needs at least one"
-// CHECK-DAG: @counts${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the callback of Array.prototype.forEach captures binding 0, which is written after it is captured - the callback takes its captures by value"
+// counts' callback writes the binding it captures, and takes it by address
+// (array-callback-cells.mlir lowers it); here it is refused only through the
+// script that calls it, which calls the refused functions too.
+// CHECK-DAG: @counts${{[0-9]+}}{{.*}}ctnative.not_native = "called by `_script_$0`, which is not native"
 // A write after the callback is made, and one in a loop around it (the
-// binding is made outside the loop), keep the copy from being exact.
-// CHECK-DAG: @later${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the callback of Array.prototype.filter captures binding 0, which is written after it is captured - the callback takes its captures by value"
-// CHECK-DAG: @rounds${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the callback of Array.prototype.filter captures binding 0, which is written after it is captured - the callback takes its captures by value"
+// binding is made outside the loop), take the binding by address the same
+// way, so these functions lower natively and are refused only through their
+// caller too.
+// CHECK-DAG: @later${{[0-9]+}}{{.*}}ctnative.not_native = "called by `_script_$0`, which is not native"
+// CHECK-DAG: @rounds${{[0-9]+}}{{.*}}ctnative.not_native = "called by `_script_$0`, which is not native"
 // CHECK-DAG: @notAnArray${{[0-9]+}}{{.*}}ctnative.not_native = "the receiver of Array.prototype.filter is
 // CHECK-DAG: @flags${{[0-9]+}}{{.*}}ctnative.not_native = "the result of Array.prototype.map is
 // CHECK-DAG: @mixedSum${{[0-9]+}}{{.*}}ctnative.not_native = "reduce's accumulator changes type: the initial value is

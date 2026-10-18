@@ -253,6 +253,9 @@ CASES = {
         "ctjs-translate --ctbrowser-js-to-ctjs %t/new-this-native.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true    | FileCheck %s --check-prefix=NEW-THIS-NATIVE --implicit-check-not=ctnative.not_native",
         'ctjs-translate --ctbrowser-js-to-ctjs %t/new-this-native.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ctnative-lower-to-emitc{observe-globals=true}, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))"               --mlir-print-debuginfo -o %t/new-this-native.emitc.mlir',
         "%compilation_unit --module %t/new-this-native.emitc.mlir --js %t/new-this-native.js --work %t/new-this-native --name new_this_native",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/data-only.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc    | FileCheck %s --check-prefix=DATA-ONLY --implicit-check-not=ctnative.not_native",
+        'ctjs-translate --ctbrowser-js-to-ctjs %t/data-only.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ctnative-lower-to-emitc, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))"               --mlir-print-debuginfo -o %t/data-only.emitc.mlir',
+        "%compilation_unit --module %t/data-only.emitc.mlir --js %t/data-only.js --work %t/data-only --name data_only",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/new-this-stored.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf               --ctnative-test-instance-registries=lifted=true    | FileCheck %s --check-prefix=NEW-THIS-STORED",
     ],
     "Precomputation/arguments": [
