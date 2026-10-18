@@ -189,8 +189,9 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
 /// have been seen.
 void lowering::censusShapes(llvm::ArrayRef<ctjs::FuncOp> accepted) {
     joinInstanceValues(accepted);
-    // A field owning a class instance by value holds that class, spelled as
-    // nameFamilies spells a class family.
+    // A field owning a class instance holds that class, spelled as
+    // nameFamilies spells a class family, in a ctnative::owned or
+    // ctnative::replaceable member (Runtime/Owned.hpp).
     // ponytail: assumes the class family is not a template and its name is
     // not taken by another family; spell it from the family once one needs to.
     for (ctjs::FuncOp fn : accepted) {
@@ -202,8 +203,14 @@ void lowering::censusShapes(llvm::ArrayRef<ctjs::FuncOp> accepted) {
             const std::string spelled = admission::isReservedInCpp(name.getValue())
                                             ? "js_" + name.getValue().str()
                                             : name.getValue().str();
+            // A method's store can replace an instance whose method is still
+            // running, so its field keeps every instance it held alive.
+            const auto mark = set->getAttrOfType<mlir::StringAttr>(kNativeOwnedInstance);
+            const llvm::StringRef member = mark && mark.getValue() == kOwnedReplaceable
+                                               ? "ctnative::replaceable<"
+                                               : "ctnative::owned<";
             ownedFieldTypes[ctjs::constantKey(set.getKey())] =
-                ec::OpaqueType::get(context, spelled);
+                ec::OpaqueType::get(context, (member + spelled + ">").str());
         });
     }
     std::vector<llvm::StringSet<>> keys; // per family, its distinct (name, type) keys

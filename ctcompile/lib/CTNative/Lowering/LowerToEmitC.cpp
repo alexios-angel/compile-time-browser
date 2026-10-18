@@ -33,6 +33,7 @@
 #include "EmitC/Emitter.h"
 #include "EmitC/Vectors.h"
 #include "Exceptions/Recovery.h"
+#include "Exceptions/SuppressedCloses.h"
 #include "Exceptions/TypeErrors.h"
 #include "ForOf.h"
 #include "Refinements.h"
@@ -522,10 +523,14 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // Before the lift: an object parameter must be read only through
         // constant keys, which `config[key]` in a loop over a table parameter
         // becomes only once the loop is written out per key.
-        // A `throw new TypeError(message)` the lift left beside the
-        // function's returns is put in a saved-throw region, and the
-        // functions are lifted again (Exceptions/TypeErrors.h).
-        if (!hostContract && structureTypeErrorThrows(module)) {
+        // A handler that only drops an iterator close's errors before a throw
+        // becomes an invocation of the close first; it is not a catch that
+        // could see the throw (Exceptions/SuppressedCloses.h). A `throw new
+        // TypeError(message)` the lift left beside the function's returns is
+        // put in a saved-throw region, and the functions are lifted again
+        // (Exceptions/TypeErrors.h).
+        const bool closes = !hostContract && structureSuppressedCloses(module);
+        if (!hostContract && (structureTypeErrorThrows(module) || closes)) {
             mlir::OpPassManager relift(mlir::ModuleOp::getOperationName());
             relift.addPass(ctjs::createCTJSLiftToSCF());
             if (failed(runPipeline(relift, module))) { return signalPassFailure(); }

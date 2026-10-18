@@ -51,6 +51,15 @@
 // RUN: %t/otherkey-clang | FileCheck %s --check-prefix=OTHERKEYRUN
 // RUN: %native_reference %t/otherkey.js | FileCheck %s --check-prefix=OTHERKEYRUN
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/otherkey.js | FileCheck %s --check-prefix=OTHERKEYRUN
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compared.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=COMPARED --implicit-check-not=strict-comparison
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/presence.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=PRESENCE --implicit-check-not=strict-comparison
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/identity.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=IDENTITY
 // The census is a measurement the option reports, not a rule. It is asserted
 // so its numbers stay right: this program has one method-bearing literal and
 // one blocking use, and the label says which.
@@ -147,6 +156,27 @@
 // OTHERKEY: emitc.func @otherkey
 // OTHERKEYRUN: r=35
 
+// --- The reason a compared literal reports -----------------------------------
+//
+// The object identity proof (NativeObjectIdentity.cpp) runs after this rule
+// and also writes `ctnative.object_reason`, on every literal of a family that
+// `===` compares. It writes its reason only where it describes the literal.
+// `compared` passes `o` to a callee nobody can name and compares it with
+// another object: the census's reason for the argument stays (the field-less
+// `other` is a proved identity). `presence` only tests `o === undefined` (a
+// read of the global) and `o === null` (a constant), which observe no
+// identity, so the proof writes nothing. `identity` compares
+// two objects and passes `o` to no call, so the proof's own reason is still
+// the one `o` reports.
+//
+// COMPARED: ctjs.create_object {ctnative.object_reason = "it is passed to a call whose callee is not one function this rewrite can name, so there is no parameter to give the object's address to"
+// COMPARED: ctjs.create_object {ctnative.object_identity
+// PRESENCE: ctjs.func {{.*}}@presence$1
+// PRESENCE-SAME: ctnative.not_native = "an object literal that escapes - it reaches `ctjs.compare`"
+// PRESENCE: ctjs.create_object {ctnative.symbolic_results
+// IDENTITY: ctjs.create_object {ctnative.object_reason = "strict-comparison object has an unsupported use through `ctjs.store_global`"
+// IDENTITY: ctjs.create_object {ctnative.object_identity
+
 // --- The census, as a remark -------------------------------------------------
 //
 // `census.js` is the shape the object-argument rule targets, with the argument
@@ -223,6 +253,35 @@ function otherkey(k) {
     return r * 10 + bad.y;
 }
 var r = otherkey("y");
+
+//--- compared.js
+function sink(p) { return p.x; }
+sink = function (p) { return p.x + 1; };
+function compared() {
+    var o = { x: 1 };
+    var other = {};
+    return sink(o) + (o === other ? 1 : 0);
+}
+var a = compared();
+
+//--- presence.js
+var kept;
+function presence() {
+    var o = { x: 1 };
+    kept = o;
+    return o === undefined || o === null ? 0 : 1;
+}
+var a = presence();
+
+//--- identity.js
+var kept;
+function identity() {
+    var o = { x: 1 };
+    var other = { x: 2 };
+    kept = o;
+    return o === other ? 1 : 0;
+}
+var a = identity();
 
 //--- census.js
 function sink(p) { return p.x; }
