@@ -1096,6 +1096,25 @@ void closureLifter::methodCensus() {
         for (mlir::Value read : registry.readBack) {
             behind[read].assign(registry.instances.begin(), registry.instances.end());
         }
+        // So does `this` in a method that takes no parameter and captures
+        // nothing: the proof runs every method only on an instance of its class,
+        // which no other class extends, and such a method lifts with no call
+        // (liftsOnRegistryReceiver), so `this.m()` in it resolves as `a.m()`
+        // does on an instance read back from the Map.
+        for (ctjs::FuncOp method : registry.methods) {
+            if (method.getBody().empty() || method.getUpvalueCount() != 0) { continue; }
+            mlir::Block & entry = method.getBody().front();
+            if (llvm::any_of(
+                    entry.getArguments().drop_front(ctjs::implicit_arguments),
+                    [](mlir::BlockArgument parameter) { return !parameter.use_empty(); })) {
+                continue;
+            }
+            llvm::SmallVector<mlir::Value, 2> & named =
+                behind[entry.getArgument(ctjs::arg_receiver)];
+            for (mlir::Value instance : registry.instances) {
+                if (!llvm::is_contained(named, instance)) { named.push_back(instance); }
+            }
+        }
     }
     // Fixpoint over the receiver chain. `this.other()` inside a method has
     // `%arg0` as its receiver, and `%arg0` names whatever the call sites pass,
