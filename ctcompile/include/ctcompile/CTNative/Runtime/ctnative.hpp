@@ -836,6 +836,63 @@ inline constexpr boolean_constructor Boolean{};
 // lookup. Without iteration, key order is unobservable and lookup uses
 // std::map, but numeric keys still need SameValueZero: std::less<double> alone
 // is not a valid ordering for NaN keys.
+//
+// A key or payload that admission proved is one of two kinds is a small struct
+// with a tag, compared by a switch on the tag, so every comparison is a direct
+// call the C++ compiler can inline. A Number-or-object key is an object_value,
+// the carrier that union already has as a payload.
+
+/// A Map key or payload proved to be a Boolean or a Number. A Boolean is
+/// stored as 0 or 1, as in nullable_scalar.
+struct boolean_or_number {
+    enum class kind : unsigned char {
+        boolean,
+        number
+    } tag = kind::number;
+    double value = 0;
+    boolean_or_number() = default;
+    boolean_or_number(double number) : value(number) {}
+    boolean_or_number(js_num number) : value(number.value()) {}
+    boolean_or_number(js_boolean_t boolean)
+        : tag(kind::boolean), value(boolean.to_number().value()) {}
+    boolean_or_number(bool boolean) : boolean_or_number(js_boolean_t{boolean}) {}
+};
+/// A Map key or payload proved to be a Boolean or a String.
+struct boolean_or_string {
+    enum class kind : unsigned char {
+        boolean,
+        string
+    } tag = kind::string;
+    bool boolean = false;
+    std::string text;
+    boolean_or_string() = default;
+    boolean_or_string(js_boolean_t value) : tag(kind::boolean), boolean(static_cast<bool>(value)) {}
+    boolean_or_string(std::string value) : text(std::move(value)) {}
+};
+/// A Map key or payload proved to be a Boolean, a String, null or undefined.
+/// The tag keeps null and undefined apart from each other and from the
+/// strings that spell them.
+struct nullable_boolean_or_string {
+    enum class kind : unsigned char {
+        undefined,
+        null,
+        boolean,
+        string
+    } tag = kind::undefined;
+    bool boolean = false;
+    std::string text;
+    nullable_boolean_or_string() = default;
+    nullable_boolean_or_string(js_boolean_t value)
+        : tag(kind::boolean), boolean(static_cast<bool>(value)) {}
+    nullable_boolean_or_string(const nullable_string & value) : text(value.value) {
+        switch (value.tag) {
+        case nullable_string::kind::undefined: tag = kind::undefined; return;
+        case nullable_string::kind::null_value: tag = kind::null; return;
+        case nullable_string::kind::string: tag = kind::string; return;
+        }
+        std::terminate();
+    }
+};
 
 /// SameValueZero key equality: NaN equals NaN, and 0 equals -0.
 template <class K> bool map_key_equal(const K & a, const K & b) {
@@ -849,18 +906,33 @@ inline bool map_key_equal(nullable_scalar a, nullable_scalar b) {
     return a.tag == nullable_scalar::kind::undefined || a.tag == nullable_scalar::kind::null ||
            map_key_equal(a.value, b.value);
 }
-template <class... T>
-bool map_key_equal(const std::variant<T...> & a, const std::variant<T...> & b) {
-    return std::visit(
-        [](const auto & left, const auto & right) {
-            if constexpr (std::is_same_v<std::decay_t<decltype(left)>,
-                                         std::decay_t<decltype(right)>>) {
-                return map_key_equal(left, right);
-            } else {
-                return false;
-            }
-        },
-        a, b);
+inline bool map_key_equal(const boolean_or_number & a, const boolean_or_number & b) {
+    return a.tag == b.tag && map_key_equal(a.value, b.value);
+}
+inline bool map_key_equal(const boolean_or_string & a, const boolean_or_string & b) {
+    if (a.tag != b.tag) { return false; }
+    switch (a.tag) {
+    case boolean_or_string::kind::boolean: return a.boolean == b.boolean;
+    case boolean_or_string::kind::string: return a.text == b.text;
+    }
+    std::terminate();
+}
+inline bool map_key_equal(const nullable_boolean_or_string & a,
+                          const nullable_boolean_or_string & b) {
+    if (a.tag != b.tag) { return false; }
+    switch (a.tag) {
+    case nullable_boolean_or_string::kind::undefined:
+    case nullable_boolean_or_string::kind::null: return true;
+    case nullable_boolean_or_string::kind::boolean: return a.boolean == b.boolean;
+    case nullable_boolean_or_string::kind::string: return a.text == b.text;
+    }
+    std::terminate();
+}
+/// A Number-or-object key: the same object, or Numbers equal under
+/// SameValueZero.
+inline bool map_key_equal(const object_value & a, const object_value & b) {
+    if (a.object || b.object) { return a.object == b.object; }
+    return map_key_equal(a.scalar, b.scalar);
 }
 /// Map storage that keeps insertion order, used when a snapshot can observe it.
 template <class K, class V> struct ordered_map_storage {
@@ -912,19 +984,41 @@ template <> struct map_key_less<nullable_scalar> {
                map_key_less<double>{}(a.value, b.value);
     }
 };
-template <class... T> struct map_key_less<std::variant<T...>> {
-    bool operator()(const std::variant<T...> & a, const std::variant<T...> & b) const {
-        if (a.index() != b.index()) { return a.index() < b.index(); }
-        return std::visit(
-            [](const auto & left, const auto & right) {
-                using L = std::decay_t<decltype(left)>;
-                if constexpr (std::is_same_v<L, std::decay_t<decltype(right)>>) {
-                    return map_key_less<L>{}(left, right);
-                } else {
-                    return false;
-                }
-            },
-            a, b);
+template <> struct map_key_less<boolean_or_number> {
+    bool operator()(const boolean_or_number & a, const boolean_or_number & b) const {
+        if (a.tag != b.tag) { return a.tag < b.tag; }
+        return map_key_less<double>{}(a.value, b.value);
+    }
+};
+template <> struct map_key_less<boolean_or_string> {
+    bool operator()(const boolean_or_string & a, const boolean_or_string & b) const {
+        if (a.tag != b.tag) { return a.tag < b.tag; }
+        switch (a.tag) {
+        case boolean_or_string::kind::boolean: return !a.boolean && b.boolean;
+        case boolean_or_string::kind::string: return a.text < b.text;
+        }
+        std::terminate();
+    }
+};
+template <> struct map_key_less<nullable_boolean_or_string> {
+    bool operator()(const nullable_boolean_or_string & a,
+                    const nullable_boolean_or_string & b) const {
+        if (a.tag != b.tag) { return a.tag < b.tag; }
+        switch (a.tag) {
+        case nullable_boolean_or_string::kind::undefined:
+        case nullable_boolean_or_string::kind::null: return false;
+        case nullable_boolean_or_string::kind::boolean: return !a.boolean && b.boolean;
+        case nullable_boolean_or_string::kind::string: return a.text < b.text;
+        }
+        std::terminate();
+    }
+};
+/// Numbers sort before objects, and objects by address.
+template <> struct map_key_less<object_value> {
+    bool operator()(const object_value & a, const object_value & b) const {
+        if (a.object && b.object) { return std::less<>{}(a.object.get(), b.object.get()); }
+        if (a.object || b.object) { return !a.object; }
+        return map_key_less<nullable_scalar>{}(a.scalar, b.scalar);
     }
 };
 #ifdef CTNATIVE_ORDERED_MAPS
@@ -975,27 +1069,6 @@ template <class Map, class K> const auto & present_entry(const Map & map, const 
 template <class Map, class K> auto map_get_present(const Map & map, const K & key) {
     return present_entry(map, key);
 }
-/// The alternative T of a present key's variant payload; the compiler picks T
-/// only from a proof of that exact payload, and the call terminates otherwise.
-/// Returns by value so an owned string survives overwrite, deletion and the
-/// Map's lifetime.
-template <class T, class K, class... V>
-T map_get_present_as(map_storage<K, std::variant<V...>> * map, const K & key) {
-    return std::visit(
-        [](const auto & value) -> T {
-            if constexpr (std::is_same_v<T, std::decay_t<decltype(value)>>) {
-                return value;
-            } else {
-                std::terminate();
-            }
-        },
-        present_entry(map, key));
-}
-template <class T, class K, class... V>
-T map_get_present_as(const std::shared_ptr<map_storage<K, std::variant<V...>>> & map,
-                     const K & key) {
-    return map_get_present_as<T>(map.get(), key);
-}
 /// Keys are normalized like ECMA-262 CanonicalizeKeyedCollectionKey (-0
 /// becomes +0); payloads keep their sign.
 template <class K> const K & map_normalize_key(const K & key) {
@@ -1008,9 +1081,14 @@ inline nullable_scalar map_normalize_key(nullable_scalar key) {
     if (key.tag == nullable_scalar::kind::number) { key.value = map_normalize_key(key.value); }
     return key;
 }
-template <class... T> std::variant<T...> map_normalize_key(const std::variant<T...> & key) {
-    return std::visit(
-        [](const auto & value) -> std::variant<T...> { return map_normalize_key(value); }, key);
+inline boolean_or_number map_normalize_key(boolean_or_number key) {
+    // A Boolean is 0 or 1, which normalizing leaves alone.
+    key.value = map_normalize_key(key.value);
+    return key;
+}
+inline object_value map_normalize_key(object_value key) {
+    key.scalar = map_normalize_key(key.scalar);
+    return key;
 }
 template <class Map, class K, class V>
 Map map_set(const Map & map, const K & key, const V & value) {
@@ -1048,28 +1126,61 @@ template <class T> T map_nullable_payload_as(nullable_scalar value) {
         std::terminate();
     }
 }
+/// The Boolean a payload holds, or its undefined, null or String as T
+/// (nullable_string, or std::string for a String). Terminates when T is not
+/// what the payload holds.
+template <class T> T map_nullable_payload_as(const nullable_boolean_or_string & value) {
+    using kind = nullable_boolean_or_string::kind;
+    nullable_string text;
+    switch (value.tag) {
+    case kind::boolean:
+        if constexpr (std::is_same_v<T, js_boolean_t>) { return js_boolean_t{value.boolean}; }
+        std::terminate();
+    case kind::undefined: break;
+    case kind::null: text.tag = nullable_string::kind::null_value; break;
+    case kind::string: text = nullable_string{value.text}; break;
+    }
+    return map_nullable_payload_as<T>(text);
+}
+/// The Boolean or the Number a payload holds, as T. Terminates when T is not
+/// what the payload holds.
+template <class T> T map_payload_as(const boolean_or_number & value) {
+    if constexpr (std::is_same_v<T, js_boolean_t>) {
+        if (value.tag == boolean_or_number::kind::boolean) {
+            return js_boolean_t{value.value != 0.0};
+        }
+    } else if constexpr (std::is_same_v<T, double>) {
+        if (value.tag == boolean_or_number::kind::number) { return value.value; }
+    }
+    std::terminate();
+}
+/// The Boolean or the String a payload holds, as T. Terminates when T is not
+/// what the payload holds.
+template <class T> T map_payload_as(const boolean_or_string & value) {
+    if constexpr (std::is_same_v<T, js_boolean_t>) {
+        if (value.tag == boolean_or_string::kind::boolean) { return js_boolean_t{value.boolean}; }
+    } else if constexpr (std::is_same_v<T, std::string>) {
+        if (value.tag == boolean_or_string::kind::string) { return value.text; }
+    }
+    std::terminate();
+}
+/// The alternative T of a present key's Boolean-or-Number or Boolean-or-String
+/// payload; the compiler picks T only from a proof of that exact payload, and
+/// the call terminates otherwise. Returns by value so an owned string survives
+/// overwrite, deletion and the Map's lifetime.
+template <class T, class K, class V> T map_get_present_as(map_storage<K, V> * map, const K & key) {
+    return map_payload_as<T>(present_entry(map, key));
+}
+template <class T, class K, class V>
+T map_get_present_as(const std::shared_ptr<map_storage<K, V>> & map, const K & key) {
+    return map_get_present_as<T>(map.get(), key);
+}
 /// Like map_get_present_as for nullable payloads: the compiler supplies T only
 /// from a separate proof about this payload; the storage schema alone never
 /// selects a narrower alternative.
 template <class T, class K, class V>
 T map_get_present_nullable_as(map_storage<K, V> * map, const K & key) {
-    const V & payload = present_entry(map, key);
-    if constexpr (detail::one_of<V, nullable_string, nullable_scalar>) {
-        return map_nullable_payload_as<T>(payload);
-    } else {
-        return std::visit(
-            [](const auto & value) -> T {
-                using Actual = std::decay_t<decltype(value)>;
-                if constexpr (std::is_same_v<Actual, nullable_string>) {
-                    return map_nullable_payload_as<T>(value);
-                } else if constexpr (std::is_same_v<T, Actual>) {
-                    return value;
-                } else {
-                    std::terminate();
-                }
-            },
-            payload);
-    }
+    return map_nullable_payload_as<T>(present_entry(map, key));
 }
 template <class T, class K, class V>
 T map_get_present_nullable_as(const std::shared_ptr<map_storage<K, V>> & map, const K & key) {
