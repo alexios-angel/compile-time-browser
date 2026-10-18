@@ -346,7 +346,7 @@ std::string dictionarySpelling(mlir::Type type);
 /// spelling for a table of tables.
 std::string dictionaryValueSpelling(DictType type);
 /// The C++ type that holds a value of `type` (carrierType), with a table's
-/// full spelling, which its carrier alone does not give.
+/// or a Map's full spelling, which its carrier alone does not give.
 mlir::Type valueCarrierType(mlir::MLIRContext * context, mlir::Type type);
 /// Whether an emitted type is a table's std::shared_ptr.
 bool isDictionaryCarrier(mlir::Type type);

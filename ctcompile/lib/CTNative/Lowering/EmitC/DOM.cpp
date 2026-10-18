@@ -631,27 +631,8 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     }
     if (unary && unary.getKind() == ctjs::UnaryKind::TypeOf &&
         unary.getOperand().getType() == carrierType(context, carrier::json)) {
-        const auto stringType = carrierType(context, carrier::string);
-        const auto dataType = ec::OpaqueType::get(context, "decltype(ctbrowser::json_value::data)");
-        // The member access is emitted inside the expression, so it names the
-        // original tree's field without a copy.
-        auto data = ec::MemberOp::create(at, where, dataType, "data", unary.getOperand());
-        auto expression =
-            ec::ExpressionOp::create(at, where, stringType, mlir::ValueRange{data}, false);
-        expression.createBody();
-        mlir::OpBuilder inside = mlir::OpBuilder::atBlockBegin(&expression.getRegion().front());
-        mlir::Value result = stringConstant(inside, where, "object");
-        // Null, array and object alternatives share JavaScript's object tag.
-        for (auto [type, tag] :
-             {std::pair{"bool", "boolean"}, {"double", "number"}, {"std::string", "string"}}) {
-            auto holds = callValue(inside, where, inside.getI1Type(),
-                                   std::string("std::holds_alternative<") + type + ">",
-                                   expression.getRegion().front().getArgument(0));
-            result = ec::ConditionalOp::create(inside, where, stringType, holds,
-                                               stringConstant(inside, where, tag), result);
-        }
-        ec::YieldOp::create(inside, where, result);
-        swap(expression.getResult());
+        swap(callValue(at, where, carrierType(context, carrier::string), "ctnative::json_typeof",
+                       unary.getOperand()));
         return true;
     }
     if (unary && unary.getKind() == ctjs::UnaryKind::TypeOf &&
