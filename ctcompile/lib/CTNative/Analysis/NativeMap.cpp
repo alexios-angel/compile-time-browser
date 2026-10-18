@@ -666,9 +666,30 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans,
             }
         }
     }
+    // Every read of a run-once static holding a Map is the one instance its
+    // write stored (connectRunOnceStatics): Data's methods read `elements`
+    // afresh for each call, and a `has` on one read proves the `get` on the
+    // next.
+    llvm::DenseMap<mlir::Attribute, mlir::Value> storedIn;
+    for (mlir::Operation * write : graph.staticWrites) {
+        auto store = llvm::cast<ctjs::CellSetOp>(write);
+        if (auto cell = store.getCell().getDefiningOp<ctjs::CreateCellOp>()) {
+            storedIn[cell->getAttr(kNativeStaticCell)] = store.getValue();
+        }
+    }
+    llvm::DenseMap<mlir::Value, mlir::Value> staticOrigins;
+    for (mlir::Value read : graph.staticReads) {
+        auto get = read.getDefiningOp<ctjs::CellGetOp>();
+        auto cell = get ? get.getCell().getDefiningOp<ctjs::CreateCellOp>() : ctjs::CreateCellOp{};
+        if (!cell) { continue; }
+        if (const mlir::Value stored = storedIn.lookup(cell->getAttr(kNativeStaticCell))) {
+            staticOrigins[read] = stored;
+        }
+    }
     return map_detail::provePresence(
         module, calls, sizes, reads, optionalReads, typedReads, snapshotCopies,
-        [&](mlir::Value value) { return graph.find(value); }, parameters, globals, hostTyped);
+        [&](mlir::Value value) { return graph.find(value); }, parameters, globals, hostTyped,
+        &staticOrigins);
 }
 
 } // namespace
