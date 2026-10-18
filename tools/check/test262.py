@@ -480,86 +480,15 @@ def write_expectations(rows):
     print(f"wrote {EXPECTATIONS.relative_to(ROOT)}: {kept} of {len(rows)} tests are not passing")
 
 
-# --- the harness's own test ----------------------------------------------
-#
-# Each entry is a way this runner could misreport, written down as a test it
-# must classify correctly. A harness that reports PASS for everything looks like
-# a conforming engine from its output alone, so each fixture below is a planted
-# answer with the classification it must get, and `--self-test` asserts them.
-#
-# The ones that matter most are `must-fail` (a false assertion must be reported
-# as FAIL, not CRASH or PASS) and the `negative-*` fixtures, the only proof that
-# `negative:` is scored on both the phase and the error type rather than on
-# "something was thrown".
-SELF_TEST = [
-    ("must-pass", PASS, "", "assert.sameValue(1, 1);\n"),
-    ("must-fail", FAIL, "", "assert.sameValue(1, 2);\n"),
-    (
-        "negative-parse-correct",
-        PASS,
-        "negative:\n  phase: parse\n  type: SyntaxError\n",
-        "$DONOTEVALUATE();\nvar a = ;\n",
-    ),
-    (
-        "negative-parse-wrong-type",
-        FAIL,
-        "negative:\n  phase: parse\n  type: TypeError\n",
-        "$DONOTEVALUATE();\nvar a = ;\n",
-    ),
-    (
-        "negative-parse-nothing-thrown",
-        FAIL,
-        "negative:\n  phase: parse\n  type: SyntaxError\n",
-        "var a = 1;\n",
-    ),
-    (
-        "negative-runtime-correct",
-        PASS,
-        "negative:\n  phase: runtime\n  type: Test262Error\n",
-        "throw new Test262Error('planted');\n",
-    ),
-    (
-        "negative-runtime-wrong-phase",
-        FAIL,
-        "negative:\n  phase: runtime\n  type: SyntaxError\n",
-        "var a = ;\n",
-    ),
-    ("async-complete", PASS, "flags: [async]\n", "$DONE();\n"),
-    ("async-silent", FAIL, "flags: [async]\n", "var never = 1;\n"),
-    ("skipped-feature", SKIP, "features: [cross-realm]\n", "$262.createRealm();\n"),
-    ("timeout", TIMEOUT, "", "while (true) { }\n"),
-]
-
-
 def self_test(args):
-    """Run the planted SELF_TEST fixtures; return 1 if any is misclassified."""
-    import tempfile
+    """Run the planted answers in test_test262.py; return 1 if any is misclassified."""
+    import selftest
 
-    with tempfile.TemporaryDirectory(prefix="ct262-selftest-") as scratch:
-        root = Path(scratch)
-        planted = []
-        for name, want, meta, body in SELF_TEST:
-            path = root / f"{name}.js"
-            path.write_text(f"/*---\ndescription: planted\n{meta}---*/\n{body}")
-            planted.append((Test(path, root), want))
-        # A 3-second cap: one fixture is an infinite loop, and the point is only
-        # to prove that the timeout fires. Waiting the default 10 seconds would
-        # waste time.
-        args.timeout = min(args.timeout, 3.0)
-        wrong = 0
-        for test, want in planted:
-            got = run_test(test, args)
-            mark = "ok  " if got["status"] == want else "WRONG"
-            if got["status"] != want:
-                wrong += 1
-            print(
-                f"{mark} {test.rel:34s} want {want:7s} got {got['status']:7s} "
-                f"{(got['cause'] or '')[:60]}"
-            )
-        print(f"\n{len(planted) - wrong}/{len(planted)} planted answers classified correctly")
-        if wrong:
-            print("test262 self-test FAILED: the runner does not classify what it is told to")
-        return 1 if wrong else 0
+    # A 3-second cap: one fixture is an infinite loop, and the point is only
+    # to prove that the timeout fires. Waiting the default 10 seconds would
+    # waste time.
+    args.timeout = min(args.timeout, 3.0)
+    return selftest.run(__file__, args)
 
 
 def main():

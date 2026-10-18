@@ -26,6 +26,11 @@ ctcompile_target(ctcompile-test-native-reference)
 # ctbrowser for its DOM section.
 ctcompile_unit_test(native-runtime LIBS ctbrowser::ctbrowser)
 
+# The tagged structs a Map stores a key or payload of two kinds in
+# (ctnative.hpp), in both storage layouts. Its source is added by
+# Runtime/CMakeLists.txt.
+ctcompile_unit_test(native-maps LIBS ctbrowser::ctbrowser)
+
 # ctnative::function_ref (CTNative/Runtime/Callable.hpp), the parameter type of
 # a borrowed callback. Header-only and library-free; its source is added by
 # Runtime/CMakeLists.txt.

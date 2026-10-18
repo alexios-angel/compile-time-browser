@@ -11,4 +11,4 @@
 # RUN: %nm -C %{obj}/ctcompile-test-element_arrays-native-gcc | not grep -E "ctbrowser::script::"
 # CHECK: {{^}}a,c,d,tail,4|a,b2,c,d|3|some|every|a|4{{$}}
 # The for-of's element once the array is exhausted is the unbound view.
-# SPELLING: ctnative::js_element_t{}
+# SPELLING: ctnative::js_element_t::unbound()

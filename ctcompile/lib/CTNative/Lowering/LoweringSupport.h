@@ -134,8 +134,7 @@ inline constexpr llvm::StringLiteral kSymbolType = "ctnative::js_symbol_t";
 inline constexpr llvm::StringLiteral kBooleanStringType = "ctnative::boolean_string";
 inline constexpr llvm::StringLiteral kNullableBooleanStringType =
     "ctnative::nullable_boolean_string";
-inline constexpr llvm::StringLiteral kBooleanStringMapType =
-    "std::variant<ctnative::js_boolean_t, std::string>";
+inline constexpr llvm::StringLiteral kBooleanStringMapType = "ctnative::boolean_or_string";
 inline constexpr llvm::StringLiteral kNumberStringType = "ctnative::number_string";
 inline constexpr llvm::StringLiteral kNullableNumberStringType = "ctnative::nullable_number_string";
 inline constexpr llvm::StringLiteral kNullableStringType = "ctnative::nullable_string";
@@ -409,5 +408,13 @@ bool domBookkeeping(const DOMEntryAnalysis & entry, mlir::Operation * op);
 /// narrower result never selects storage shared by other allocations.
 llvm::StringMap<mlir::Type> identityFieldStoreTypes(mlir::DataFlowSolver & solver,
                                                     llvm::ArrayRef<ctjs::FuncOp> functions);
+
+/// Copies each private function called directly with arguments of different
+/// exact types, where its parameter would need a std::variant carrier or has
+/// none, once per type, and sends each call to the copy for its argument's
+/// type (ArgumentTypeCopies.cpp). Skips a function `keepsOriginal` names.
+/// Records each copy in ctnative.copies; true when it made one.
+bool copyPerArgumentType(mlir::ModuleOp module,
+                         llvm::function_ref<bool(ctjs::FuncOp)> keepsOriginal);
 
 } // namespace ctcompile::ctnative::lowering_detail

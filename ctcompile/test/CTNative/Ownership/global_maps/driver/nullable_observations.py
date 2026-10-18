@@ -202,7 +202,7 @@ def nullable_foreign_lifetime_cpp(cpp):
 int main() {
     using Key = ctnative::nullable_string;
     using Result = ctnative::nullable_scalar;
-    using Map = ctnative::map_storage<Key, std::variant<ctnative::js_boolean_t, Key>>;
+    using Map = ctnative::map_storage<Key, ctnative::nullable_boolean_or_string>;
     const auto undefined = [](Result result) { return result.tag == Result::kind::undefined; };
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 4) { return 285; }
     auto owner = g_host;
@@ -225,7 +225,7 @@ int main() {
     for (const auto & key : {null_key, Key{}, Key{std::string{}},
                             Key{std::string{"null"}}, Key{std::string{"undefined"}}}) {
         if (!undefined(set(key))) { return 288; }
-        const auto stored = std::get<Key>(state->at(key));
+        const auto stored = ctnative::map_nullable_payload_as<Key>(state->at(key));
         if (stored.tag != key.tag || stored.value != key.value) { return 289; }
     }
     if (size().value() != 6) { return 290; }
@@ -237,7 +237,7 @@ int main() {
         const auto saved = set(key);
         key.value.assign(text.size(), 'x');
         if (!undefined(saved) || !undefined(set(ctnative::to_nullable_string(saved))) ||
-            size().value() != before + 1 || std::get<Key>(state->at(Key{text})).value != text ||
+            size().value() != before + 1 || ctnative::map_nullable_payload_as<Key>(state->at(Key{text})).value != text ||
             get(ctnative::js_boolean_t{false}).value != "future" || get(ctnative::js_boolean_t{true}).tag != Key::kind::null_value ||
             ctn_test_maps.size() != allocations + 2 || !ctn_test_maps.back().expired()) {
             return 291;

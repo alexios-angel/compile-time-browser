@@ -359,19 +359,10 @@ def render(report, inputs, only):
 
 
 def self_test():
-    """Check new/resolved detection and function location on a tiny merge."""
-    base = "int a;\nint b;\nint c;\nint d;\n"
-    upstream = "int a;\nint B;\nint c;\nint d;\n"
-    baseline = "int a;\nint b;\nint c;\nint d2;\n"
-    candidate = "Emitter::Emitter(int x) {\nint a;\nint b2;\nint c;\nint d2;\n"
-    report = analyse(candidate, baseline, base, upstream, 12)
-    assert report["candidate_conflicts"] == 1, report
-    assert report["baseline_conflicts"] == 0, report
-    conflict = report["conflicts"][0]
-    assert conflict["status"] == "new" and report["new"] == [1], conflict
-    assert conflict["fork_line"] == 3 and conflict["function"] == "Emitter::Emitter", conflict
-    assert analyse(baseline, candidate, base, upstream, 12)["resolved"], "resolution missed"
-    print("self-test passed")
+    """Run the checks in test_check_emitter_merge.py; return the exit status."""
+    import selftest
+
+    return selftest.run(__file__)
 
 
 def main():
@@ -390,8 +381,7 @@ def main():
     parser.add_argument("--self-test", action="store_true", help="check the analysis and exit")
     args = parser.parse_args()
     if args.self_test:
-        self_test()
-        return 0
+        return self_test()
     try:
         candidate = fork_text(args.candidate)
         facts = header_facts(candidate)
