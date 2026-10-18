@@ -194,6 +194,54 @@ def test_opt_out_without_ctest_is_refused():
     assert skip[0]["status"] == "FAIL" and "opt-out" in skip[0]["summary"], skip
 
 
+def test_join_refuses_hoisted_probe_declaration():
+    # The probe declares a top-level function the library mentions: joined, it
+    # hoists above the library, so the join is refused.
+    library = "later();\nvar untouched = 1;\n"
+    probe = "function later() { return 1; }\nlater();\n"
+    problem = workload.join_problem(library, probe)
+    assert problem and "later" in problem and "hoist" in problem
+
+
+def test_join_refuses_strictness_mismatch():
+    # Only the library says "use strict": one joined script would keep the
+    # library's prologue and make the probe strict too.
+    library = '"use strict";\nvar a = 1;\n'
+    probe = "var b = 2;\n"
+    problem = workload.join_problem(library, probe)
+    assert problem and "directive" in problem and "use strict" in problem
+
+
+def test_join_allows_matching_strictness():
+    library = '"use strict";\nvar a = 1;\n'
+    probe = '"use strict";\nvar b = 2;\n'
+    assert workload.join_problem(library, probe) is None
+
+
+def test_join_allows_the_bootstrap_probe():
+    # The Bootstrap bundle has no directive prologue and never mentions the
+    # probe's bootstrap_probe_* functions, so its join stays allowed.
+    root = Path(__file__).resolve().parents[2]
+    library = (root / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js").read_text()
+    probe = (root / "tools/check/workloads/bootstrap-probe.js").read_text()
+    assert workload.join_problem(library, probe) is None
+
+
+def test_join_ignores_declarations_inside_blocks():
+    # A declaration inside a block or a function body does not hoist into a
+    # joined program, so it cannot change the library.
+    library = "later();\n"
+    probe = "if (true) { function later() { return 1; } }\n"
+    assert workload.join_problem(library, probe) is None
+
+
+def test_join_ignores_names_only_in_strings_or_comments():
+    # A mention inside a string or a comment is not a use of the name.
+    library = 'var s = "later"; // later();\n'
+    probe = "function later() { return 1; }\n"
+    assert workload.join_problem(library, probe) is None
+
+
 def test_missing_capability_is_first_gap():
     gap = planted().results["gap"]
     assert gap["verdict"] == "NOT DONE" and gap["first_gap"]["status"] == "MISSING", gap

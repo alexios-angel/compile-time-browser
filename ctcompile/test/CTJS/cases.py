@@ -95,6 +95,14 @@ CASES = {
         "sed 's|// escape: ||' %t/methods.js > %t/escape.js",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/escape.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=ESCAPE",
     ],
+    "Transforms/closure-values-frames": [
+        "split-file %s %t",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/frames.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s",
+        "sed 's|// open: ||' %t/frames.js > %t/open.js",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/open.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=OPEN",
+        "sed 's|return \\[s\\];|last = s; return [last];|' %t/frames.js > %t/shared.js",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/shared.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=SHARED",
+    ],
     "Transforms/resolve-globals": [
         "split-file %s %t",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/closed.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=CLOSED",
