@@ -11,6 +11,7 @@
 #include "ctcompile/CTJS/IR/CTJSAttrs.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "ctcompile/CTJS/Lowering/NativeRealm.h"
 #include "ctcompile/CTJS/Transforms/Passes.h"
 
 #include "mlir/IR/Builders.h"
@@ -219,11 +220,12 @@ static bool realm_function_member(llvm::StringRef key) {
     return members.contains(key);
 }
 
-/// The program can add a property to `Function` only by writing through it,
-/// which clause 5 already refuses as an escape, or through Object.prototype
-/// or Function.prototype, which `Function` inherits from. So this reads, with
-/// constant keys only:
-///   - every path that may yield one of those two tables: `prototype` off
+/// The program can add a property to `Function` or to the global object only
+/// by writing through it, which clause 5 refuses or counts as a binding, or
+/// through a prototype table the realm made, which it inherits from
+/// (Function.prototype, Object.prototype, Window.prototype, ...). So this
+/// reads, with constant keys only:
+///   - every path that may yield such a table: `prototype` off
 ///     anything but a function made here (whose own table it is), and
 ///     `__proto__`, may be read through and nothing else; a prototype link
 ///     (ctjs.get_proto, as `super` compiles) the same; `getPrototypeOf` and
@@ -237,8 +239,8 @@ static bool realm_function_member(llvm::StringRef key) {
 /// A key computed at run time is not seen. A table reached through one and
 /// written through one is the hole the `.constructor` marking above has too,
 /// since it follows only a constant `constructor` read.
-compiler_keys read_compiler_keys(mlir::ModuleOp module) {
-    compiler_keys keys;
+prototype_writes read_prototype_writes(mlir::ModuleOp module) {
+    prototype_writes keys;
     // Through the block arguments the importer's register file uses, as
     // a literal spread into across conditional parts travels.
     const auto made_here = [](mlir::Value object) {
@@ -303,9 +305,15 @@ compiler_keys read_compiler_keys(mlir::ModuleOp module) {
     return keys;
 }
 
-bool compiler_lacks(const compiler_keys & keys, llvm::StringRef key) {
-    return !key.empty() && !realm_function_member(key) && keys.prototypes.empty() &&
-           keys.any_key.empty() && !keys.written.contains(key);
+bool compiler_lacks(const prototype_writes & writes, llvm::StringRef key) {
+    return !key.empty() && !realm_function_member(key) && writes.prototypes.empty() &&
+           writes.any_key.empty() && !writes.written.contains(key);
+}
+
+bool global_object_lacks(const prototype_writes & writes, llvm::StringRef key) {
+    const bool absent = !nativeRealmProvides(key) && !realm_function_member(key);
+    return !key.empty() && (absent || key == "toString") && writes.prototypes.empty() &&
+           writes.any_key.empty() && !writes.written.contains(key);
 }
 
 /// Reads the module's `ctjs.skipped` rows: functions the importer did not

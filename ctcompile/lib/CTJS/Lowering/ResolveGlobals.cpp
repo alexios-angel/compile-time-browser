@@ -860,8 +860,8 @@ std::optional<std::string> dynamic_global_writes(
     // may_be_function() is asked once per `.constructor` read.
     const bool super_is_open = prototype_replaced(module);
     // Asked once per call of a method read off a value that may be the
-    // compiler (`this.constructor.eventName(t)`).
-    const compiler_keys compiler = read_compiler_keys(module);
+    // compiler (`this.constructor.eventName(t)`) or the global object.
+    const prototype_writes writes = read_prototype_writes(module);
     llvm::DenseMap<mlir::Value, watched> marked;
     llvm::SmallVector<mlir::Value> work;
     llvm::DenseMap<mlir::Operation *, bool> raw_arguments;
@@ -1093,8 +1093,11 @@ std::optional<std::string> dynamic_global_writes(
                 // (`window.getComputedStyle(el)`): the global object, or
                 // something that is not it, in which case `this` is not the
                 // global object either. A method on the inert list leaves the
-                // globals table alone, unless the program has rebound that
-                // name (checked once the walk ends, against every binding).
+                // globals table alone, and so does one the window does not
+                // have (`node.getBoundingClientRect()` on a node that may be
+                // the window), whose read answers nothing callable, unless the
+                // program has rebound that name (checked once the walk ends,
+                // against every binding).
                 if (use.getOperandNumber() == 1) {
                     auto read = originOp<GetPropertyOp>(call.getCallee());
                     const llvm::StringRef key = read ? constantKey(read.getKey()) : "";
@@ -1103,7 +1106,7 @@ std::optional<std::string> dynamic_global_writes(
                         read && (read.getObject() == call.getReceiver() ||
                                  (receiver && registerFlowOrigin(read.getObject()) == receiver));
                     if (kind != watched::compiler && readOffReceiver &&
-                        nativeHostMethodKeepsGlobals(key)) {
+                        (nativeHostMethodKeepsGlobals(key) || global_object_lacks(writes, key))) {
                         inert.push_back({mlir::StringAttr::get(module.getContext(), key), op});
                         continue;
                     }
@@ -1114,7 +1117,7 @@ std::optional<std::string> dynamic_global_writes(
                     // code; if it is not, it is not the compiler. Either way it
                     // reaches no code as the compiler.
                     if (kind == watched::compiler && readOffReceiver &&
-                        compiler_lacks(compiler, key)) {
+                        compiler_lacks(writes, key)) {
                         continue;
                     }
                 }

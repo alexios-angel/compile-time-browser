@@ -57,6 +57,9 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ctor-static-polluted.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=STATICPOLLUTED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ctor-static-realm.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=STATICREALM
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ctor-static-written.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=STATICWRITTEN
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/window-lacks.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=WINLACKS
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/window-lacks-bound.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=WINLACKSBOUND
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/window-lacks-polluted.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=WINLACKSPOLLUTED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/window-read.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=WINREAD
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/window-alias.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=WINALIAS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-read.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERREAD
@@ -399,6 +402,35 @@
 // STATICWRITTEN-NOT: call_direct
 // STATICWRITTEN: ctjs.globals = [
 // STATICWRITTEN-SAME: reason = "a value that may be the run-time compiler escapes into a call whose callee this module does not name{{[^"]*}}"
+
+// --- Positive: a method the window does not have, called on a value that may be it -
+//
+// Popper calls getBoundingClientRect, contains and the like on a node that
+// may be the window. On the window the read answers nothing callable (no
+// such property, or a named element), so the call throws and runs no code;
+// on anything else the receiver is not the window. Object.prototype's
+// toString, which answers "[object Window]", runs no code either.
+//
+// WINLACKS: ctjs.globals = [
+// WINLACKS-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
+// WINLACKS: ctjs.call_direct @add$1
+
+// --- Negative: unless the program binds a global of that name ----------------------
+//
+// Then `window.getRootNode` is this function, run with `this` = the window,
+// and its write binds a global.
+//
+// WINLACKSBOUND-NOT: call_direct @add
+// WINLACKSBOUND: ctjs.globals = [
+// WINLACKSBOUND-SAME: reason = "the global object is the receiver of `getRootNode`, which this program rebinds{{[^"]*}}"
+
+// --- Negative: or puts it on a prototype the window inherits -----------------------
+//
+// `window.contains` is then this function, through Object.prototype.
+//
+// WINLACKSPOLLUTED-NOT: call_direct @add
+// WINLACKSPOLLUTED: ctjs.globals = [
+// WINLACKSPOLLUTED-SAME: reason = "the global object escapes into a call whose callee this module does not name{{[^"]*}}"
 
 // --- Positive: a named read off the global object ----------------------------------
 //
@@ -890,6 +922,25 @@ function put(t, f) { t.eventName = f; }
 put({}, function () { return 1; });
 function grab(o) { return o.constructor.eventName("show"); }
 var g = grab(function () {});
+var z = add(1, 2);
+
+//--- window-lacks.js
+function add(a, b) { return a + b; }
+// Each call throws on the window, which is the point: it runs no code there.
+(function (g) { return g.getBoundingClientRect(); })(globalThis);
+(function (g) { return g.toString(); })(globalThis);
+var z = add(1, 2);
+
+//--- window-lacks-bound.js
+function add(a, b) { return a + b; }
+function getRootNode() { this.injected = 1; }
+(function (g) { return g.getRootNode(); })(globalThis);
+var z = add(1, 2);
+
+//--- window-lacks-polluted.js
+function add(a, b) { return a + b; }
+Object.assign(Object.prototype, { contains: function () { this.injected = 1; return true; } });
+(function (g) { return g.contains(1); })(globalThis);
 var z = add(1, 2);
 
 //--- enter-read.js
