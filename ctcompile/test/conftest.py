@@ -20,8 +20,10 @@ its case with `_` read as `-` (lit case names use hyphens, modules
 underscores): `test_reads` in Provider/reads.py is `ctcompile ::
 CTNative/HostContract/Provider/reads.test`, and `test_button_probe` is
 `.../button-probe.test`. A test parametrized over cases uses the parameter id
-as the case instead. The suffix is `.mlir` when that file exists, `.test`
-otherwise. `--lit-filter REGEX` keeps only the tests whose name it matches, so the
+as the case instead, as written: it is the case's own path, which may have
+underscores (Target/Cpp/upstream/arithmetic_operators.mlir). The suffix is
+`.mlir` when that file exists, `.test` otherwise. `--lit-filter REGEX` keeps
+only the tests whose name it matches, so the
 `--filter` that tools/check/round-checks.py prints selects the same cases in
 both runners. Each test may run for an hour, as each lit case may
 (lit.cfg.py); pytest-timeout enforces it, and a run without that plugin stops
@@ -117,8 +119,8 @@ def pytest_pycollect_makemodule(module_path, parent):
 
 def lit_name(item):
     callspec = getattr(item, "callspec", None)
-    case = callspec.id if callspec else item.originalname.removeprefix("test_")
-    stem = (item.path.parent / case.replace("_", "-")).relative_to(HERE).as_posix()
+    case = callspec.id if callspec else item.originalname.removeprefix("test_").replace("_", "-")
+    stem = (item.path.parent / case).relative_to(HERE).as_posix()
     # .mlir when that file exists; .test otherwise, which also names the case
     # once its .test file has been deleted. Appended, not with_suffix: some
     # stems have dots (CTNative/Fixtures/ControlFlow/functions.emitc.mlir).
@@ -183,6 +185,10 @@ def lit_site(pytestconfig):
     obj = exec_root if current else os.path.join(exec_root, STALE_OBJ)
     checks = HERE / "CTNative" / "Checks"
     runtime = f"-I {c.ctcompile_src_root}/include -I {c.ctbrowser_include}"
+    # As lit.cfg.py's engine_include: %cxx and %cxx_exe also search Boost's
+    # include directories (Boost::headers, written to lit.site.cfg.py as
+    # boost_include), as system headers.
+    boost = "".join(f" -isystem {path}" for path in c.boost_include.split(";") if path)
     strict = "-Wall -Wextra -Werror -Wconversion -pedantic"
     substitutions = {
         "%compilation_unit": f"python3 {checks}/compilation-unit.py --translate ctjs-translate"
@@ -194,8 +200,8 @@ def lit_site(pytestconfig):
         f" --cxx {c.host_cxx}",
         "%dom_driver": "--translate ctjs-translate --opt ctjs-opt --clang %dom_clang --build %build"
         " --include %{monorepo}/ctbrowser/include --work %t --nm %nm",
-        "%cxx_exe": f"{c.host_cxx} -std=c++23 {runtime}",
-        "%cxx": f"{c.host_cxx} -std=c++23 -fsyntax-only {runtime}",
+        "%cxx_exe": f"{c.host_cxx} -std=c++23 {runtime}{boost}",
+        "%cxx": f"{c.host_cxx} -std=c++23 -fsyntax-only {runtime}{boost}",
         "%gxx": f"{first_found('g++-13', 'g++')} -std=c++23 {runtime} {strict}",
         "%clangxx": f"{first_found('clang++-18', 'clang++')} -std=c++23 {runtime} {strict}",
         "%node": c.node or shutil.which("node") or "node",

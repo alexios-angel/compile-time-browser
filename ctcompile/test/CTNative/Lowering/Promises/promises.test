@@ -10,8 +10,10 @@
 #
 # The negatives are refused by name: a promise of an object (unproved, and it
 # could have a `then` key) and a resolve function that leaves its executor.
-# Popper's memoised update stops at the escaping-resolve rule: its resolve
-# function is captured by a handler, which therefore cannot lift either.
+# Popper's memoised update lifts its executor's resolve function into the
+# handler that calls it (captured-resolve.test), and stops at the closure
+# make() returns, which the script stores in a global, so the executor and
+# the handler made inside it cannot lift either.
 #
 # RUN: split-file %s %t
 # RUN: %node %t/expected.cjs %t/witness.js sv2r
@@ -27,7 +29,7 @@
 # RUN: FileCheck %s --check-prefix=CHAINED --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/chain.mlir
 # RUN: %compilation_unit --cxx g++ --module %t/chain.mlir --js %t/chain.js --work %t --name chain_gcc --core-build %build
 # RUN: %compilation_unit --cxx %dom_clang --module %t/chain.mlir --js %t/chain.js --work %t --name chain_clang --core-build %build
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/popper.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=POPPER
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/popper.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=POPPER --implicit-check-not="uses its resolve function"
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/object.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=OBJECT
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/escape.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ESCAPE
 
@@ -41,8 +43,9 @@
 # ESCAPE: closure_reason = "the executor of new Promise uses its resolve function other than by calling it with one value
 # CHAINED-DAG: call_opaque "ctnative::Promise.prototype.then.call"{{.*}} -> !emitc.opaque<"ctnative::js_promise<ctnative::js_num>">
 # CHAINED-DAG: ctnative::Promise.resolve
-# POPPER-DAG: closure_reason = "the executor of new Promise uses its resolve function other than by calling it with one value
-# POPPER-DAG: closure_reason = "capture 0 is filled from the enclosing closure, which did not lift: the executor of new Promise uses its resolve function other than by calling it with one value
+# POPPER-DAG: closure_reason = "returned closure escapes or is inspected through `ctjs.store_global`"
+# POPPER-DAG: closure_reason = "capture 0 is filled from the enclosing closure, which did not lift: returned closure escapes or is inspected through `ctjs.store_global`"
+# POPPER-DAG: closure_reason = "capture 0 is filled from the enclosing closure, which did not lift: capture 0 is filled from the enclosing closure, which did not lift: returned closure escapes or is inspected through `ctjs.store_global`"
 
 #--- witness.js
 var log = "";

@@ -1,0 +1,84 @@
+# A function's own object literal is written out the way a parameter is
+# (Lowering/ClosureLifting/SpreadParameters.h): when it keeps the keys it
+# defines before anything reads it, `typeof` of it answers "object" and a
+# spread of it copies those keys. Bootstrap's _mergeConfigObj tests its local
+# jsonConfig this way before spreading it.
+#
+# local.js lowers completely, and GCC, Clang, the interpreter and Node print
+# the same r. In same.js the two arms of a conditional make the local with
+# one shape: its test and spread are written out for that shape, and the
+# function is then refused because two literals reach one variable.
+#
+# RUN: split-file %s %t
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/local.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/local.mlir
+# RUN: ctjs-opt %t/local.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/local.cpp
+# RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/local.mlir
+# RUN: %gxx -O2 %t/local.cpp -o %t/local-gcc && %t/local-gcc | FileCheck %s --check-prefix=LOCAL
+# RUN: %clangxx -O2 %t/local.cpp -o %t/local-clang && %t/local-clang | FileCheck %s --check-prefix=LOCAL
+# RUN: %native_reference %t/local.js | FileCheck %s --check-prefix=LOCAL
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/local.js | FileCheck %s --check-prefix=LOCAL-NODE
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/same.js 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+# RUN:   | FileCheck %s --check-prefix=SAME --implicit-check-not='ctjs.unary typeof' --implicit-check-not=ctjs.copy_props
+#
+# A local the rewrite cannot prove keeps its test and its spread: twoshape.js
+# makes it with two shapes, parsed.js may take it from JSON.parse, and in
+# written.js a key is written after the literal is first read.
+# RUN: for name in twoshape parsed written; do \
+# RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+# RUN:   | FileCheck %s --check-prefix=KEPT; done
+
+# NATIVE: emitc.func @main
+# NATIVE: emitc.func @settings_{{[0-9]+}}
+# LOCAL: r=21
+# LOCAL-NODE: r=21
+# SAME: ctjs.func private @pick${{[0-9]+}}({{.*}}ctnative.not_native = "an object literal that is loop-carried
+# KEPT-DAG: ctjs.unary typeof
+# KEPT-DAG: ctjs.copy_props
+
+#--- local.js
+function settings() {
+    const json = { depth: 2, wide: true };
+    const merged = { depth: 1, ...(typeof json === "object" ? json : {}) };
+    return merged.depth * 10 + (merged.wide ? 1 : 0);
+}
+var r = settings();
+
+#--- same.js
+function pick(flag) {
+    const json = flag ? { depth: 2 } : { depth: 3 };
+    const merged = { depth: 1, ...(typeof json === "object" ? json : {}) };
+    return merged.depth;
+}
+var r = pick(true) + pick(false);
+
+#--- twoshape.js
+function pick(flag) {
+    const json = flag ? { depth: 2 } : { wide: 3 };
+    const merged = { depth: 1, ...(typeof json === "object" ? json : {}) };
+    return merged.depth;
+}
+var r = pick(true) + pick(false);
+
+#--- parsed.js
+function parse(text) {
+    return JSON.parse(text);
+}
+function pick(flag) {
+    const json = flag ? parse("{\"depth\":2}") : {};
+    const merged = { depth: 1, ...(typeof json === "object" ? json : {}) };
+    return merged.depth;
+}
+var r = pick(true) + pick(false);
+
+#--- written.js
+function settings() {
+    const json = { depth: 2 };
+    const kind = typeof json;
+    json.wide = 1;
+    const merged = { depth: 1, ...(kind === "object" ? json : {}) };
+    return merged.depth * 10 + merged.wide;
+}
+var r = settings();

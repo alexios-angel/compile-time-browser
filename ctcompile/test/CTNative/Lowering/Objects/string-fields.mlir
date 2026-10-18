@@ -5,8 +5,12 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/missing.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MISSING --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compatible-literal.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=COMPATIBLE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compatible-readers.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ABSENT --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nullable.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=UNPROVED-GLOBAL
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compatible-functions.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=UNPROVED-GLOBAL
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nullable.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=NULLABLE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nullable.js --mlir-print-debuginfo | ctjs-opt "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ctnative-lower-to-emitc, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))" --mlir-print-debuginfo -o %t/nullable.emitc.mlir
+// RUN: %compilation_unit --module %t/nullable.emitc.mlir --js %t/nullable.js --work %t/nullable-native --name nullable
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compatible-functions.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=COMPATIBLE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compatible-functions.js --mlir-print-debuginfo | ctjs-opt "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ctnative-lower-to-emitc, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))" --mlir-print-debuginfo -o %t/compatible-functions.emitc.mlir
+// RUN: %compilation_unit --module %t/compatible-functions.emitc.mlir --js %t/compatible-functions.js --work %t/compatible-functions-native --name compatible_functions
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed-stores.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=CENSUS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/distinct-objects.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=READ-UNION
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/incompatible-functions.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=FUNCTIONS
@@ -38,8 +42,11 @@
 // FUNCTIONS-SAME: ctnative.not_native = "owning field `value` has incompatible types across its complete store census"
 // FUNCTIONS: ctjs.func private @text$2
 // FUNCTIONS-SAME: ctnative.not_native = "owning field `value` has incompatible types across its complete store census"
-// UNPROVED-GLOBAL: ctnative.not_native = "a value of type !ctnative.boxed from `ctjs.call_direct`"
-// UNPROVED-GLOBAL: ctjs.load_global "undefined"
+// nullable.js and compatible-functions.js also read the global `undefined`
+// beside the Map. That read cannot reach Map.prototype, so they lower as
+// their literal twins do and agree with the interpreter;
+// ../Maps/realm-identity.mlir keeps the global reads that still refuse
+// every Map.
 // Both objects enter the same Map field group, so the final read here already
 // sees both types. The separate-function cases test the emitted member alone,
 // with one function reading only a Number and the other only a String.
@@ -69,8 +76,8 @@ function nullable(flag) {
     item.count = 2;
     return before;
 }
-nullable(true);
-nullable(false);
+var first = nullable(true);
+var second = nullable(false);
 
 //--- missing.js
 function missing(flag) {
@@ -97,8 +104,8 @@ function empty() {
     item.value = undefined;
     return map.size;
 }
-text();
-empty();
+var shown = text();
+var size = empty();
 
 //--- mixed-stores.js
 function mixed() {
