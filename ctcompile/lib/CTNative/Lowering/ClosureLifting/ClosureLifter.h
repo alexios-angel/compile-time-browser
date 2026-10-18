@@ -563,6 +563,9 @@ struct closureLifter {
     /// Turns a listener that removes itself through its own binding into a
     /// listener the census takes, before any census reads the binding.
     void bindSelfRemovingListeners();
+    /// Rewrites each call of Bootstrap's execute helper with a function and
+    /// nothing else into a call of that function (ExecuteCalls.cpp).
+    void callExecutedFunctions();
     void hostCallbackCensus();
     std::optional<std::string> whyNotHostCallback(ctjs::CreateClosureOp c);
     void rewriteHostCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
@@ -652,6 +655,15 @@ struct closureLifter {
 
     mlir::Value siblingCapturedValue(ctjs::CreateClosureOp closure, unsigned index,
                                      ctjs::CreateClosureOp holder);
+
+    /// Whether `holder`, made in the frame of `closure`, can capture the cell
+    /// in slot `index` of `closure` as well: the cell is a binding of that
+    /// frame in scope where `holder` is made.
+    bool canAddSiblingCapture(ctjs::CreateClosureOp closure, unsigned index,
+                              ctjs::CreateClosureOp holder);
+    /// Appends `cell` to `holder`'s captures, with its `enclosing_indices`
+    /// entry and its target's `upvalue_count`.
+    void addCaptureSlot(ctjs::CreateClosureOp holder, mlir::Value cell);
 
     void removeCaptureSlots(ctjs::CreateClosureOp c, llvm::ArrayRef<unsigned> slots);
 

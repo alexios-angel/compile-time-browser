@@ -808,14 +808,14 @@ def controls(args, prepared):
     )
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--translate")
     parser.add_argument("--opt")
     parser.add_argument("--node")
     parser.add_argument("--oracle-only", action="store_true")
     parser.add_argument("--work", type=Path, required=True)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.oracle_only and not args.node:
         parser.error("--oracle-only requires --node")
     if not args.oracle_only and (not args.translate or not args.opt):
@@ -854,6 +854,10 @@ def main():
         else "source cases, live identities, runtime bodies and effect/work controls"
     )
     print(f"host provider mutations: {len(cases())} {mode} passed")
+
+
+def test_mutations(lit):
+    main(lit.args("--translate ctjs-translate --opt ctjs-opt --work %t"))
 
 
 if __name__ == "__main__":

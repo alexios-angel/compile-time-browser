@@ -212,8 +212,8 @@ PREVIOUS_REFUSAL = (
 )
 
 
-def main():
-    args = dom.parse_args(__doc__)
+def main(argv=None):
+    args = dom.parse_args(__doc__, argv=argv)
     vendor = dom.BOOTSTRAP
     if FIND + "," not in vendor.read_text():
         raise RuntimeError("Bootstrap R.find source pin changed")
@@ -346,6 +346,10 @@ def main():
         f"Nested element for-of: {executions} native executions, 2 previous-source lowering checks, "
         f"{refusals} refusals; DOM/Core/Style only"
     )
+
+
+def test_nested_iteration(lit):
+    main(lit.args("%dom_driver"))
 
 
 if __name__ == "__main__":

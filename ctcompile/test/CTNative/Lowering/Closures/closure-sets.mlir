@@ -4,9 +4,11 @@
 // closures, and no call site names either one. ClosureLifting/ClosureSets.cpp
 // lifts both as members of a set: each stays a value bound to copies of its
 // captures, type inference gives the merged value the lattice's
-// `closure_set` type, and the emitted C++ is a std::variant of
-// ctnative::bound members that ctnative::invoke_callable dispatches with
-// std::visit. The positive prints what Node and the interpreter print with
+// `closure_set` type, and the emitted C++ is one struct per set, whose enum
+// class tag names the member a value holds, whose fields are each member's
+// captures, and whose call, which ctnative::invoke_callable makes, switches
+// on the tag and calls that member directly. No std::variant or std::visit
+// is emitted. The positive prints what Node and the interpreter print with
 // both compilers; each negative pins the reason a set is refused.
 //
 // RUN: split-file %s %t
@@ -14,7 +16,7 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/set.mlir
 // RUN: FileCheck %s --check-prefix=SET --implicit-check-not=ctnative.not_native < %t/set.mlir
 // RUN: ctjs-opt %t/set.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/set.cpp
-// RUN: FileCheck %s --check-prefix=SETCPP < %t/set.cpp
+// RUN: FileCheck %s --check-prefix=SETCPP --implicit-check-not=std::variant --implicit-check-not=std::visit < %t/set.cpp
 // RUN: %gxx -O2 %t/set.cpp -o %t/set-gcc
 // RUN: %t/set-gcc | FileCheck %s --check-prefix=SETOUT
 // RUN: %clangxx -O2 %t/set.cpp -o %t/set-clang
@@ -25,7 +27,7 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/field.mlir
 // RUN: FileCheck %s --check-prefix=FIELD --implicit-check-not=ctnative.not_native < %t/field.mlir
 // RUN: ctjs-opt %t/field.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/field.cpp
-// RUN: FileCheck %s --check-prefix=FIELDCPP < %t/field.cpp
+// RUN: FileCheck %s --check-prefix=FIELDCPP --implicit-check-not=std::variant --implicit-check-not=std::visit < %t/field.cpp
 // RUN: %gxx -O2 %t/field.cpp -o %t/field-gcc
 // RUN: %t/field-gcc | FileCheck %s --check-prefix=FIELDOUT
 // RUN: %clangxx -O2 %t/field.cpp -o %t/field-clang
@@ -36,7 +38,7 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/reassigned.mlir
 // RUN: FileCheck %s --check-prefix=REASSIGNED --implicit-check-not=ctnative.not_native < %t/reassigned.mlir
 // RUN: ctjs-opt %t/reassigned.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/reassigned.cpp
-// RUN: FileCheck %s --check-prefix=REASSIGNEDCPP < %t/reassigned.cpp
+// RUN: FileCheck %s --check-prefix=REASSIGNEDCPP --implicit-check-not=std::variant --implicit-check-not=std::visit < %t/reassigned.cpp
 // RUN: %gxx -O2 %t/reassigned.cpp -o %t/reassigned-gcc
 // RUN: %t/reassigned-gcc | FileCheck %s --check-prefix=REASSIGNEDOUT
 // RUN: %clangxx -O2 %t/reassigned.cpp -o %t/reassigned-clang
@@ -47,7 +49,7 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/thisset.mlir
 // RUN: FileCheck %s --check-prefix=THISSET --implicit-check-not=ctnative.not_native < %t/thisset.mlir
 // RUN: ctjs-opt %t/thisset.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/thisset.cpp
-// RUN: FileCheck %s --check-prefix=THISSETCPP < %t/thisset.cpp
+// RUN: FileCheck %s --check-prefix=THISSETCPP --implicit-check-not=std::variant --implicit-check-not=std::visit < %t/thisset.cpp
 // RUN: %gxx -O2 %t/thisset.cpp -o %t/thisset-gcc
 // RUN: %t/thisset-gcc | FileCheck %s --check-prefix=THISSETOUT
 // RUN: %clangxx -O2 %t/thisset.cpp -o %t/thisset-clang
@@ -61,7 +63,7 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/paramset.mlir
 // RUN: FileCheck %s --check-prefix=PARAMSET --implicit-check-not=ctnative.not_native < %t/paramset.mlir
 // RUN: ctjs-opt %t/paramset.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/paramset.cpp
-// RUN: FileCheck %s --check-prefix=PARAMSETCPP < %t/paramset.cpp
+// RUN: FileCheck %s --check-prefix=PARAMSETCPP --implicit-check-not=std::variant --implicit-check-not=std::visit < %t/paramset.cpp
 // RUN: %gxx -O2 %t/paramset.cpp -o %t/paramset-gcc
 // RUN: %t/paramset-gcc | FileCheck %s --check-prefix=PARAMSETOUT
 // RUN: %clangxx -O2 %t/paramset.cpp -o %t/paramset-clang
@@ -97,34 +99,51 @@
 // RUN:   | FileCheck %s --check-prefix=WRITTEN
 
 // Both closures are members bound to their captures, and both calls go
-// through the set.
+// through the set. Only fn_2 captures a value, the Number `k`; the call
+// switches on the tag and calls each member directly.
 // SET: emitc.func @run_1
-// SET: call_opaque "ctnative::bind<fn_2>"
-// SET: call_opaque "ctnative::bind<fn_3>"
+// SET: call_opaque "closure_set_fn_2_fn_3::make_fn_2"
+// SET: call_opaque "closure_set_fn_2_fn_3::make_fn_3"
 // SET: call_opaque "ctnative::invoke_callable"
 // SET: call_opaque "ctnative::invoke_callable"
-// SETCPP: auto {{v[0-9]+}} = ctnative::bind<fn_2>(
-// SETCPP: std::variant<ctnative::bound<fn_2, ctnative::js_num>, ctnative::bound<fn_3>> {{v[0-9]+}} =
-// SETCPP: auto {{v[0-9]+}} = ctnative::bind<fn_3>();
+// SETCPP: struct closure_set_fn_2_fn_3 {
+// SETCPP-NEXT: enum class member : unsigned char { fn_2, fn_3 };
+// SETCPP-NEXT: member tag{};
+// SETCPP-NEXT: ctnative::js_num c0_0{};
+// SETCPP-NEXT: static closure_set_fn_2_fn_3 make_fn_2(ctnative::js_num c0) {
+// SETCPP: static closure_set_fn_2_fn_3 make_fn_3() {
+// SETCPP: case member::fn_2: return fn_2(c0_0, std::forward<A>(args)...);
+// SETCPP-NEXT: case member::fn_3: return fn_3(std::forward<A>(args)...);
+// SETCPP: closure_set_fn_2_fn_3 {{v[0-9]+}} = closure_set_fn_2_fn_3::make_fn_2(
+// SETCPP: closure_set_fn_2_fn_3 {{v[0-9]+}} = closure_set_fn_2_fn_3::make_fn_3();
 // SETCPP: ctnative::invoke_callable(
 // SETCPP: ctnative::invoke_callable(
 // SETOUT: r=28
 
 // The set reached through a field of an object literal, as Popper's
 // modifiers hold their `fn`: the record is a struct whose field is the set's
-// variant, read once into a local and once as `m.fn(1)`, whose `this` no
-// member reads and so is dropped.
+// struct, defined ahead of it, read once into a local and once as
+// `m.fn(1)`, whose `this` no member reads and so is dropped.
 // FIELD: emitc.func @run_1
+// FIELDCPP: struct closure_set_fn_2_fn_3 {
+// FIELDCPP-NEXT: enum class member : unsigned char { fn_2, fn_3 };
+// FIELDCPP-NEXT: member tag{};
+// FIELDCPP-NEXT: ctnative::js_num c0_0{};
 // FIELDCPP: class [[REC:ctn_[a-z_]+]] {
-// FIELDCPP: std::variant<ctnative::bound<fn_2, ctnative::js_num>, ctnative::bound<fn_3>> fn;
+// FIELDCPP: closure_set_fn_2_fn_3 fn;
 // FIELDCPP: ctnative::invoke_callable(
 // FIELDCPP: ctnative::invoke_callable(
 // FIELDOUT: r=28
 
 // A later write of a third closure joins it to the set, and every value of
-// the set, the first merge included, is the three-member variant.
+// the set, the first merge included, is the three-member set, none of whose
+// members captures anything.
 // REASSIGNED: emitc.func @run_1
-// REASSIGNEDCPP: std::variant<ctnative::bound<fn_2>, ctnative::bound<fn_3>, ctnative::bound<fn_4>> fn;
+// REASSIGNEDCPP: struct closure_set_fn_2_fn_3_fn_4 {
+// REASSIGNEDCPP-NEXT: enum class member : unsigned char { fn_2, fn_3, fn_4 };
+// REASSIGNEDCPP-NEXT: member tag{};
+// REASSIGNEDCPP-NEXT: static closure_set_fn_2_fn_3_fn_4 make_fn_2() {
+// REASSIGNEDCPP: closure_set_fn_2_fn_3_fn_4 fn;
 // REASSIGNEDOUT: r=2108
 
 // Two arrows that read their method's `this`, merged by an `if` in the
@@ -132,7 +151,10 @@
 // method passes (ArrowThis.cpp); the set never leaves the method's frame, so
 // no call through it outlives the receiver.
 // THISSET: emitc.func @pick_
-// THISSETCPP: std::variant<ctnative::bound_prefix<fn_{{[0-9]+}}, 1>, ctnative::bound_prefix<fn_{{[0-9]+}}, 1>>
+// THISSETCPP: struct closure_set_[[A:fn_[0-9]+]]_[[B:fn_[0-9]+]] {
+// THISSETCPP: ctnative::parameter_t<[[A]], 0> c0_0{};
+// THISSETCPP-NEXT: ctnative::parameter_t<[[B]], 0> c1_0{};
+// THISSETCPP-NEXT: static closure_set_[[A]]_[[B]] make_[[A]](ctnative::parameter_t<[[A]], 0> c0) {
 // THISSETCPP: ctnative::invoke_callable(
 // THISSETOUT: r=1424
 
@@ -144,9 +166,16 @@
 // the handler it is given: `on(reg, h)` writes `h` into `reg.click`, every
 // call passes a closure for `h`, and every call passes the one literal `reg`,
 // so the parameter and the field are values of the set, and `reg` stays a
-// record whose `click` is the set's variant.
+// record whose `click` is the set's struct: the first member captures
+// nothing and the other two capture one Number each.
 // PARAMSET: emitc.func @on_
-// PARAMSETCPP: std::variant<ctnative::bound<fn_{{[0-9]+}}>, ctnative::bound<fn_{{[0-9]+}}, ctnative::js_num>, ctnative::bound<fn_{{[0-9]+}}, ctnative::js_num>> click;
+// PARAMSETCPP: struct closure_set_[[P:fn_[0-9]+_fn_[0-9]+_fn_[0-9]+]] {
+// PARAMSETCPP-NEXT: enum class member
+// PARAMSETCPP-NEXT: member tag{};
+// PARAMSETCPP-NEXT: ctnative::js_num c1_0{};
+// PARAMSETCPP-NEXT: ctnative::js_num c2_0{};
+// PARAMSETCPP-NEXT: static closure_set_[[P]] make_
+// PARAMSETCPP: closure_set_[[P]] click;
 // PARAMSETOUT: r=1630
 
 // Negative: the registry is also kept in an array, so a write of its field

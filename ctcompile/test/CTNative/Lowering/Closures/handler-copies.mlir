@@ -12,13 +12,18 @@
 // functions are local to a script-level function that runs once, as
 // Bootstrap's registry is.
 //
-// The positive prints what Node and the interpreter print with both
-// compilers. The negatives pin three refusals: a handler that is a choice of
-// closures, which no copy makes one closure; a handler whose capture is
-// written after the call, whose value a copy would take too early (the
-// registry would call it with k = 2, where JavaScript sees 12); and a chain
-// whose last function boxes the parameter in a cell for a nested closure,
-// where no rule lowers the closure the copy would make.
+// The positives print what Node and the interpreter print with both
+// compilers; in the second, `add` boxes `h` in a cell only because a nested
+// arrow reuses the name, and the copy forwards that cell to its reads. The
+// negatives pin four refusals: a handler that is a choice of closures, which
+// no copy makes one closure; a handler whose capture is written after the
+// call, whose value a copy would take too early (the registry would call it
+// with k = 2, where JavaScript sees 12); a chain whose last function boxes
+// the parameter in a cell a nested closure captures; and one whose last
+// function passes the parameter on to another call, as Bootstrap's
+// addHandler passes its handler to its argument normaliser. In the last two
+// no rule would lift the closure a copy makes, so copying would only move
+// the refusal.
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/chain.js 2>/dev/null \
@@ -32,6 +37,16 @@
 // RUN: %t/chain-clang | FileCheck %s --check-prefix=CHAINOUT
 // RUN: %native_reference %t/chain.js | FileCheck %s --check-prefix=CHAINOUT
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/chain.js | FileCheck %s --check-prefix=CHAINOUT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/forward.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/forward.mlir
+// RUN: FileCheck %s --check-prefix=FORWARD --implicit-check-not=ctnative.not_native < %t/forward.mlir
+// RUN: ctjs-opt %t/forward.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/forward.cpp
+// RUN: %gxx -O2 %t/forward.cpp -o %t/forward-gcc
+// RUN: %t/forward-gcc | FileCheck %s --check-prefix=FORWARDOUT
+// RUN: %clangxx -O2 %t/forward.cpp -o %t/forward-clang
+// RUN: %t/forward-clang | FileCheck %s --check-prefix=FORWARDOUT
+// RUN: %native_reference %t/forward.js | FileCheck %s --check-prefix=FORWARDOUT
+// RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/forward.js | FileCheck %s --check-prefix=FORWARDOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/choice.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=CHOICE
@@ -43,6 +58,11 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boxed.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=BOXED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/passed.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=PASSED
+// RUN: %native_reference %t/passed.js | FileCheck %s --check-prefix=PASSEDOUT
+// RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/passed.js | FileCheck %s --check-prefix=PASSEDOUT
 
 // Three copies each of `on` and `add`, recorded against their sources, and the
 // originals removed as unreachable rather than left refused.
@@ -66,6 +86,12 @@
 // CHAINCPP: = fn_{{[0-9]+}}(v2, v{{[0-9]+}});
 // CHAINOUT: r=163004
 
+// The same chain through a cell that only holds `h`: copied, the cell
+// forwarded, and every function native.
+// FORWARD: ctnative.copies = {add${{[0-9]+}} = "add$2", add${{[0-9]+}} = "add$2", add${{[0-9]+}} = "add$2", {{.*}}on${{[0-9]+}} = "on$4", on${{[0-9]+}} = "on$4", on${{[0-9]+}} = "on$4"}
+// FORWARD-NOT: ctjs.func
+// FORWARDOUT: r=326008
+
 // Negative: the handler is one of two closures, chosen at run time, so no
 // copy of the chain makes it one closure, and both closures keep the
 // refusal of a value that reaches the choice.
@@ -83,6 +109,13 @@
 // call is not copied and the handler keeps its refusal at the call.
 // BOXED-NOT: ctnative.copies
 // BOXED: closure_reason = "it is passed as an argument
+
+// Negative: `add` hands `h` (through a cell that only holds it) to `norm`,
+// which would refuse the closure a copy makes, so the call is not copied and
+// the handler keeps its refusal at the call.
+// PASSED-NOT: ctnative.copies
+// PASSED: closure_reason = "it is passed as an argument
+// PASSEDOUT: r=32
 
 //--- chain.js
 var r = (function () {
@@ -123,6 +156,37 @@ var r = (function () {
 //--- boxed.js
 var r = (function () {
     function add(n, h) { const later = () => h(n); return later(); }
+    function on(n, h) { return add(n, h); }
+    function run(c) {
+        const k = c ? 2 : 4;
+        return on(5, x => x + k);
+    }
+    return run(true) + run(false);
+})();
+
+//--- forward.js
+var r = (function () {
+    function add(n, h) {
+        const twice = h => h * 2;
+        const entry = { n: n, h: h };
+        return twice(entry.h(entry.n));
+    }
+    function on(n, h) { return add(n, h); }
+    function run(c) {
+        const k = c ? 2 : 4;
+        return on(5, x => x + k) * 10000 + on(5, x => x * k) * 100 + on(5, x => x - k);
+    }
+    return run(true) + run(false);
+})();
+
+//--- passed.js
+var r = (function () {
+    function norm(n, h) { return n > 0 ? h : null; }
+    function add(n, h) {
+        const twice = h => h * 2;
+        const g = norm(n, h);
+        return twice(g(n));
+    }
     function on(n, h) { return add(n, h); }
     function run(c) {
         const k = c ? 2 : 4;

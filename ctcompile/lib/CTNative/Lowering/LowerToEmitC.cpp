@@ -633,14 +633,22 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // per type, so no parameter needs a String union. Before the alias
         // groups and the solve, so both see the copies as ordinary functions.
         // A function whose original body is kept for a refusal is not copied.
+        // The copies' type tests have constant answers now; the guard folding
+        // keeps only the branches they select, before admission reads them.
         if (!hostContract) {
-            copyPerArgumentType(module, [&](ctjs::FuncOp fn) {
+            const bool copied = copyPerArgumentType(module, [&](ctjs::FuncOp fn) {
                 const auto keeps = [&](const auto & originals) {
                     return llvm::any_of(originals,
                                         [&](const auto & row) { return row.first == fn; });
                 };
                 return keeps(recoveryOriginals) || keeps(forOfOriginals);
             });
+            if (copied && optimize && precompute) {
+                mlir::OpPassManager guards(mlir::ModuleOp::getOperationName());
+                guards.addPass(createCTNativePrecompute(
+                    {.maxSteps = precomputeMaxSteps, .report = optimizationReport}));
+                if (failed(runPipeline(guards, module))) { return signalPassFailure(); }
+            }
         }
         receiverGroups groups = TypeInference::groupReceivers(module);
         if (ownedGlobals) {

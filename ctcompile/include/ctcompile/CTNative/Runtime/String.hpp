@@ -119,6 +119,14 @@ struct to_lower_case_method {
     }
 };
 
+/// String.prototype.toUpperCase (ECMA-262 22.1.3.30): Unicode's default full
+/// uppercase (ß becomes SS), from the same core tables the VM uses.
+struct to_upper_case_method {
+    js_string call(const js_string & self) const {
+        return js_string{ctbrowser::unicode_case(self.value(), true)};
+    }
+};
+
 /// String.prototype.trim (ECMA-262 22.1.3.32): TrimString with both ends, over
 /// WhiteSpace and LineTerminator (the StrWhiteSpaceChar set).
 struct trim_method {
@@ -216,6 +224,7 @@ struct match_method {
 
 struct string_prototype {
     to_lower_case_method toLowerCase;
+    to_upper_case_method toUpperCase;
     trim_method trim;
     split_method split;
     replace_method replace;
