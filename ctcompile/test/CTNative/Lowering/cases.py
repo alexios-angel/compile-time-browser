@@ -184,7 +184,7 @@ CASES = {
         "ctjs-opt --ctnative-lower-to-emitc %t/new-target.mlir | FileCheck %s --check-prefix=NEW-TARGET --implicit-check-not=ctnative.callback}",
     ],
     "Closures/callback/startup": [
-        "python3 %S/../../../../../../tools/check/named-callees.py --translate ctjs-translate --opt ctjs-opt --corpus %S/../../../../../../ctbrowser/vendor/bootstrap/bootstrap.bundle.js --require-entry-callee 'fn$2' --expect-unreachable 'fn$463' | FileCheck %s --check-prefix=BOOTSTRAP",
+        "python3 %S/../../../../../../tools/check/named-callees.py --translate ctjs-translate --opt ctjs-opt --corpus %S/../../../../../../ctbrowser/vendor/bootstrap/bootstrap.bundle.js --require-entry-callee 'fn$2' --require-entry-callee 'fn$1' --require-entry-callee 'bi$88' --require-entry-callee 'fn$125' --require-entry-callee 'fn$126' --require-entry-callee 'fn$136' --expect-unreachable 'fn$178' --expect-unreachable 'fn$463' | FileCheck %s --check-prefix=BOOTSTRAP",
         "not python3 %S/../../../../../../tools/check/named-callees.py --translate ctjs-translate --opt ctjs-opt --corpus %S/../../../../../../ctbrowser/vendor/bootstrap/bootstrap.bundle.js --require-entry-callee 'fn$463' 2>&1 | FileCheck %s --check-prefix=UNREACHABLE",
         "python3 %S/../../../../../../tools/check/named-callees.py --translate ctjs-translate --opt ctjs-opt --corpus %S/../../../Fixtures/Closures/callback.js --require-entry-callee 'bootstrapFactory$9' | FileCheck %s --check-prefix=NATIVE",
     ],
@@ -616,7 +616,8 @@ CASES = {
         "%compilation_unit --cxx %dom_clang --module %t/optimized.mlir --js %t/values.js --work %t --name sibling_optimized_clang --core-build %build",
         "not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name sibling_mutation --mutate siblingSnapshot --mutate-as string --core-build %build 2>&1 | FileCheck %s --check-prefix=MUTATION",
         'ctjs-translate --ctbrowser-js-to-ctjs %t/different-cell.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=WIDENED --implicit-check-not=ctnative.not_native',
-        'ctjs-translate --ctbrowser-js-to-ctjs %t/deeper.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=MISSING',
+        'ctjs-translate --ctbrowser-js-to-ctjs %t/deeper.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=DEEPER --implicit-check-not=ctnative.not_native',
+        'ctjs-translate --ctbrowser-js-to-ctjs %t/deepest.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=MISSING',
         'ctjs-translate --ctbrowser-js-to-ctjs %t/escaping-caller.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED',
         'ctjs-translate --ctbrowser-js-to-ctjs %t/reassigned-function.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REASSIGNED',
         "python3 %t/rollback.py ctjs-opt ctjs-translate %dom_clang %build %t %S/../../../Support/aot-entry-table.cmake",

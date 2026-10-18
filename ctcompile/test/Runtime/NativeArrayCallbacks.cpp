@@ -1,8 +1,8 @@
 //===- ctcompile/test/Runtime/NativeArrayCallbacks.cpp - Array callbacks --===//
 //
 // Tests the Array.prototype callback methods of the native runtime
-// (CTNative/Runtime/Array.hpp): forEach, map, filter, some, every, find and
-// reduce, called as generated code spells them,
+// (CTNative/Runtime/Array.hpp): forEach, map, filter, some, every, find,
+// reduce and sort with a comparator, called as generated code spells them,
 // `ctnative::Array.prototype.filter.call(v, callback)`. Each case pins one rule
 // of ECMA-262 23.1.3: the length read once, a removed index skipped, the
 // element read before the call, ToBoolean of the result, the stopping points,
@@ -272,6 +272,94 @@ void test_bound_functions_take_the_arguments_they_declare() {
     CHECK(Array.prototype.reduce.call(v, std::bind_front(count_in, lent), num(0)).value() == 18);
 }
 
+[[nodiscard]] std::vector<double> values(const std::vector<js_num> & v) {
+    std::vector<double> out;
+    for (const js_num & x : v) { out.push_back(x.value()); }
+    return out;
+}
+
+void test_sort_orders_by_the_comparator() {
+    // The array itself is sorted and answered, as `a.sort(f)` answers `a`.
+    std::vector<js_num> v = nums({3, 1, 2, 10});
+    std::vector<js_num> & sorted = Array.prototype.sort.call(
+        v, [](const js_num & a, const js_num & b) { return js_num{a.value() - b.value()}; });
+    CHECK(&sorted == &v);
+    CHECK((values(v) == std::vector<double>{1, 2, 3, 10}));
+    Array.prototype.sort.call(
+        v, [](const js_num & a, const js_num & b) { return js_num{b.value() - a.value()}; });
+    CHECK((values(v) == std::vector<double>{10, 3, 2, 1}));
+    // Strings by length: equal lengths keep their order, as a stable sort must.
+    std::vector<js_string> words{js_string{"bb"}, js_string{"a"}, js_string{"cc"}, js_string{"d"}};
+    Array.prototype.sort.call(words, [](const js_string & a, const js_string & b) {
+        return js_num{static_cast<double>(a.value().size()) -
+                      static_cast<double>(b.value().size())};
+    });
+    CHECK(words[0].value() == "a" && words[1].value() == "d" && words[2].value() == "bb" &&
+          words[3].value() == "cc");
+}
+
+void test_sort_calls_the_comparator_as_the_interpreter_does() {
+    // The interpreter's bottom-up merge sort: for [3, 1, 2] the comparator is
+    // asked (3, 1), then (1, 2) and (3, 2).
+    std::vector<js_num> v = nums({3, 1, 2});
+    std::vector<std::pair<double, double>> seen;
+    Array.prototype.sort.call(v, [&](const js_num & a, const js_num & b) {
+        seen.emplace_back(a.value(), b.value());
+        return js_num{a.value() - b.value()};
+    });
+    CHECK((seen == std::vector<std::pair<double, double>>{{3, 1}, {1, 2}, {3, 2}}));
+    // An inconsistent comparator still gives a defined order: one that always
+    // answers 1 takes the right element at every step.
+    std::vector<js_num> always = nums({1, 2, 3, 4});
+    Array.prototype.sort.call(always, [](const js_num &, const js_num &) { return js_num{1.0}; });
+    CHECK((values(always) == std::vector<double>{4, 3, 2, 1}));
+    // NaN counts as +0 (23.1.3.30.2), so the order is kept.
+    std::vector<js_num> nan = nums({2, 1});
+    Array.prototype.sort.call(nan, [](const js_num &, const js_num &) {
+        return js_num{std::numeric_limits<double>::quiet_NaN()};
+    });
+    CHECK((values(nan) == std::vector<double>{2, 1}));
+    // A Boolean answer is converted with ToNumber: true is 1.
+    std::vector<js_num> greater = nums({3, 1, 2});
+    Array.prototype.sort.call(greater, [](const js_num & a, const js_num & b) {
+        return js_boolean_t{a.value() > b.value()};
+    });
+    CHECK((values(greater) == std::vector<double>{1, 2, 3}));
+}
+
+void test_a_throwing_comparator_leaves_the_array() {
+    std::vector<js_num> v = nums({3, 1, 2});
+    int calls = 0;
+    bool threw = false;
+    try {
+        Array.prototype.sort.call(v, [&](const js_num & a, const js_num & b) {
+            if (++calls == 2) { throw std::runtime_error("comparator"); }
+            return js_num{a.value() - b.value()};
+        });
+    } catch (const std::runtime_error &) { threw = true; }
+    CHECK(threw);
+    CHECK((values(v) == std::vector<double>{3, 1, 2}));
+}
+
+js_num offset_order(js_num offset, js_num a, js_num b) {
+    return js_num{a.value() + offset.value() - b.value()};
+}
+js_num first_only(js_num a) {
+    return js_num{a.value() - 2};
+}
+
+void test_sort_takes_a_bound_comparator() {
+    // Generated code binds a lifted comparator to its captures.
+    std::vector<js_num> v = nums({2, 3, 1});
+    Array.prototype.sort.call(v, std::bind_front(offset_order, num(0)));
+    CHECK((values(v) == std::vector<double>{1, 2, 3}));
+    // A comparator that declares one parameter is passed the left element only:
+    // here it answers 0 or less exactly when that element is at most 2.
+    std::vector<js_num> w = nums({3, 1, 2});
+    Array.prototype.sort.call(w, first_only);
+    CHECK((values(w) == std::vector<double>{1, 2, 3}));
+}
+
 void test_includes_compares_strings() {
     const std::vector<js_string> v{js_string{"nav"}, js_string{"card"}};
     CHECK(static_cast<bool>(Array.prototype.includes.call(v, js_string{"card"})));
@@ -296,6 +384,10 @@ int main() {
     test_reduce_threads_the_accumulator();
     test_borrowed_arrays_answer_as_owned_ones();
     test_bound_functions_take_the_arguments_they_declare();
+    test_sort_orders_by_the_comparator();
+    test_sort_calls_the_comparator_as_the_interpreter_does();
+    test_a_throwing_comparator_leaves_the_array();
+    test_sort_takes_a_bound_comparator();
     test_includes_compares_strings();
     REPORT("native_array_callbacks");
 }

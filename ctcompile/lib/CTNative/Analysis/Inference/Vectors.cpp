@@ -183,8 +183,8 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
                    made == VectorCall::split || made == VectorCall::splitSpace ||
                    (made == VectorCall::callback && arrayCallbackMakesArray(definition))) {
             owners.push_back(definition);
-        } else if (made == VectorCall::sort) {
-            // `a.sort()` answers `a` itself.
+        } else if (made == VectorCall::sort || arrayCallbackSorts(definition)) {
+            // `a.sort()` and `a.sort(f)` answer `a` itself.
             add(llvm::cast<ctjs::CallOp>(definition).getReceiver());
         } else if (ctjs::isUndefinedConstant(member)) {
             // The importer threads a `var` through loops and branches with
@@ -260,7 +260,8 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
                     }
                     auto * call = *read.getResult().getUsers().begin();
                     const VectorCall kind = vectorCallOf(call);
-                    writes |= kind == VectorCall::push || kind == VectorCall::sort;
+                    writes |= kind == VectorCall::push || kind == VectorCall::sort ||
+                              arrayCallbackSorts(call);
                     joined |= kind == VectorCall::join;
                     if (kind == VectorCall::none ||
                         llvm::cast<ctjs::CallOp>(call).getReceiver() != member) {
@@ -275,6 +276,13 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
             }
             if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
                 const VectorCall kind = vectorCallOf(call);
+                // `a.sort(f)` sorts its receiver in place and answers it; a
+                // capture of the comparator is only lent, as for the others.
+                if (use.getOperandNumber() == 1 && arrayCallbackSorts(call)) {
+                    writes = true;
+                    add(call.getResult());
+                    continue;
+                }
                 if (kind == VectorCall::callback &&
                     arrayCallbackBorrows(call, use.getOperandNumber())) {
                     continue;
@@ -637,7 +645,8 @@ bool TypeInference::elementParameterWritten(mlir::Value parameter) {
             for (mlir::OpOperand & use : member.getUses()) {
                 const VectorCall kind = vectorCallOf(use.getOwner());
                 if (use.getOperandNumber() == 1 &&
-                    (kind == VectorCall::push || kind == VectorCall::sort)) {
+                    (kind == VectorCall::push || kind == VectorCall::sort ||
+                     arrayCallbackSorts(use.getOwner()))) {
                     return true;
                 }
                 // Lent on to a callee that writes it.

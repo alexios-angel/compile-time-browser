@@ -18,7 +18,12 @@
 // and every capture rule (constant cells, carried cells, captures relayed
 // from an enclosing closure, bound local functions) decides it as it decides
 // any other. A `this` no rule can carry, such as the boxed receiver of a
-// function no caller proves, is refused there with that rule's reason.
+// function no caller proves, is refused there with that rule's reason. An
+// arrow that never reads its receiver gets an undefined `$enclosing_this` and
+// no capture, since nothing can observe that value. Either way the function is
+// first marked `ctnative.arrow` (kNativeArrow): the operand was the importer's
+// only record that it is an arrow, and the constructor rule still needs that,
+// because `new` on an arrow throws.
 //
 // One case needs more than the capture rules: an arrow that reads its
 // method's (or constructor's) `this` through constant keys, as in
@@ -63,20 +68,32 @@ bool listsObjectArg(mlir::Operation * op, unsigned index) {
 /// `$enclosing_this` is undefined, so a second run finds nothing to do.
 void closureLifter::captureLexicalThis() {
     llvm::SmallVector<ctjs::CreateClosureOp> arrows;
+    llvm::SmallVector<ctjs::CreateClosureOp> unread;
     module.walk([&](ctjs::CreateClosureOp c) {
         if (ctjs::isUndefinedConstant(c.getEnclosingThis())) { return; }
         ctjs::FuncOp target = targetOf(c);
+        if (target) { target->setAttr(kNativeArrow, mlir::UnitAttr::get(context)); }
         // A target with no body, or whose capture list disagrees with the
         // closure's, keeps its operand: whyTargetIsNotLiftable refuses it for
         // that, and the new slot's number would be ambiguous.
         if (!target || target.getBody().empty() ||
             c.getUpvalues().size() != static_cast<size_t>(target.getUpvalueCount()) ||
-            target.getBody().front().getNumArguments() < ctjs::implicit_arguments ||
-            target.getBody().front().getArgument(ctjs::arg_receiver).use_empty()) {
+            target.getBody().front().getNumArguments() < ctjs::implicit_arguments) {
+            return;
+        }
+        // An arrow that never reads its receiver (nor hands it to an arrow it
+        // makes) cannot observe the `this` it would capture, so it captures
+        // none, and the creating frame's receiver does not reach it.
+        if (target.getBody().front().getArgument(ctjs::arg_receiver).use_empty()) {
+            unread.push_back(c);
             return;
         }
         arrows.push_back(c);
     });
+    for (ctjs::CreateClosureOp c : unread) {
+        mlir::OpBuilder at(c);
+        c.getEnclosingThisMutable().assign(undefinedAt(at, c.getLoc()));
+    }
     const auto valueType = ctjs::ValueType::get(context);
     // Every closure of one target has the same capture count (checked above),
     // so they all append the same slot; the target is rewritten once.
@@ -156,16 +173,26 @@ llvm::SmallVector<int32_t> closureLifter::lexicalThisObjectArgs(
                                listsObjectArg(maker, self.getArgNumber());
         if (!fromReceiver && !fromArrow) { return {}; }
     }
-    // Constant-key reads and writes, or the cell of an arrow made in here,
-    // which that arrow's own lift decides; if it does not take `this` as a
-    // pointer, the cell stays, opens this parameter's shape, and admission
-    // refuses this arrow.
+    // Constant-key reads and writes, the receiver of a method call the method
+    // lift makes direct (or has made direct), which takes the pointer as its
+    // `this`, or the cell of an arrow made in here, which that arrow's own
+    // lift decides; if it does not take `this` as a pointer, the cell stays,
+    // opens this parameter's shape, and admission refuses this arrow.
+    const auto receives = [&](mlir::OpOperand & use) {
+        if (auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner())) {
+            return use.getOperandNumber() == 1 && resolveMethod(call).has_value();
+        }
+        auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+        return direct && use.getOperandNumber() == ctjs::arg_receiver &&
+               direct->hasAttr(kNativeReceiver);
+    };
     bool constantKeysOnly = true;
     target.getBody().walk([&](ctjs::LoadUpvalueOp read) {
         if (static_cast<unsigned>(read.getIndex()) != *slot) { return; }
         for (mlir::OpOperand & use : read.getResult().getUses()) {
             auto inner = llvm::dyn_cast<ctjs::CreateCellOp>(use.getOwner());
-            constantKeysOnly &= isConstantKeyAccess(use) || (inner && inner->hasAttr(kLexicalThis));
+            constantKeysOnly &= isConstantKeyAccess(use) || receives(use) ||
+                                (inner && inner->hasAttr(kLexicalThis));
         }
     });
     if (!constantKeysOnly) { return {}; }
@@ -210,6 +237,40 @@ bool closureLifter::passesLexicalThis(mlir::OpOperand & use) {
         return slot && capture.getOperandNumber() == kFirstCapture + *slot &&
                listsObjectArg(target, captureArgument(*slot));
     });
+}
+
+/// The value a read of an arrow's lexical `this` stands for: what the cell
+/// captureLexicalThis made for the arrow's one closure was made from. That is
+/// the receiver of the function making the closure, or, when that function is
+/// an arrow too, its own read of this kind. Null for any other value, and for
+/// a read rewritten since (a lifted arrow reads a capture parameter instead).
+mlir::Value closureLifter::lexicalThisMaker(mlir::Value value) {
+    auto read = value.getDefiningOp<ctjs::LoadUpvalueOp>();
+    auto arrow = read ? read->getParentOfType<ctjs::FuncOp>() : ctjs::FuncOp{};
+    const std::optional<unsigned> slot = lexicalThisSlot(arrow);
+    if (!slot || static_cast<unsigned>(read.getIndex()) != *slot ||
+        read.getClosure() != arrow.getBody().front().getArgument(ctjs::arg_callee)) {
+        return {};
+    }
+    ctjs::CreateClosureOp c = uniqueClosureByTarget.lookup(arrow);
+    auto cell = c && *slot < c.getUpvalues().size()
+                    ? c.getUpvalues()[*slot].getDefiningOp<ctjs::CreateCellOp>()
+                    : ctjs::CreateCellOp{};
+    if (!cell || !cell->hasAttr(kLexicalThis)) { return {}; }
+    return cell.getInitial();
+}
+
+/// The first use of `arrow`'s one closure that is not a call of it (callSiteOf),
+/// or null. With none, the arrow runs only during calls its maker makes, so
+/// the maker's receiver outlives every one of them; stored or passed on, it
+/// can run after the maker returns, when nothing holds that receiver.
+mlir::OpOperand * closureLifter::useOutlivingMaker(ctjs::FuncOp arrow) {
+    ctjs::CreateClosureOp c = uniqueClosureByTarget.lookup(arrow);
+    if (!c) { return nullptr; }
+    for (mlir::OpOperand & use : c.getResult().getUses()) {
+        if (!callSiteOf(use, arrow)) { return &use; }
+    }
+    return nullptr;
 }
 
 /// Erases each cell captureLexicalThis made whose every capturing closure is

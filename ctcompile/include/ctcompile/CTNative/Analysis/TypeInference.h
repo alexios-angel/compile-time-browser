@@ -413,6 +413,8 @@ public:
     static bool isArrayCallbackCall(mlir::Operation * op);
     /// Whether that call answers a new array (filter and map).
     static bool arrayCallbackMakesArray(mlir::Operation * op);
+    /// Whether that call sorts its receiver in place and answers it (sort).
+    static bool arrayCallbackSorts(mlir::Operation * op);
     /// Whether operand `index` of that call only lends an array to it: the
     /// receiver, or a captured value the callback reads.
     static bool arrayCallbackBorrows(mlir::Operation * op, unsigned index);

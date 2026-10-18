@@ -25,6 +25,11 @@ inline constexpr llvm::StringLiteral kNativeCarried = "ctnative.carried";
 /// On an arrow whose lexical `this` became a capture (ArrowThis.cpp), the
 /// capture slot that holds it; on the cell made for it, a unit marker.
 inline constexpr llvm::StringLiteral kNativeLexicalThis = "ctnative.lexical_this";
+/// On a function that is an arrow. The importer records that only as a
+/// closure's non-undefined `$enclosing_this`, which captureLexicalThis
+/// (ArrowThis.cpp) replaces with undefined, so it keeps the fact here for the
+/// constructor rule: `new` on an arrow throws.
+inline constexpr llvm::StringLiteral kNativeArrow = "ctnative.arrow";
 /// On a carried `ctjs.create_cell`: a callback the runtime keeps (a timer
 /// handler, a listener, a promise handler) captures it, so the binding lives
 /// in a std::shared_ptr<ctnative::cell<T>> (Runtime/Cell.hpp) rather than a
@@ -60,6 +65,13 @@ inline constexpr llvm::StringLiteral kNativeClassSetup = "ctnative.class_setup";
 /// (ClosureLifting/ClassStatics.cpp) proved that member's `this` is that class;
 /// the constructor lift builds the instance there.
 inline constexpr llvm::StringLiteral kNativeClassConstruct = "ctnative.class_construct";
+/// On each ctjs.call_direct the class statics rewrite
+/// (ClosureLifting/ClassStatics.cpp) makes of a static member, where the
+/// source read the member through the class: a refused caller may call such
+/// a member through a closure instead, as it did through the class
+/// (closeNativeSet in LowerToEmitC.cpp), and the registry proof reads a
+/// family key through such a getter (Analysis/Inference/Instances.cpp).
+inline constexpr llvm::StringLiteral kNativeStaticMemberCall = "ctnative.static_member_call";
 /// On a ctjs.cell_get of a run-once static cell written only with a class's
 /// closure, before every read, and on its ctjs.cell_set writes: the name of
 /// that class constructor's ctjs.func (a string, as above). A `new` of the

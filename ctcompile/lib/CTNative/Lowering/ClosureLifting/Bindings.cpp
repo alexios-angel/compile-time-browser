@@ -341,6 +341,15 @@ void closureLifter::removeCaptureSlots(ctjs::CreateClosureOp c, llvm::ArrayRef<u
             target->removeAttr(kNativeLexicalThis);
         }
     }
+    // So does a self-removing listener's identity slot (HostCallbacks.cpp).
+    if (auto self = c->getAttrOfType<mlir::IntegerAttr>(kNativeListenerSelf)) {
+        const auto at = static_cast<unsigned>(self.getInt());
+        if (at < captures && renumbered[at] >= 0) {
+            c->setAttr(kNativeListenerSelf, builder.getI32IntegerAttr(renumbered[at]));
+        } else {
+            c->removeAttr(kNativeListenerSelf);
+        }
+    }
     const auto move = [&](std::int32_t index) -> std::int32_t {
         if (index < 0 || static_cast<unsigned>(index) >= captures ||
             renumbered[static_cast<unsigned>(index)] < 0) {
