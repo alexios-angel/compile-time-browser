@@ -312,6 +312,11 @@ bool closureLifter::isCarried(ctjs::CreateCellOp cell) const {
 /// constant already (nothing writes it, or one write in its own block comes
 /// before every read and capture: singleWriteCensus takes it), and one that
 /// holds a closure, which bindLocalFunctions judges by its writes.
+///
+/// Only a closure whose one use is an argument of a call gets the copy: the
+/// callbacks the by-value rules take. A closure stored, returned or called
+/// keeps the binding itself, which the proofs that follow a binding (the
+/// registry proof in Analysis/Instances.h) read.
 void closureLifter::snapshotSettledCaptures() {
     const auto writesNoUpvalue = [&](ctjs::CreateClosureOp captor) {
         ctjs::FuncOp target = targetOf(captor);
@@ -371,8 +376,14 @@ void closureLifter::snapshotSettledCaptures() {
         };
         return writes != 1 || !direct || !llvm::all_of(others, after);
     };
+    const auto passedOnly = [](ctjs::CreateClosureOp c) {
+        if (!c.getResult().hasOneUse()) { return false; }
+        mlir::OpOperand & use = *c.getResult().use_begin();
+        return llvm::isa<ctjs::CallOp>(use.getOwner()) && use.getOperandNumber() >= 2;
+    };
     llvm::SmallVector<std::pair<ctjs::CreateClosureOp, unsigned>> settled;
     module.walk([&](ctjs::CreateClosureOp c) {
+        if (!passedOnly(c)) { return; }
         for (unsigned i = 0; i < static_cast<unsigned>(c.getUpvalues().size()); ++i) {
             auto cell = c.getUpvalues()[i].getDefiningOp<ctjs::CreateCellOp>();
             if (cell && settledBefore(cell, c)) { settled.emplace_back(c, i); }
