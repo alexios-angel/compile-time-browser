@@ -10,7 +10,7 @@
 # RUN: FileCheck %s --match-full-lines --strict-whitespace < %t/vm.txt
 # RUN: %cmake -DTRANSLATE=ctjs-translate -DOPT=ctjs-opt -DSOURCE=%S/console-log.js -DOUTPUT=%t/console.mlir -P %S/../../Checks/pipeline.cmake
 # RUN: ctjs-translate --mlir-to-cpp %t/console.mlir -o %t/console.cpp
-# RUN: grep -c 'ctnative::console.log(' %t/console.cpp | FileCheck %s --check-prefix=CALLS
+# RUN: grep -c 'ctnative::println(' %t/console.cpp | FileCheck %s --check-prefix=CALLS
 # CALLS: {{16|32}}
 # An argument Console.hpp cannot print is refused, naming the kinds it can.
 # RUN: not %cmake -DTRANSLATE=ctjs-translate -DOPT=ctjs-opt -DSOURCE=%S/console-log-refused.js -DOUTPUT=%t/refused.mlir -P %S/../../Checks/pipeline.cmake 2>&1 | FileCheck %s --check-prefix=REFUSED

@@ -155,7 +155,7 @@ CASES = {
         "FileCheck %s --match-full-lines --strict-whitespace < %t/vm.txt",
         "%cmake -DTRANSLATE=ctjs-translate -DOPT=ctjs-opt -DSOURCE=%S/console-log.js -DOUTPUT=%t/console.mlir -P %S/../../Checks/pipeline.cmake",
         "ctjs-translate --mlir-to-cpp %t/console.mlir -o %t/console.cpp",
-        "grep -c 'ctnative::console.log(' %t/console.cpp | FileCheck %s --check-prefix=CALLS",
+        "grep -c 'ctnative::println(' %t/console.cpp | FileCheck %s --check-prefix=CALLS",
         "not %cmake -DTRANSLATE=ctjs-translate -DOPT=ctjs-opt -DSOURCE=%S/console-log-refused.js -DOUTPUT=%t/refused.mlir -P %S/../../Checks/pipeline.cmake 2>&1 | FileCheck %s --check-prefix=REFUSED",
         "python3 %S/console_log.py --cpp %t/console.cpp --expected %t/vm.txt --build %build --include %{monorepo}/ctbrowser/include --work %t",
     ],
