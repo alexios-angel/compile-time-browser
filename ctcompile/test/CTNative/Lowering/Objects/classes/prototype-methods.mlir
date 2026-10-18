@@ -76,15 +76,23 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=CLASSREFUSED
 //
+// Each class binds its own methods, so an override is resolved per class (as
+// in prototype.js) and a call whose receiver may be an instance of either
+// class keeps dispatching: in mixed.js both instances reach `measure`'s one
+// parameter, and neither class lifts.
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=MIXED
+//
 // The constructor rule (ClosureLifting/Constructors.cpp) also refuses a class
 // whose method is read as a value. It counts only reads that may observe the
 // method in native code: a constant-key read of the method's name on a value
-// that may name an instance (a parameter, a capture, a call result, a `new`
-// of the class or a value `behind` names). A computed-key read cannot, for
-// the same reason as a computed-key write, and the prototype is never a value
-// there. table.js reads and writes a table through a computed key, and
-// observed.js reads `constructor` and the method's name off a record of its
-// own; both used to leave Shape refused and now run natively.
+// that may name an instance (a parameter, a `new` of the class or a value
+// `behind` names). A computed-key read cannot, for the same reason as a
+// computed-key write, and the prototype is never a value there. table.js
+// reads and writes a table through a computed key, and observed.js reads
+// `constructor` and the method's name off a record of its own; both used to
+// leave Shape refused and now run natively.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/table.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/table.mlir
 // RUN: FileCheck %s --check-prefix=TABLE --implicit-check-not=ctnative.not_native < %t/table.mlir
@@ -110,7 +118,8 @@
 //
 // Reads that observe the method keep the class refused: an arrow that reads
 // it through its captured `this` (ARROW), the instance or `this` read through
-// a computed key (READKEY, THISREAD), and the prototype reached through
+// a computed key (READKEY, THISREAD), the instance handed to a helper that
+// reads it through one (PARAMREAD), and the prototype reached through
 // `constructor` or `__proto__`, which admission refuses on a struct
 // (CONSTRUCTOR, DUNDER).
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/arrow.js 2>/dev/null \
@@ -122,6 +131,9 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/this-read.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=THISREAD
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/param-read.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=PARAMREAD
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/constructor.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=CONSTRUCTOR
@@ -153,6 +165,8 @@
 // OWNFIELD: ctnative.closure_reason = "its prototype method is not an immutable direct-call binding"
 // CLASSREFUSED-DAG: ctnative.closure_reason = "its class does not lift: it passes `this` to a call this rewrite cannot make direct"
 // CLASSREFUSED-DAG: emitc.func @Base_Child_{{[0-9]+}}(
+// MIXED: ctnative.closure_reason = "the instance `new` makes does not have a closed shape
+// MIXED: ctnative.closure_reason = "the instance `new` makes does not have a closed shape
 
 // TABLE: emitc.class @Shape
 // TABLE-CPP: bump_{{[0-9]+}}(std::shared_ptr<ctnative::dictionary<ctnative::js_num>> const
@@ -167,6 +181,7 @@
 // ARROW: ctnative.closure_reason = "its prototype method is also observed as a value"
 // READKEY: ctnative.closure_reason = "the instance `new` makes does not have a closed shape
 // THISREAD: ctnative.closure_reason = "it reads `this` through a dynamic key"
+// PARAMREAD: ctnative.closure_reason = "the instance `new` makes does not have a closed shape
 // CONSTRUCTOR: ctnative.not_native = "field `constructor` is read but never written, and Object.prototype answers that name
 // DUNDER: ctnative.not_native = "an object literal reached through the inherited Object.prototype.__proto__ accessor"
 
@@ -390,6 +405,34 @@ function run() {
     }
     const s = new Shape(2);
     const f = s.__proto__.area;
+    return s.area() * 10 + (f === undefined ? 1 : 2);
+}
+var r = run();
+
+//--- mixed.js
+function run() {
+    class Shape {
+        constructor(w) { this.w = w; }
+        area() { return this.w * this.w; }
+    }
+    class Square extends Shape {
+        constructor(w) { super(w); this.h = 1; }
+        area() { return super.area() + this.h; }
+    }
+    function measure(x) { return x.area(); }
+    return measure(new Shape(2)) * 100 + measure(new Square(3));
+}
+var r = run();
+
+//--- param-read.js
+function get(o, key) { return o[key]; }
+function run() {
+    class Shape {
+        constructor(w) { this.w = w; }
+        area() { return this.w * this.w; }
+    }
+    const s = new Shape(2);
+    const f = get(s, "area");
     return s.area() * 10 + (f === undefined ? 1 : 2);
 }
 var r = run();
