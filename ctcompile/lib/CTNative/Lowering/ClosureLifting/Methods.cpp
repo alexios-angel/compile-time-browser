@@ -18,6 +18,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "ClosureLifter.h"
+#include "SpreadParameters.h"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/Instances.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -753,6 +754,35 @@ void closureLifter::argumentCensus() {
                     slots.push_back(argument.getArgNumber() - ctjs::implicit_arguments);
                 }
             }
+        }
+    }
+    // A parameter every call passes an object literal of one shape may also
+    // be tested with `typeof` and spread into a fresh literal: both are
+    // written out for that shape (SpreadParameters.h), so the rule below sees
+    // the constant-key reads they become. The literals a folded test drops
+    // leave the census with it.
+    {
+        llvm::SmallVector<calledFunction> called;
+        const auto row = [&](ctjs::FuncOp function, llvm::ArrayRef<closureCall> sites) {
+            calledFunction & entry = called.emplace_back();
+            entry.function = function;
+            for (const closureCall & site : sites) {
+                entry.calls.emplace_back(site.op, llvm::to_vector(site.args));
+            }
+        };
+        for (ctjs::CreateClosureOp closure : closures) {
+            const auto sites = objectArgumentCalls(closure);
+            if (!sites.empty()) { row(targetOf(closure), sites); }
+        }
+        for (const auto & [function, sites] : directCalls) {
+            row(llvm::cast<ctjs::FuncOp>(function), sites);
+        }
+        llvm::SmallVector<mlir::Operation *> erased;
+        if (rewriteSpreadParameters(called, erased) && !erased.empty()) {
+            const llvm::SmallPtrSet<mlir::Operation *, 8> gone(erased.begin(), erased.end());
+            llvm::erase_if(objects, [&](ctjs::CreateObjectOp object) {
+                return gone.contains(object.getOperation());
+            });
         }
     }
     const auto closedArgument = [&](mlir::Value value) {
