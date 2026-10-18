@@ -927,7 +927,7 @@ CASES = {
     ],
     "Maps/array-callback-captures": [
         "split-file %s %t",
-        'ctjs-translate --ctbrowser-js-to-ctjs %t/captured.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=CAPTURED --implicit-check-not="escapes or is mutated"',
+        'ctjs-translate --ctbrowser-js-to-ctjs %t/captured.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=CAPTURED --implicit-check-not="escapes or is mutated" --implicit-check-not=ctnative.map_reason',
         "ctjs-translate --ctbrowser-js-to-ctjs %t/initial.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=INITIAL",
     ],
     "Maps/flow": [
