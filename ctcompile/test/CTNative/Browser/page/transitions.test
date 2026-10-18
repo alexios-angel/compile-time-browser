@@ -9,16 +9,19 @@
 # RUN: diff %t.vm %t.gcc
 # RUN: FileCheck %s --input-file %t.native
 # RUN: FileCheck %s --check-prefix=SPELLING --input-file %{obj}/transitions.generated.cpp
+# RUN: FileCheck %s --check-prefix=QUEUED --input-file %{obj}/transitions.generated.cpp
 # RUN: %nm -C %{obj}/ctcompile-test-transitions-native | not grep -E "ctbrowser::script::"
 # RUN: %nm -C %{obj}/ctcompile-test-transitions-native-gcc | not grep -E "ctbrowser::script::"
 # `y` runs at once; `x` runs from its listener when its timer ends the
-# transition at 15 ms, and the end at 40 ms finds that listener gone.
-# CHECK: {{^}}log=done:y; ends=0{{$}}
-# CHECK-NEXT: {{^}}+5: log=done:y;skip:a;skip:c;end:b; ends=1{{$}}
-# CHECK-NEXT: {{^}}+5: log=done:y;skip:a;skip:c;end:b;end:a;end:c; ends=1{{$}}
-# CHECK-NEXT: {{^}}+10: log=done:y;skip:a;skip:c;end:b;end:a;end:c;done:x; ends=1{{$}}
-# CHECK-NEXT: {{^}}+10: log=done:y;skip:a;skip:c;end:b;end:a;end:c;done:x; ends=1{{$}}
-# CHECK-NEXT: {{^}}+10: log=done:y;skip:a;skip:c;end:b;end:a;end:c;done:x; ends=2{{$}}
+# transition at 15 ms, and the end at 40 ms finds that listener gone. Of the
+# callbacks `third` queues, `now:q` runs at once through execute and `done:q`
+# from its listener, which the end at 15 ms reaches after x's.
+# CHECK: {{^}}log=done:y;now:q; ends=0{{$}}
+# CHECK-NEXT: {{^}}+5: log=done:y;now:q;skip:a;skip:c;end:b; ends=1{{$}}
+# CHECK-NEXT: {{^}}+5: log=done:y;now:q;skip:a;skip:c;end:b;end:a;end:c; ends=1{{$}}
+# CHECK-NEXT: {{^}}+10: log=done:y;now:q;skip:a;skip:c;end:b;end:a;end:c;done:x;done:q; ends=1{{$}}
+# CHECK-NEXT: {{^}}+10: log=done:y;now:q;skip:a;skip:c;end:b;end:a;end:c;done:x;done:q; ends=1{{$}}
+# CHECK-NEXT: {{^}}+10: log=done:y;now:q;skip:a;skip:c;end:b;end:a;end:c;done:x;done:q; ends=2{{$}}
 # The listener is registered under a fresh identity, which it also receives
 # among its captures and removes itself by; the element it compares with the
 # event's target is a copy, though the listener writes `called`.
@@ -27,3 +30,17 @@
 # SPELLING: auto [[BOUND:v[0-9]+]] = std::bind_front(fn_{{[0-9]+}}, {{.*}}, [[ID]]);
 # SPELLING-NEXT: ctnative::identified_listener([[ID]], [[BOUND]]);
 # SPELLING: ctnative::EventTarget.prototype.removeEventListener.call(v1, v{{[0-9]+}}, [[SELF]]);
+# A queued callback reaches each copy of afterTransitionWith as the label it
+# captures (ClosureLifting/CallSiteCopies.cpp, ExecuteCalls.cpp): execute's
+# call of it is a direct call, and the listener takes the label and calls
+# the callback's function itself, so no closure value is left to pass.
+# QUEUED: ctnative::nullable_scalar afterTransitionWith_{{[0-9]+}}(ctnative::js_element_t v1, ctnative::js_boolean_t v2, ctnative::js_string const v3) {
+# QUEUED: if (v{{[0-9]+}}) {
+# QUEUED-NEXT: fn_{{[0-9]+}}(v3);
+# QUEUED-NEXT: } else {
+# QUEUED-NEXT: ctnative::callable_identity [[ID:v[0-9]+]] = ctnative::new_callable_identity();
+# QUEUED-NEXT: auto {{v[0-9]+}} = std::bind_front([[LISTENER:fn_[0-9]+]], v1, [[ID]], v3);
+# QUEUED: ctnative::nullable_scalar [[LISTENER]](ctnative::js_element_t v1, ctnative::callable_identity v2, ctnative::js_string const v3, ctnative::js_event v4) {
+# QUEUED: ctnative::EventTarget.prototype.removeEventListener.call(v1, v{{[0-9]+}}, v2);
+# QUEUED-NEXT: fn_{{[0-9]+}}(v3);
+# QUEUED: queue_{{[0-9]+}}(v1, v{{[0-9]+}}, v{{[0-9]+}});

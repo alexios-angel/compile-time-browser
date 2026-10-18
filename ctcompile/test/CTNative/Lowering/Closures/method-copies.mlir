@@ -47,7 +47,9 @@
 // COPIESCPP: Fader
 // COPIESOUT: r=1630
 
-// RECEIVER: ctjs.func @run${{[0-9]+}}(
+// `run` may be private: its arrows read no `this`, so the method lift takes
+// it before the arrows' refusal reaches it.
+// RECEIVER: ctjs.func {{(private )?}}@run${{[0-9]+}}({{.*}}ctnative.not_native = "a closure used as a value: it is passed as an argument
 // RECEIVER: closure_reason = "it is passed as an argument - lifting has no call site to move the captures to
 
 // UNKNOWN: ctjs.func @run${{[0-9]+}}(
