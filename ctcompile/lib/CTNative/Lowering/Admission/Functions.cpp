@@ -136,6 +136,9 @@ bool admission::function(ctjs::FuncOp fn) {
         // A borrowed callback parameter is a ctnative::function_ref; the calls
         // through it are admitted one by one (BorrowedCallbacks.cpp).
         if (isBorrowedParameter(entry.getArgument(i))) { continue; }
+        // A listener's own identity is a ctnative::callable_identity, which
+        // only its removals of itself read (ClosureLifting/HostCallbacks.cpp).
+        if (isListenerSelfParameter(entry.getArgument(i))) { continue; }
         // Object parameters get the receiver's check. Their carrier is the
         // generated class one indirection away, so `carrierOf` has no row for
         // them and the check below would refuse every one; what has to hold is

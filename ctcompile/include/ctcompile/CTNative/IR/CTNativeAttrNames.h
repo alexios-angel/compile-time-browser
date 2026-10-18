@@ -133,6 +133,12 @@ inline constexpr llvm::StringLiteral kNativeHostIdentified = "ctnative.host_iden
 /// On a specialised `removeEventListener` call: its arguments are the type,
 /// the listener's identity and the capture flag, with no captures.
 inline constexpr llvm::StringLiteral kNativeHostRemove = "ctnative.host_remove";
+/// A listener that removes itself through its own binding. On its
+/// `ctjs.create_closure`: the capture slot that held the binding, now a
+/// placeholder in which the lift passes the closure's identity. On the lifted
+/// listener: the entry argument that receives the identity, a
+/// ctnative::callable_identity (ClosureLifting/HostCallbacks.cpp).
+inline constexpr llvm::StringLiteral kNativeListenerSelf = "ctnative.listener_self";
 /// On an addEventListener or removeEventListener call whose listener is the
 /// value of a closed top-level function binding: that function. Written by
 /// ResolveGlobals (CTJS), read by ClosureLifting/HostCallbacks.cpp.

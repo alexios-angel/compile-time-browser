@@ -98,8 +98,13 @@ void closureLifter::census(bool cellFactsOnly) {
     if (!cellFactsOnly) { classCensus(); }
     module.walk([&](mlir::Operation * o) {
         auto holder = o->getParentOfType<ctjs::FuncOp>();
-        if (llvm::isa<ctjs::StoreUpvalueOp>(o)) {
-            if (holder) { mutatesUpvalue.insert(holder.getOperation()); }
+        if (auto store = llvm::dyn_cast<ctjs::StoreUpvalueOp>(o)) {
+            if (holder) {
+                mutatesUpvalue.insert(holder.getOperation());
+                writtenSlots[holder.getOperation()].insert(static_cast<unsigned>(store.getIndex()));
+                mlir::Block * entry = ctjs::implicitEntry(holder);
+                slotsPrecise &= entry && store.getClosure() == entry->getArgument(ctjs::arg_callee);
+            }
         } else if (auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(o)) {
             closures.push_back(made);
         } else if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(o)) {
@@ -123,7 +128,8 @@ void closureLifter::census(bool cellFactsOnly) {
         }
     }
     // The fixpoint over the closure-target graph: the maker of a closure whose
-    // target writes an upvalue may write one of its own slots too.
+    // target writes an upvalue may write one of its own slots too, namely
+    // each slot of its own that it relays into a slot the target writes.
     for (bool changed = true; changed;) {
         changed = false;
         for (ctjs::CreateClosureOp c : closures) {
@@ -132,6 +138,14 @@ void closureLifter::census(bool cellFactsOnly) {
             auto maker = c->getParentOfType<ctjs::FuncOp>();
             if (!maker) { continue; }
             changed |= mutatesUpvalue.insert(maker.getOperation()).second;
+            for (unsigned i = 0; i < c.getUpvalues().size(); ++i) {
+                const std::int32_t relayed = enclosingIndex(c, i);
+                if (relayed >= 0 && writesSlot(target, i)) {
+                    changed |= writtenSlots[maker.getOperation()]
+                                   .insert(static_cast<unsigned>(relayed))
+                                   .second;
+                }
+            }
         }
     }
     // Cells with one dominating write are censused after the fixpoint, because
@@ -143,6 +157,12 @@ void closureLifter::census(bool cellFactsOnly) {
     // choice: a cell singleWriteCensus took is copied into a parameter,
     // which costs no pointer and no indirection.
     sharedCellCensus();
+}
+
+bool closureLifter::writesSlot(ctjs::FuncOp target, unsigned slot) {
+    if (!slotsPrecise) { return mutatesUpvalue.contains(target.getOperation()); }
+    const auto found = writtenSlots.find(target.getOperation());
+    return found != writtenSlots.end() && found->second.contains(slot);
 }
 
 } // namespace ctcompile::ctnative::lowering_detail

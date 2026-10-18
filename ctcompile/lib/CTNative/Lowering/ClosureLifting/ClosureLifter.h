@@ -102,6 +102,16 @@ struct closureLifter {
     /// H that writes it is not constant either, which is why this set is
     /// computed as a fixpoint.
     llvm::DenseSet<mlir::Operation *> mutatesUpvalue;
+    /// The same facts per slot: the slots j each function writes, directly or
+    /// through a closure it makes that relays its slot j (`enclosing_indices`)
+    /// and writes it. A cell captured into slot j of G is written only if G
+    /// writes slot j, so G may write its other slots and the cell stays
+    /// constant (writesSlot). A store through any closure but the function's
+    /// own makes every answer the per-function one (slotsPrecise).
+    llvm::DenseMap<mlir::Operation *, llvm::SmallDenseSet<unsigned, 4>> writtenSlots;
+    bool slotsPrecise = true;
+    /// Whether `target` may write its upvalue slot `slot`.
+    bool writesSlot(ctjs::FuncOp target, unsigned slot);
     /// Functions in which a call may not become a ctjs.call_direct: op::call
     /// pushes its frame with the pending new.target, and call_direct
     /// materialises undefined for it. ResolveGlobals refuses the same shape.
@@ -181,7 +191,7 @@ struct closureLifter {
     //
     // The cells rule 1 cannot take: written twice, written on only one path,
     // or (most commonly) written by a closure with `ctjs.store_upvalue`, which
-    // `mutatesUpvalue` marks and `isConstantCell` refuses. There is no single
+    // `writtenSlots` records and `isConstantCell` refuses. There is no single
     // value to copy into a parameter, so no by-value copy can be correct.
     //
     // So the box becomes an ordinary frame-local variable and the capture
@@ -550,6 +560,9 @@ struct closureLifter {
     /// `removeEventListener` call (at least one adding it), with those calls. Judged by
     /// whyNotHostCallback and rewritten by rewriteHostCallback, as arrayCallbacks are.
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CallOp, 1>> hostCallbacks;
+    /// Turns a listener that removes itself through its own binding into a
+    /// listener the census takes, before any census reads the binding.
+    void bindSelfRemovingListeners();
     void hostCallbackCensus();
     std::optional<std::string> whyNotHostCallback(ctjs::CreateClosureOp c);
     void rewriteHostCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
