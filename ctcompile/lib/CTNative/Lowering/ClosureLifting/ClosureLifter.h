@@ -594,6 +594,10 @@ struct closureLifter {
 
     void sharedCellCensus();
 
+    /// Gives each capture of a binding that no write can change once the
+    /// closure exists a never-written cell of its own (Cells.cpp).
+    void snapshotSettledCaptures();
+
     ctjs::CellSetOp dominatingWriteOf(ctjs::CreateCellOp cell);
 
     bool writeReachesEveryRead(ctjs::CreateCellOp cell, ctjs::CellSetOp store);
