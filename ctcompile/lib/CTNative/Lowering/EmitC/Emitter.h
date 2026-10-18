@@ -200,9 +200,9 @@ struct lowering {
     /// disagree on a field's type, the class is a template over only the
     /// disagreeing positions: `{hit: false, at: 0}` and `{hit: 0, at: 0}`
     /// become `template <class T0> class ctn_at_hit { double at; T0 hit; };`.
-    /// A family that agrees everywhere is not a template. A variant field is
-    /// not used because each site is monomorphic, and a variant would put a
-    /// `std::visit` in front of every read.
+    /// A family that agrees everywhere is not a template. A field of a union
+    /// type is not used because each site is monomorphic, and a union would
+    /// test its tag in front of every read.
     ///
     /// Admission allows scalar fields and checked owning method-table slots, so
     /// a family may vary between scalar carriers and table schemas across
