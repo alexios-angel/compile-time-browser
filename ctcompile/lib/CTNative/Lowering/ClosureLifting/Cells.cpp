@@ -338,8 +338,7 @@ void closureLifter::snapshotSettledCaptures() {
         }
         // The operation of the closure's block that holds `op`, or null.
         const auto levelOf = [&](mlir::Operation * op) {
-            while (op && op->getBlock() != c->getBlock()) { op = op->getParentOp(); }
-            return op;
+            return c->getBlock()->findAncestorOpInBlock(*op);
         };
         unsigned writes = 0;
         mlir::Operation * direct = nullptr;
