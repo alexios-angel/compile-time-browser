@@ -219,281 +219,144 @@ def string_entries(script):
     return ",".join(script.get("string_entries", []))
 
 
-def skim(text, regexes=False):
-    """`text` with comments and string/template literals blanked to spaces,
-    keeping newlines, so structure scans (braces, declarations) see code only.
-    With `regexes`, also blanks what looks like a regular-expression literal: a
-    `/` after anything but an identifier, number, `)`, `]`, `++` or `--` (the
-    usual heuristic); a division after one of those stays readable."""
-    out, i, n = list(text), 0, len(text)
-    significant = ""  # the last non-space character kept (quoted text reads as its quote)
-    tail = ""  # the last two, so `++` and `--` read as one token
-    while i < n:
-        c = text[i]
-        if c in "\"'`":
-            quote = c
-            out[i] = " "
-            i += 1
-            while i < n:
-                if text[i] == "\\":
-                    out[i] = out[i + 1] = " "
-                    i += 2
-                    continue
-                done = text[i] == quote
-                if text[i] != "\n":
-                    out[i] = " "
-                i += 1
-                if done:
-                    break
-            significant = quote
-            tail = (tail + quote)[-2:]
-        elif c == "/" and i + 1 < n and text[i + 1] == "/":
-            while i < n and text[i] != "\n":
-                out[i] = " "
-                i += 1
-        elif c == "/" and i + 1 < n and text[i + 1] == "*":
-            out[i] = out[i + 1] = " "
-            i += 2
-            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
-                if text[i] != "\n":
-                    out[i] = " "
-                i += 1
-            if i + 1 < n:
-                out[i] = out[i + 1] = " "
-                i += 2
-        elif regexes and c == "/" and not (
-            significant.isalnum() or significant in "_$)]" or tail.endswith(("++", "--"))
-        ):
-            out[i] = " "
-            i += 1
-            in_class = False
-            while i < n and text[i] != "\n":
-                if text[i] == "\\" and i + 1 < n:
-                    out[i] = out[i + 1] = " "
-                    i += 2
-                    continue
-                if text[i] == "[":
-                    in_class = True
-                elif text[i] == "]":
-                    in_class = False
-                done = text[i] == "/" and not in_class
-                out[i] = " "
-                i += 1
-                if done:
-                    break
-            significant = "/"
-            tail = (tail + "/")[-2:]
-        else:
-            if not c.isspace():
-                significant = c
-                tail = (tail + c)[-2:]
-            i += 1
-    return "".join(out)
+def skim(text):
+    """Blank ordinary quoted strings and comments, keeping line boundaries.
+
+    Slashes and backticks left in the result mark syntax this scan cannot
+    read. Callers must refuse it or use the original text conservatively.
+    """
+    literals = r"""//[^\r\n\u2028\u2029]*|/\*.*?\*/|"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'"""
+    return re.sub(
+        literals,
+        lambda match: "".join(c if c in "\r\n" else " " for c in match[0]),
+        text,
+        flags=re.S,
+    )
 
 
 def directives(text):
-    """A script's directive prologue (such as {"use strict"}): the string
-    literals of its leading expression statements, comments skipped. Two
-    scripts joined into one keep only the first script's prologue, so a join
-    is safe only when the prologues match."""
-    found = set()
-    i, n = 0, len(text)
+    """Read explicit directive statements; refuse ambiguous leading strings."""
+    found, pos = set(), 0
+    trivia = re.compile(r"(?:\s|//[^\r\n\u2028\u2029]*|/\*.*?\*/)*", re.S)
+    quoted = re.compile(r""""([^"\\\r\n]*)"|'([^'\\\r\n]*)'""")
     while True:
-        while i < n:
-            if text[i].isspace():
-                i += 1
-            elif text.startswith("//", i):
-                i = text.find("\n", i)
-                if i < 0:
-                    return found
-            elif text.startswith("/*", i):
-                end = text.find("*/", i + 2)
-                if end < 0:
-                    return found
-                i = end + 2
-            else:
-                break
-        if i >= n or text[i] not in "\"'":
+        pos = trivia.match(text, pos).end()
+        if text.startswith("/*", pos):
+            raise ValueError("an unterminated comment hides the directive prologue")
+        if pos == len(text) or text[pos] not in "\"'":
             return found
-        quote = text[i]
-        i += 1
-        value = []
-        while i < n and text[i] != quote:
-            if text[i] == "\\" and i + 1 < n:
-                i += 1
-            value.append(text[i])
-            i += 1
-        if i >= n:
+        match = quoted.match(text, pos)
+        if not match:
+            raise ValueError("the directive prologue uses escapes or an unterminated string")
+        pos = trivia.match(text, match.end()).end()
+        if pos < len(text) and text[pos] != ";":
+            raise ValueError("a leading string is not an explicit directive statement")
+        found.add(next(value for value in match.groups() if value is not None))
+        if pos == len(text):
             return found
-        i += 1  # past the closing quote
-        found.add("".join(value))
-        while i < n and text[i] in " \t":
-            i += 1
-        if i < n and text[i] == ";":
-            i += 1
+        pos += 1
 
 
 WORD = re.compile(r"[A-Za-z_$][\w$]*")
 
 
-def binding_names(code, start):
-    """The names one declarator binds, from its start up to `=` or the list's
-    end: a plain name, or the identifiers of a destructuring pattern at its
-    first nesting level (defaults after `=` and keys before `:` skipped, rest
-    elements read by their last name)."""
-    pos = start
-    while pos < len(code) and code[pos].isspace():
-        pos += 1
-    if pos >= len(code):
-        return set(), pos
-    if code[pos] not in "{[":
-        match = WORD.match(code, pos)
-        return ({match.group(0)}, match.end()) if match else (set(), pos)
-    # A destructuring pattern: every identifier at nesting level 1 that is not
-    # a property key (not followed by `:`) and not inside a default value.
-    names, depth, pos = set(), 0, pos
-    key_or_default = False
-    while pos < len(code):
-        c = code[pos]
-        if c in "{[":
-            depth += 1
-            key_or_default = False
-        elif c in "}]":
-            depth -= 1
-            if depth == 0:
-                return names, pos + 1
-        elif depth == 1:
-            if c == ":":
-                key_or_default = True
-            elif c == ",":
-                key_or_default = False
-            elif c == "=":
-                # A default value: skip it to the next `,` at level 1 or out.
-                inner = 0
-                pos += 1
-                while pos < len(code) and (inner or code[pos] not in ",}]"):
-                    if code[pos] in "{[(":
-                        inner += 1
-                    elif code[pos] in "})]":
-                        if inner:
-                            inner -= 1
-                        elif code[pos] in "}]":
-                            break
-                    pos += 1
-                continue
-            elif not key_or_default:
-                match = WORD.match(code, pos)
-                if match and match.group(0) not in (
-                    "true", "false", "null", "undefined", "new", "typeof", "in", "of", "instanceof",
-                ):
-                    names.add(match.group(0))
-                    pos = match.end()
-                    continue
-        pos += 1
-    return names, pos
+def top_level_declarations(text, strict=False):
+    """Overapproximate script bindings; raise ValueError on unreadable syntax.
 
-
-def top_level_declarations(text):
-    """The names `text` declares at its top level: function and class
-    declarations and var/let/const bindings at brace depth 0, including
-    generator functions, comma-separated binding lists and destructuring
-    patterns. A declaration at depth 0 of a later script hoists into a joined
-    program, changing what an earlier script sees; one inside a block or
-    function body does not."""
+    Only balanced function bodies can be skipped: var in any other block,
+    and sloppy block functions under Annex B, may bind at script scope.
+    """
     code = skim(text)
-    names, pos, n = set(), 0, len(code)
-    depth = 0
-    depth_at = [0] * n
-    for i, c in enumerate(code):
-        depth_at[i] = depth
-        if c == "{":
-            depth += 1
-        elif c == "}":
-            depth = max(0, depth - 1)
-    while pos < n:
-        match = WORD.search(code, pos)
-        if not match:
-            break
-        word = match.group(0)
-        if depth_at[match.start()] != 0:
-            pos = match.end()
+    if "/" in code:
+        raise ValueError("the probe uses a regular expression or a division")
+    if any(c in code for c in "`\\\"'") or not code.isascii():
+        raise ValueError("the probe uses a template, escape or unreadable quoted text")
+    tokens = re.findall(r"[A-Za-z_$][\w$]*|[^\s]", code)
+    pairs, stack, depths, depth = {}, [], [], 0
+    for i, token in enumerate(tokens):
+        depths.append(depth)
+        if token in "({[":
+            stack.append(i)
+            depth += token == "{"
+        elif token in ")}]":
+            if not stack or tokens[stack[-1]] != {")": "(", "}": "{", "]": "["}[token]:
+                raise ValueError("the probe has unbalanced delimiters")
+            pairs[stack.pop()] = i
+            depth -= token == "}"
+    if stack:
+        raise ValueError("the probe has unbalanced delimiters")
+    names, bodies, pos = set(), set(), 0
+    while pos < len(tokens):
+        if pos in bodies:
+            pos = pairs[pos] + 1
             continue
-        if word in ("function", "class"):
-            # function NAME, function* NAME, class NAME; an anonymous
-            # `export default function () {}` binds nothing the library names.
-            at = match.end()
-            while at < n and code[at].isspace():
+        token = tokens[pos]
+        if token == "function":
+            if pos and tokens[pos - 1] == ".":
+                raise ValueError("the probe uses function as a property name")
+            at = pos + 1
+            if at < len(tokens) and tokens[at] == "*":
                 at += 1
-            if word == "function" and at < n and code[at] == "*":
+            if at < len(tokens) and WORD.fullmatch(tokens[at]):
+                if not depths[pos] or not strict:
+                    names.add(tokens[at])
                 at += 1
-                while at < n and code[at].isspace():
-                    at += 1
-            named = WORD.match(code, at)
-            if named:
-                names.add(named.group(0))
-            pos = match.end()
-        elif word in ("var", "let", "const"):
-            pos = match.end()
-            while pos < n:
-                bound, pos = binding_names(code, pos)
-                names.update(bound)
-                while pos < n and code[pos].isspace():
-                    pos += 1
-                if pos < n and code[pos] == "=":
-                    # Skip the initializer to the next depth-0 comma or `;`.
-                    inner = 0
-                    pos += 1
-                    while pos < n and (inner or code[pos] not in ",;"):
-                        if code[pos] in "({[":
-                            inner += 1
-                        elif code[pos] in ")}]":
-                            if inner:
-                                inner -= 1
-                        pos += 1
-                if pos >= n or code[pos] == ";":
-                    break
-                if code[pos] == ",":
-                    pos += 1
-                    continue
-                break
-        else:
-            pos = match.end()
+            if at >= len(tokens) or tokens[at] != "(":
+                raise ValueError("the probe has an unreadable function header")
+            body = pairs[at] + 1
+            if body >= len(tokens) or tokens[body] != "{":
+                raise ValueError("the probe has an unreadable function body")
+            bodies.add(body)
+        if token == "var" or (token in ("let", "const") and not depths[pos]):
+            # ponytail: all identifiers are possible bindings, including keys
+            # and initializer uses. Use a JS AST if this refuses a needed join.
+            names.update(t for t in tokens if WORD.fullmatch(t) and t != token)
+        elif token == "class" and not depths[pos]:
+            if pos + 1 >= len(tokens) or not WORD.fullmatch(tokens[pos + 1]):
+                raise ValueError("the probe has an unreadable class declaration")
+            names.add(tokens[pos + 1])
+        pos += 1
     return names
 
 
 def join_problem(library, probe):
-    """Why joining `library` and `probe` into one classic script would change
-    what they do as two scripts, or None when the join is safe. Two scripts run
-    as two programs: the first before the second's declarations exist, and each
-    with its own directive prologue. When the scan cannot read the probe
-    safely, it says so and the join is refused: a refused join is safe, a wrong
-    join is not."""
-    if directives(library) != directives(probe):
-        return (
-            "their directive prologues differ "
-            f"({sorted(directives(library))} vs {sorted(directives(probe))}), "
-            "and one joined script keeps only the first"
-        )
-    # A `/` outside comments is a regular-expression literal or a division;
-    # skim would blank a quoted character inside one and could hide a probe
-    # declaration, so the scan refuses rather than risk a wrong join.
-    if "/" in skim(probe):
-        return (
-            "the probe uses a regular expression or a division, which the "
-            "declaration scan cannot read safely"
-        )
-    # The regex/division ambiguity in the library is undecidable by a lexical
-    # scan, so read it both ways and refuse on any mention either reading
-    # shows: blanking too little and blanking too much are both covered.
-    readings = (skim(library), skim(library, regexes=True))
-    mentioned = {
-        name
-        for name in top_level_declarations(probe)
-        if any(re.search(rf"(?<![\w$]){re.escape(name)}(?![\w$])", code) for code in readings)
-    }
+    """Refuse a join with uncertain directives or possibly visible bindings.
+
+    This guards hoisting and strictness, not per-script exception boundaries.
+    script_run separately requires the VM reference to complete successfully
+    and compares its nonempty output with the joined program's output.
+    """
+    try:
+        library_directives, probe_directives = directives(library), directives(probe)
+        if library_directives != probe_directives:
+            return (
+                "their directive prologues differ "
+                f"({sorted(library_directives)} vs {sorted(probe_directives)}), "
+                "and one joined script keeps only the first"
+            )
+        names = top_level_declarations(probe, strict="use strict" in probe_directives)
+    except ValueError as error:
+        return f"the join scan cannot read the scripts safely: {error}"
+    if r"\u" in library:
+        return "the library may use escaped identifiers, which the join scan cannot read safely"
+    code = skim(library)
+    # Ambiguous literals can hide executable text. Searching every original
+    # byte over-refuses strings/comments but cannot erase a real reference.
+    if any(c in code for c in "/`\\\"'"):
+        code = library
+    # This lexical check does not track global this or aliases of the global.
+    global_object = r"(?<![\w$])(?:globalThis|window|self)(?![\w$])"
+    if re.search(global_object + r"\s*\[", code):
+        return "computed global-property access may observe the probe's hoisted declarations"
+    reflection = r"(?:Object\s*\.\s*(?:keys|getOwnPropertyNames)|Reflect\s*\.\s*ownKeys)"
+    if re.search(reflection + r"\s*\(\s*(?:\(\s*)*" + global_object, code) or re.search(
+        r"\bin\s*(?:\(\s*)*" + global_object, code
+    ):
+        return "global reflection may observe the probe's hoisted declarations"
+    mentioned = {name for name in names if name in code}
     if mentioned:
         return (
-            f"the probe declares {sorted(mentioned)} at its top level, which the "
+            f"the probe may declare {sorted(mentioned)} at script scope, which the "
             "library mentions; joined, the declaration hoists above the library"
         )
     return None
@@ -939,9 +802,9 @@ def script_run(ctx, name):
         base.parent.mkdir(parents=True, exist_ok=True)
         source, module, cpp = (Path(f"{base}{suffix}") for suffix in (".js", ".emitc.mlir", ".cpp"))
         # One classic-script program: the library's statements, then the probe's.
-        # The join is refused when it would change what the two do as two
-        # scripts (hoisting or strictness); a changed join must be two
-        # compilations, which build-native does not do yet.
+        # Refuse uncertain directives or possibly visible probe bindings. This
+        # is not a per-script exception boundary: probed requires the reference
+        # to succeed first, then compares the joined output exactly.
         library_text, probe_text = ctx.scripts[item]["path"].read_text(), probe.read_text()
         problem = join_problem(library_text, probe_text)
         if problem:
