@@ -74,10 +74,7 @@ struct EmitCEliminateBlockArgumentsPass
         }
 
         const auto lowered = getOperation().walk<mlir::WalkOrder::PostOrder>(
-            [&](ec::FuncOp function) {
-                return mlir::failed(eliminate(function)) ? mlir::WalkResult::interrupt()
-                                                        : mlir::WalkResult::advance();
-            });
+            [&](ec::FuncOp function) { return mlir::WalkResult(eliminate(function)); });
         if (lowered.wasInterrupted()) { signalPassFailure(); }
     }
 
