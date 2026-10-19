@@ -387,11 +387,8 @@ struct presenceAnalysis {
                 }
                 if (action != "set") { continue; }
                 const auto payload = storedPayloads.lookup(call);
-                const auto tag = payload.tag();
                 if (!ctjs::constantAttr<ctjs::StringAttr>(call.getArgs()[0]) ||
-                    (tag != mlir::TypeID::get<ctjs::BooleanAttr>() &&
-                     tag != mlir::TypeID::get<ctjs::NumberAttr>() &&
-                     tag != mlir::TypeID::get<ctjs::StringAttr>())) {
+                    mapScalarTag(payload).empty()) {
                     valid = false;
                     break;
                 }

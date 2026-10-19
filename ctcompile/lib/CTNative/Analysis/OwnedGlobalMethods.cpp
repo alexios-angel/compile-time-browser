@@ -824,9 +824,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         auto store = edge.initialization;
         if (read->getParentOp() != entry || store->getParentOp() != entry ||
             read.getName() != store.getName() || store.getValue() != edge.value ||
-            (edge.alternatives.tag() != mlir::TypeID::get<ctjs::NumberAttr>() &&
-             edge.alternatives.tag() != mlir::TypeID::get<ctjs::BooleanAttr>() &&
-             edge.alternatives.tag() != mlir::TypeID::get<ctjs::StringAttr>())) {
+            mapScalarTag(edge.alternatives).empty()) {
             reject("saved scalar read disagrees with the complete host proof");
             return;
         }
