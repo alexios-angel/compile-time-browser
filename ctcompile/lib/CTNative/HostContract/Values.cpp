@@ -83,13 +83,7 @@ bool analyzer::step() {
 /// Charges `count` steps. Running out sets `exhausted` and empties the
 /// budget, so every later query also fails.
 bool analyzer::spend(uint64_t count) {
-    if (count > remaining) {
-        exhausted = true;
-        remaining = 0;
-        return false;
-    }
-    remaining -= static_cast<unsigned>(count);
-    return true;
+    return chargeBudget(remaining, exhausted, count);
 }
 
 /// True when every operand of `operation` dominates it.
