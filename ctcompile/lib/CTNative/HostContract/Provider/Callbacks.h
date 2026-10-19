@@ -18,7 +18,7 @@ namespace ctcompile::ctnative::host_detail {
 /// transaction, including those writes. Records the callback in `proof` and
 /// returns its result; nothing rewrites IR.
 prefixValue providerCallback(prefixAnalysis & prefix, ctjs::CallOp sourceCall, prefixValue callee,
-                             prefixValue receiver, llvm::ArrayRef<prefixValue> arguments,
+                             llvm::ArrayRef<prefixValue> arguments,
                              llvm::StringMap<prefixValue> & globals,
                              HostPrefixProviderSummary & proof);
 

@@ -36,11 +36,7 @@ bool Walk::walk(mlir::Block & block, unsigned depth) {
             return false;
         }
         if (callbackReads.contains(&operation) || callbackCalls.contains(&operation)) {
-            for (mlir::Value operand : operation.getOperands()) {
-                if (!owner.step() || !owner.dominance.dominates(operand, &operation)) {
-                    return false;
-                }
-            }
+            if (!owner.operandsDominate(&operation)) { return false; }
             if (callbackCalls.contains(&operation)) {
                 auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
                 auto args =
@@ -362,7 +358,7 @@ bool Walk::walkIf(mlir::scf::IfOp branch, unsigned depth) {
         const auto elseSize = sizeFacts(state);
         if (!elseSize) { return false; }
         state.currentSize = then.currentSize == elseSize->exact ? then.currentSize : std::nullopt;
-        llvm::SmallVector<entry_fact> joined;
+        llvm::SmallVector<CapturedMapEntry> joined;
         for (auto left : then.entries) {
             if (!owner.step()) { return false; }
             bool matched = false;

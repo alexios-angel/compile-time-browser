@@ -122,24 +122,13 @@ bool providerObjectState::retain(unsigned id, mlir::Operation * operation) {
 
 prefixValue providerObjectState::operation(mlir::Operation * operation,
                                            prefixAnalysis::environment & values) {
-    mlir::Value receiver, key;
-    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
-        receiver = read.getObject();
-        key = read.getKey();
-    } else if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
-        receiver = write.getObject();
-        key = write.getKey();
-    } else if (auto erase = llvm::dyn_cast<ctjs::DeletePropertyOp>(operation)) {
-        receiver = erase.getObject();
-        key = erase.getKey();
-    } else if (auto erase = llvm::dyn_cast<ctjs::DeleteNamedOp>(operation)) {
-        receiver = erase.getObject();
-    } else {
+    if (!llvm::isa<ctjs::GetPropertyOp, ctjs::SetPropertyOp, ctjs::DeletePropertyOp,
+                   ctjs::DeleteNamedOp>(operation)) {
         return {};
     }
-    const auto owner = values.lookup(receiver);
+    const auto owner = values.lookup(operation->getOperand(0));
     auto named = llvm::dyn_cast<ctjs::DeleteNamedOp>(operation);
-    const auto name = named ? named.getName() : ctjs::constantKey(key);
+    const auto name = named ? named.getName() : ctjs::constantKey(operation->getOperand(1));
     if (owner.kind != prefixValue::Kind::object || !ctjs::ordinaryKey(name) ||
         !prefix.spendText(name) || !accepts(owner.object)) {
         return {};
