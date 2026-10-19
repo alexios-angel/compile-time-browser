@@ -84,35 +84,31 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
             return true;
         }
     }
-    llvm::StringRef helper;
-    llvm::SmallVector<mlir::Value> operands;
-    mlir::Type result;
     const auto hasStringAlternative = [](mlir::Type type) {
         static const llvm::StringSet<> carriers{kStringType,        kNullableStringType,
                                                 kBooleanStringType, kNullableBooleanStringType,
                                                 kNumberStringType,  kNullableNumberStringType};
         return carriers.contains(opaqueSpelling(type));
     };
-    if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(op);
-        compare &&
-        (compare.getKind() == ctjs::CompareKind::Eq ||
-         compare.getKind() == ctjs::CompareKind::StrictEq) &&
-        (hasStringAlternative(compare.getLhs().getType()) ||
-         hasStringAlternative(compare.getRhs().getType()))) {
-        // Two definite Strings keep the direct C++ comparison. Any mixed or
-        // optional pair keeps its tags until the runtime helper applies the
-        // JavaScript equality rule.
-        if (compare.getLhs().getType() == string && compare.getRhs().getType() == string) {
-            return false;
-        }
-        helper = compare.getKind() == ctjs::CompareKind::Eq ? "ctnative::primitive_equal"
-                                                            : "ctnative::primitive_strict_equal";
-        operands = {compare.getLhs(), compare.getRhs()};
-        result = carrierType(context, carrier::boolean);
-    } else {
+    auto compare = llvm::dyn_cast<ctjs::CompareOp>(op);
+    if (!compare ||
+        (compare.getKind() != ctjs::CompareKind::Eq &&
+         compare.getKind() != ctjs::CompareKind::StrictEq) ||
+        (!hasStringAlternative(compare.getLhs().getType()) &&
+         !hasStringAlternative(compare.getRhs().getType()))) {
         return false;
     }
-    auto value = callValue(b, where, result, helper, operands);
+    // Two definite Strings keep the direct C++ comparison. Any mixed or
+    // optional pair keeps its tags until the runtime helper applies the
+    // JavaScript equality rule.
+    if (compare.getLhs().getType() == string && compare.getRhs().getType() == string) {
+        return false;
+    }
+    const auto helper = compare.getKind() == ctjs::CompareKind::Eq
+                            ? "ctnative::primitive_equal"
+                            : "ctnative::primitive_strict_equal";
+    auto value = callValue(b, where, carrierType(context, carrier::boolean), helper,
+                          mlir::ValueRange{compare.getLhs(), compare.getRhs()});
     swap(convertScalar(b, where, value, op->getResult(0).getType()));
     return true;
 }
