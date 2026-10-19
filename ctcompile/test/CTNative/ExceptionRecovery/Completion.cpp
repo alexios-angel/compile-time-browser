@@ -479,8 +479,8 @@ function guarded(text) {
                        printed(*bypass) == beforeBypass,
                    "a conditional bypass cannot publish even one checked invocation")) {
             llvm::errs() << "  maxCalls=" << maxCalls << ", proved=" << inspected.proved()
-                         << ", chain=" << inspected.chain.size() << ", refusal="
-                         << inspected.refusal << '\n';
+                         << ", chain=" << inspected.chain.size()
+                         << ", refusal=" << inspected.refusal << '\n';
         }
     }
     auto straight = import(context, R"js(
