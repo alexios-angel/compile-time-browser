@@ -41,6 +41,11 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                                                       : "DOM custom iterator budget exhausted");
     };
     const auto undefined = dom_source_detail::DOMSource::undefined;
+    const auto customOpen = [](ctjs::CallOp call) {
+        return call && ctjs::calleeGlobalName(call) == "__ctbrowser_for_of_open" &&
+               call.getArgs().size() == 1 &&
+               call.getArgs()[0].getDefiningOp<ctjs::CreateObjectOp>();
+    };
     // A String key constant, and the hidden own slot of iterator state `index`.
     const auto keyConstant = [&](mlir::OpBuilder & at, mlir::Location where, llvm::StringRef name) {
         return ctjs::ConstantOp::create(at, where,
@@ -85,10 +90,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(operation)) {
             undefinedWritten |= store.getNameAttr() && store.getName() == "undefined";
         }
-        if (auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
-            call && ctjs::calleeGlobalName(call) == "__ctbrowser_for_of_open" && call.getArgs().size() == 1) {
-            custom |= static_cast<bool>(call.getArgs()[0].getDefiningOp<ctjs::CreateObjectOp>());
-        }
+        custom |= customOpen(llvm::dyn_cast<ctjs::CallOp>(operation));
         return mlir::WalkResult::advance();
     });
     if (census.wasInterrupted()) { return error("DOM custom iterator budget exhausted"); }
@@ -197,8 +199,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     ctjs::CallOp open;
     const auto opens = entry.walk([&](ctjs::CallOp call) {
         if (!spend()) { return mlir::WalkResult::interrupt(); }
-        if (ctjs::calleeGlobalName(call) != "__ctbrowser_for_of_open" || call.getArgs().size() != 1 ||
-            !call.getArgs()[0].getDefiningOp<ctjs::CreateObjectOp>()) {
+        if (!customOpen(call)) {
             return mlir::WalkResult::advance();
         }
         if (open) { return mlir::WalkResult::interrupt(); }
