@@ -869,9 +869,7 @@ inline js_num to_number(const nullable_string & value) {
 namespace detail {
 /// The carriers whose ToNumber runs no JavaScript.
 template <class T>
-concept number_operand = one_of<T, js_num, js_boolean_t, js_string, nullable_scalar,
-                                nullable_string, undefined_t, js_null_t> ||
-                         primitive_union<T>;
+concept number_operand = primitive_equality_operand<T>;
 /// The carriers that may or may not hold a String, where the kind of `+` and of
 /// a relational comparison is only known at run time.
 template <class T>

@@ -31,9 +31,7 @@ namespace ctnative {
 /// converting constructors (a pointer converts to bool, and bool to
 /// nullable_scalar) would claim `const char *` from the standard formatter.
 template <class T>
-concept js_formattable = detail::one_of<T, js_num, js_boolean_t, js_string, nullable_scalar,
-                                        nullable_string, undefined_t, js_null_t> ||
-                         detail::primitive_union<T>;
+concept js_formattable = primitive_equality_operand<T>;
 
 /// std::format with every argument spelled by ToString, as a String: a
 /// template literal's value.
