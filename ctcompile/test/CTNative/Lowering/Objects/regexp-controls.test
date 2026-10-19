@@ -1,6 +1,6 @@
 # Control characters in RegExp constructor patterns must be escaped in C++.
 # RUN: split-file %s %t
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/controls.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/native.mlir
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/controls.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/native.mlir
 # RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/native.mlir
 # RUN: ctjs-opt %t/native.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/native.cpp
 # RUN: %gxx -O2 %t/native.cpp -o %t/gcc && %t/gcc | FileCheck %s --check-prefix=OUTPUT
