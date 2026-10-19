@@ -32,25 +32,10 @@ namespace ctcompile::ctnative {
 
 namespace {
 
-/// The text of a string constant, or empty when `value` is not one. Unlike
-/// constantKey, this tells the empty string from a non-constant.
-std::optional<llvm::StringRef> stringConstantText(mlir::Value value) {
-    auto text = ctjs::constantAttr<ctjs::StringAttr>(value);
-    if (!text) { return std::nullopt; }
-    return text.getValue();
-}
-
-/// Whether `op` builds the regular expression `/\s+/` (no flags): a call of
-/// the importer's literal factory with exactly those two constant strings.
-bool isWhitespaceRegExp(mlir::Operation * op) {
-    auto call = llvm::dyn_cast_or_null<ctjs::CallOp>(op);
-    if (!call || ctjs::calleeGlobalName(call) != "__ctbrowser_regexp" ||
-        call.getArgs().size() != 2) {
-        return false;
-    }
-    const auto pattern = stringConstantText(call.getArgs()[0]);
-    const auto flags = stringConstantText(call.getArgs()[1]);
-    return pattern && *pattern == "\\s+" && flags && flags->empty();
+/// Whether `separator` is the regular expression literal `/\s+/` (no flags).
+bool isWhitespaceRegExp(mlir::Value separator) {
+    auto literal = TypeInference::regExpLiteral(separator);
+    return literal && literal->first == "\\s+" && literal->second.empty();
 }
 
 /// Whether `call` is `receiver.key(...)` with exactly that read as its callee
@@ -75,8 +60,7 @@ TypeInference::VectorCall TypeInference::vectorCallOf(mlir::Operation * op) {
     if (arity == 0 && isMethodCall(call, "sort")) { return VectorCall::sort; }
     if (arity == 1 && isMethodCall(call, "includes")) { return VectorCall::includes; }
     if (arity == 1 && isMethodCall(call, "split")) {
-        mlir::Operation * separator = call.getArgs()[0].getDefiningOp();
-        if (isWhitespaceRegExp(separator)) { return VectorCall::splitSpace; }
+        if (isWhitespaceRegExp(call.getArgs()[0])) { return VectorCall::splitSpace; }
         // Any other RegExp separator is not a String; admission refuses the
         // RegExp itself by name.
         return VectorCall::split;
