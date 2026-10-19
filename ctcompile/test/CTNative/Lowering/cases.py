@@ -1284,9 +1284,9 @@ CASES = {
     "Objects/classes/held-this": [
         "split-file %s %t",
         "for name in timer constructor owned by-value writes passes stored constructor-stored promise; do    ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/$name.mlir; done",
-        'FileCheck %s --check-prefix=TIMER --implicit-check-not="this rewrite cannot make direct" --implicit-check-not="does not carry a receiver through" < %t/timer.mlir',
-        'FileCheck %s --check-prefix=CONSTRUCTOR --implicit-check-not="this rewrite cannot make direct" --implicit-check-not="does not carry a receiver through" < %t/constructor.mlir',
-        'FileCheck %s --check-prefix=OWNED --implicit-check-not="does not own it by value" < %t/owned.mlir',
+        'FileCheck %s --check-prefix=TIMER --implicit-check-not="this rewrite cannot make direct" --implicit-check-not="carry a receiver through" --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/timer.mlir',
+        'FileCheck %s --check-prefix=CONSTRUCTOR --implicit-check-not="this rewrite cannot make direct" --implicit-check-not="carry a receiver through" --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/constructor.mlir',
+        'FileCheck %s --check-prefix=OWNED --implicit-check-not="own it by value" --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/owned.mlir',
         "FileCheck %s --check-prefix=BY-VALUE --implicit-check-not=ctnative.held_this --implicit-check-not=ctnative.instance_class < %t/by-value.mlir",
         "FileCheck %s --check-prefix=BY-VALUE --implicit-check-not=ctnative.held_this --implicit-check-not=ctnative.instance_class < %t/writes.mlir",
         "FileCheck %s --check-prefix=BY-VALUE --implicit-check-not=ctnative.held_this --implicit-check-not=ctnative.instance_class < %t/passes.mlir",

@@ -8,18 +8,17 @@
 // shared_from_this (EmitC/HostCallbacks.cpp). So the instance lives as long as
 // the callback, even after the registry drops it.
 //
-// The checks pin the lift: the method or constructor hands its own `this` to
-// the timer, and the callback calls the class's method through its capture.
-// Whether the whole program is native also depends on the registry Map's
-// identity proof (Analysis/NativeMap.cpp), which these checks leave out.
+// The positive checks follow the owner from the method or constructor into
+// the bound timer callback and through its method call or owned-member read.
+// The negatives pin the refused lifetime and escape cases.
 //
 // RUN: split-file %s %t
 // RUN: for name in timer constructor owned by-value writes passes stored constructor-stored promise; do \
 // RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/$name.mlir; done
-// RUN: FileCheck %s --check-prefix=TIMER --implicit-check-not="this rewrite cannot make direct" --implicit-check-not="does not carry a receiver through" < %t/timer.mlir
-// RUN: FileCheck %s --check-prefix=CONSTRUCTOR --implicit-check-not="this rewrite cannot make direct" --implicit-check-not="does not carry a receiver through" < %t/constructor.mlir
-// RUN: FileCheck %s --check-prefix=OWNED --implicit-check-not="does not own it by value" < %t/owned.mlir
+// RUN: FileCheck %s --check-prefix=TIMER --implicit-check-not="this rewrite cannot make direct" --implicit-check-not="carry a receiver through" --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/timer.mlir
+// RUN: FileCheck %s --check-prefix=CONSTRUCTOR --implicit-check-not="this rewrite cannot make direct" --implicit-check-not="carry a receiver through" --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/constructor.mlir
+// RUN: FileCheck %s --check-prefix=OWNED --implicit-check-not="own it by value" --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/owned.mlir
 // RUN: FileCheck %s --check-prefix=BY-VALUE --implicit-check-not=ctnative.held_this --implicit-check-not=ctnative.instance_class < %t/by-value.mlir
 // RUN: FileCheck %s --check-prefix=BY-VALUE --implicit-check-not=ctnative.held_this --implicit-check-not=ctnative.instance_class < %t/writes.mlir
 // RUN: FileCheck %s --check-prefix=BY-VALUE --implicit-check-not=ctnative.held_this --implicit-check-not=ctnative.instance_class < %t/passes.mlir
@@ -27,32 +26,42 @@
 // RUN: FileCheck %s --check-prefix=CONSTRUCTOR-STORED < %t/constructor-stored.mlir
 // RUN: FileCheck %s --check-prefix=PROMISE < %t/promise.mlir
 
-// timer.js: `later` hands its `this` to setTimeout as the capture of the arrow
-// it registers, and the callback calls `grow` on that capture directly.
-// TIMER: ctjs.func {{(private )?}}@Widget${{[0-9]+}}({{.*}}ctnative.instance_class = "Widget"
-// TIMER: ctjs.func {{(private )?}}@later${{[0-9]+}}(
-// TIMER: ctjs.call %{{[0-9]+}}(%{{[0-9]+}}, %{{[0-9]+}}, %arg0) {ctnative.host_callback = @fn$[[CB:[0-9]+]], ctnative.host_timer = "setTimeout"
-// TIMER: ctjs.func @fn$[[CB]](
-// TIMER: ctjs.call_direct @grow${{[0-9]+}}(%arg3,
+// timer.js: a method borrows Widget, but the bound timer keeps its owner.
+// TIMER: emitc.class @Widget attributes {ctnative.bases = ["std::enable_shared_from_this<Widget>"]
+// TIMER: emitc.func @later_{{[0-9]+}}(%arg0: !emitc.ptr<!emitc.opaque<"Widget">>)
+// TIMER: %[[FN:[0-9]+]] = literal "fn_[[CB:[0-9]+]]"
+// TIMER: %[[OWNER:[0-9]+]] = member_call_opaque %arg0 "shared_from_this"(){{.*}}-> !emitc.opaque<"std::shared_ptr<Widget>">
+// TIMER: %[[BOUND:[0-9]+]] = call_opaque "std::bind_front"(%[[FN]], %[[OWNER]])
+// TIMER: call_opaque "ctnative::setTimeout"(%[[BOUND]],
+// TIMER: emitc.func @fn_[[CB]](%arg0: !emitc.opaque<"std::shared_ptr<Widget>">)
+// TIMER: %[[SELF:[0-9]+]] = member_call_opaque %arg0 "get"()
+// TIMER: call @grow_{{[0-9]+}}(%[[SELF]])
 
-// constructor.js: the constructor's `this` is the owner itself, which the
-// timer's callback keeps the same way.
-// CONSTRUCTOR: ctjs.func {{(private )?}}@Widget${{[0-9]+}}({{.*}}ctnative.instance_class = "Widget"
-// CONSTRUCTOR: ctjs.call %{{[0-9]+}}(%{{[0-9]+}}, %{{[0-9]+}}, %arg0) {ctnative.host_callback = @fn$[[CB:[0-9]+]], ctnative.host_timer = "setTimeout"
-// CONSTRUCTOR: ctjs.func @fn$[[CB]](
-// CONSTRUCTOR: ctjs.call_direct @grow${{[0-9]+}}(%arg3,
+// constructor.js: the constructor already receives the shared owner and binds
+// it directly; its callback still calls grow through that same capture.
+// CONSTRUCTOR: emitc.class @Widget attributes {
+// CONSTRUCTOR: emitc.func @Widget_{{[0-9]+}}(%arg0: !emitc.opaque<"std::shared_ptr<Widget>">
+// CONSTRUCTOR: %[[FN:[0-9]+]] = literal "fn_[[CB:[0-9]+]]"
+// CONSTRUCTOR: %[[BOUND:[0-9]+]] = call_opaque "std::bind_front"(%[[FN]], %arg0)
+// CONSTRUCTOR: call_opaque "ctnative::setTimeout"(%[[BOUND]],
+// CONSTRUCTOR: emitc.func @fn_[[CB]](%arg0: !emitc.opaque<"std::shared_ptr<Widget>">)
+// CONSTRUCTOR: %[[SELF:[0-9]+]] = member_call_opaque %arg0 "get"()
+// CONSTRUCTOR: call @grow_{{[0-9]+}}(%[[SELF]])
 
-// owned.js: the registry class owns a helper by value
-// (instances-by-value.mlir), and its timer callback reads that field through
-// the `this` it holds. The helper stays an owned member, read in the callback
-// as in the method, since the callback keeps the member's owner alive.
-// (instances-by-value.mlir's arrow-passed.js is the same read with no
-// registry, refused.)
-// OWNED: ctjs.func {{(private )?}}@Modal${{[0-9]+}}({{.*}}ctnative.instance_class = "Modal"
-// OWNED: ctjs.set_property %arg0[%{{[0-9]+}}], %{{[0-9]+}} {ctnative.owned_instance}
-// OWNED: ctjs.call %{{[0-9]+}}(%{{[0-9]+}}, %{{[0-9]+}}, %arg0) {ctnative.host_callback = @fn$[[CB:[0-9]+]], ctnative.host_timer = "setTimeout"
-// OWNED: ctjs.func @fn$[[CB]](
-// OWNED: ctjs.get_property %arg3[%{{[0-9]+}}] {ctnative.owned_instance
+// owned.js: keeping Modal alive also keeps its by-value ScrollBarHelper alive.
+// OWNED: emitc.class @Modal attributes {ctnative.bases = ["std::enable_shared_from_this<Modal>"]
+// OWNED: emitc.field @_scrollBar : !emitc.opaque<"ctnative::owned<ScrollBarHelper>">
+// OWNED: emitc.func @hide_{{[0-9]+}}(%arg0: !emitc.ptr<!emitc.opaque<"Modal">>)
+// OWNED: %[[FN:[0-9]+]] = literal "fn_[[CB:[0-9]+]]"
+// OWNED: %[[OWNER:[0-9]+]] = member_call_opaque %arg0 "shared_from_this"(){{.*}}-> !emitc.opaque<"std::shared_ptr<Modal>">
+// OWNED: %[[BOUND:[0-9]+]] = call_opaque "std::bind_front"(%[[FN]], %[[OWNER]])
+// OWNED: call_opaque "ctnative::setTimeout"(%[[BOUND]],
+// OWNED: emitc.func @fn_[[CB]](%arg0: !emitc.opaque<"std::shared_ptr<Modal>">)
+// OWNED: assign %arg0{{.*}}to %[[SELF:[0-9]+]]
+// OWNED: %[[MEMBER:[0-9]+]] = "emitc.member_of_ptr"(%[[SELF]]) <{member = "_scrollBar"}>{{.*}}!emitc.lvalue<!emitc.opaque<"ctnative::owned<ScrollBarHelper>">>
+// OWNED: %[[ADDRESS:[0-9]+]] = address_of %[[MEMBER]]
+// OWNED: %[[HELPER:[0-9]+]] = call_opaque "ctnative::reading"(%[[ADDRESS]],
+// OWNED: call @reset_{{[0-9]+}}(%[[HELPER]])
 
 // Negative: an instance with no registry (by-value.js) has no owner the host
 // could keep, and neither has a registry class whose arrow writes a field
