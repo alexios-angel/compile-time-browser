@@ -543,11 +543,10 @@ PageNamedElements pageNamedElements(mlir::ModuleOp module) {
     return named;
 }
 
-llvm::SmallVector<RuntimeCodeSite> markRuntimeCode(mlir::ModuleOp module) {
-    llvm::SmallVector<RuntimeCodeSite> sites;
+void markRuntimeCode(mlir::ModuleOp module) {
     // Only a module that is its whole page keeps the model's promise that no
     // code is added later; the closure query the timer check makes assumes it.
-    if (!wholePage(module)) { return sites; }
+    if (!wholePage(module)) { return; }
     globals_detail::ClosureValues closures(module);
     llvm::SmallVector<std::pair<mlir::Operation *, std::string>> found;
     module.walk([&](mlir::Operation * op) {
@@ -604,9 +603,7 @@ llvm::SmallVector<RuntimeCodeSite> markRuntimeCode(mlir::ModuleOp module) {
     for (auto & [op, why] : found) {
         why += " (" + describe(op) + ")";
         op->setAttr(kRuntimeCode, builder.getStringAttr(why));
-        sites.push_back({op, std::move(why)});
     }
-    return sites;
 }
 
 } // namespace ctcompile::ctjs
