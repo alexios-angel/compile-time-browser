@@ -113,9 +113,7 @@ bool recovery::normalizeIndexSwitches(mlir::Operation * guarded) {
             yield->erase();
             switcher->getBlock()->getOperations().splice(switcher->getIterator(),
                                                          block.getOperations());
-            for (auto [result, value] : llvm::zip(switcher.getResults(), values)) {
-                result.replaceAllUsesWith(value);
-            }
+            switcher.getResults().replaceAllUsesWith(values);
             switcher.erase();
             continue;
         }
@@ -141,9 +139,7 @@ bool recovery::normalizeIndexSwitches(mlir::Operation * guarded) {
                 builder.setInsertionPointToEnd(&branch.getElseRegion().front());
             }
         }
-        for (auto [result, value] : llvm::zip(switcher.getResults(), first.getResults())) {
-            result.replaceAllUsesWith(value);
-        }
+        switcher.getResults().replaceAllUsesWith(first.getResults());
         switcher.erase();
     }
     return true;
