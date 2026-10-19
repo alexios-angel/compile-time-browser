@@ -20,7 +20,7 @@
 // value: hide() and reset() write through the member, and the reads after
 // them see the writes.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/modal.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/modal.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/modal.mlir
 // RUN: FileCheck %s --check-prefix=MODAL --implicit-check-not=ctnative.not_native < %t/modal.mlir
 // RUN: ctjs-opt %t/modal.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/modal.cpp
 // RUN: FileCheck %s --check-prefix=MODAL-CPP < %t/modal.cpp
@@ -45,7 +45,7 @@
 // only because returnsAnInstance accepts the return. Native, and the same
 // value as the interpreter and Node.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/inner.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/inner.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/inner.mlir
 // RUN: FileCheck %s --check-prefix=INNER --implicit-check-not=ctnative.not_native < %t/inner.mlir
 // RUN: ctjs-opt %t/inner.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/inner.cpp
 // RUN: FileCheck %s --check-prefix=INNER-CPP < %t/inner.cpp
@@ -62,7 +62,7 @@
 // A method called on `this` before the store: native, since a read there
 // would find the field undefined and throw as JavaScript does (early-read.js).
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/early.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/early.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/early.mlir
 // RUN: FileCheck %s --check-prefix=OWNED --implicit-check-not=ctnative.not_native < %t/early.mlir
 // RUN: ctjs-opt %t/early.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/early.cpp
 // RUN: %gxx -O2 %t/early.cpp -o %t/early-gcc
@@ -76,7 +76,7 @@
 // A store under a condition and a dispose method that stores null: native,
 // and the same value as the interpreter and Node.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/disposed.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/disposed.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/disposed.mlir
 // RUN: FileCheck %s --check-prefix=OWNED --implicit-check-not=ctnative.not_native < %t/disposed.mlir
 // RUN: ctjs-opt %t/disposed.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/disposed.cpp
 // RUN: FileCheck %s --check-prefix=DISPOSED-CPP < %t/disposed.cpp
@@ -102,7 +102,7 @@
 //   6, get() 6, two resets: -1000 + 200 + 60 + 6 + 20000 = 19266.
 // RUN: for name in swipe replace; do \
 // RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/$name.mlir; \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/$name.mlir; \
 // RUN:   ctjs-opt %t/$name.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/$name.cpp; done
 // RUN: FileCheck %s --check-prefix=OWNED --implicit-check-not=ctnative.not_native < %t/swipe.mlir
 // RUN: FileCheck %s --check-prefix=OWNED --implicit-check-not=ctnative.not_native < %t/replace.mlir
@@ -130,7 +130,7 @@
 // line on stderr as the interpreter.
 // RUN: for name in early-read disposed-read; do \
 // RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/$name.mlir; \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/$name.mlir; \
 // RUN:   ctjs-opt %t/$name.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/$name.cpp; \
 // RUN:   %native_reference %t/$name.js > %t/$name-vm.out 2> %t/$name-vm.err; echo "status=$?" >> %t/$name-vm.out; \
 // RUN:   head -n 1 %t/$name-vm.err | sed 's/^.* threw: /threw: /' > %t/$name-vm.first; done
@@ -162,7 +162,7 @@
 // A read of the field through an object other than `this` in the class's
 // own code: refused, since that object need not be a Modal.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/foreign.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=FOREIGN --implicit-check-not=ctnative.owned_instance
 // FOREIGN: ctnative.closure_reason = "the instance `new` makes does not have a closed shape - it is stored into a field that does not own it by value - field `_scrollBar` is read in `peek${{[0-9]+}}` through something other than the `this` of the class's constructor or methods"
 //
@@ -172,7 +172,7 @@
 // the arrow runs while the method's call does, so the instance outlives it:
 // native, and GCC, Clang, the interpreter and Node print the same value.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/arrow.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/arrow.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/arrow.mlir
 // RUN: FileCheck %s --check-prefix=OWNED --implicit-check-not=ctnative.not_native < %t/arrow.mlir
 // RUN: ctjs-opt %t/arrow.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/arrow.cpp
 // RUN: FileCheck %s --check-prefix=ARROW-CPP < %t/arrow.cpp
@@ -196,7 +196,7 @@
 // that makes it is stored, and that one is named.
 // RUN: for name in arrow-stored arrow-passed arrow-nested-stored; do \
 // RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/$name.mlir; done
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/$name.mlir; done
 // RUN: FileCheck %s --check-prefix=ARROW-STORED --implicit-check-not=ctnative.owned_instance < %t/arrow-stored.mlir
 // RUN: FileCheck %s --check-prefix=ARROW-PASSED --implicit-check-not=ctnative.owned_instance < %t/arrow-passed.mlir
 // RUN: FileCheck %s --check-prefix=ARROW-NESTED --implicit-check-not=ctnative.owned_instance < %t/arrow-nested-stored.mlir
@@ -208,7 +208,7 @@
 //
 // One instance stored into two fields would be shared by them: refused.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/aliased.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=ALIASED --implicit-check-not=ctnative.owned_instance
 // ALIASED: ctnative.closure_reason = "the instance `new` makes does not have a closed shape - it is stored into a field that does not own it by value - the instance has another use, so field `{{[ab]}}` would share it"
 //
@@ -218,18 +218,18 @@
 // inner-twice.js builds the class in make, where the constructor's
 // closure_reason names the use.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/twice.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=TWICE --implicit-check-not=ctnative.record_return
 // TWICE: ctjs.func {{(private )?}}@make${{[0-9]+}}({{.*}}ctnative.not_native =
 // static-twice.js pins the clause itself: a static member's `new this`
 // lifts as before, its caller returns the instance again, so make is no
 // record return and admission refuses it with the escape reason.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/static-twice.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=STATIC-TWICE --implicit-check-not=ctnative.record_return
 // STATIC-TWICE: ctjs.func {{(private )?}}@make${{[0-9]+}}({{.*}}ctnative.not_native = "an object literal that escapes - it is returned"
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/inner-twice.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=INNER-TWICE --implicit-check-not=ctnative.record_return
 // INNER-TWICE: ctnative.closure_reason = "the instance `new` makes does not have a closed shape - it is returned, and `pass${{[0-9]+}}` keeps the instance `make${{[0-9]+}}` returns other than through its fields and methods - it is returned"
 

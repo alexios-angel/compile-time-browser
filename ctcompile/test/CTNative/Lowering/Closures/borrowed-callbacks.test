@@ -6,17 +6,17 @@
 # RUN: split-file %s %t
 # RUN: %node %t/expected.cjs %t/values.js
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir
-# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false observe-globals=true},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
 # RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/runtime.mlir
 # RUN: ctjs-translate --mlir-to-cpp %t/runtime.mlir | FileCheck %s --check-prefix=CPP --implicit-check-not=ctbrowser::script --implicit-check-not=ctbrowser::aot
-# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/optimized.mlir
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{observe-globals=true},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/optimized.mlir
 # RUN: %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name borrowed_runtime_gcc --core-build %build
 # RUN: %compilation_unit --cxx %dom_clang --module %t/runtime.mlir --js %t/values.js --work %t --name borrowed_runtime_clang --core-build %build
 # RUN: %compilation_unit --cxx g++ --module %t/optimized.mlir --js %t/values.js --work %t --name borrowed_optimized_gcc --core-build %build
 # RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name borrowed_mutation --mutate labelled --mutate-as string 2>&1 | FileCheck %s --check-prefix=MUTATION
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/retained.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=RETAINED
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/written.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=WRITTEN
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=MIXED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/retained.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false observe-globals=true" | FileCheck %s --check-prefix=RETAINED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/written.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false observe-globals=true" | FileCheck %s --check-prefix=WRITTEN
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false observe-globals=true" | FileCheck %s --check-prefix=MIXED
 
 # NATIVE: ctnative::function_ref<
 # CPP-DAG: #include "ctcompile/CTNative/Runtime/Callable.hpp"

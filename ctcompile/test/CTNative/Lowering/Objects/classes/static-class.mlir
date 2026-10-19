@@ -11,7 +11,7 @@
 // Helper is constructed in show and in measure. The whole program is native,
 // and GCC, Clang, the interpreter and Node print the same value.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/two-sites.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/two-sites.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/two-sites.mlir
 // RUN: FileCheck %s --check-prefix=TWOSITES --implicit-check-not=ctnative.not_native < %t/two-sites.mlir
 // RUN: ctjs-opt %t/two-sites.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/two-sites.cpp
 // RUN: %gxx -O2 %t/two-sites.cpp -o %t/two-sites-gcc
@@ -30,7 +30,7 @@
 // the class definition (with `go` false, so the VM does not reach its `new`
 // there), so the variable is not marked and says why.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/early.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=EARLY
 // RUN: %native_reference %t/early.js | FileCheck %s --check-prefix=RUN-EARLY
 // EARLY-NOT: ctnative.static_class =
@@ -41,7 +41,7 @@
 // A binding the program assigns a second class: RunOnce.cpp keeps it a
 // capture, so no read is marked.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/reassigned.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=REASSIGNED
 // REASSIGNED-NOT: ctnative.static_class
 

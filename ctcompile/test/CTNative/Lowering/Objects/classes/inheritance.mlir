@@ -15,7 +15,7 @@
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/chain.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/chain.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/chain.mlir
 // RUN: FileCheck %s --implicit-check-not=ctnative.not_native < %t/chain.mlir
 // RUN: ctjs-opt %t/chain.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/chain.cpp
 // RUN: FileCheck %s --check-prefix=CPP < %t/chain.cpp
@@ -35,7 +35,7 @@
 // same name_D natively with GCC and Clang against the interpreter and Node;
 // here the interpreter and Node pin the value the copies must keep.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/statics.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=STATICS
 // RUN: %native_reference %t/statics.js | FileCheck %s --check-prefix=STATICS-RUN
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/statics.js | FileCheck %s --check-prefix=STATICS-RUN
@@ -49,7 +49,7 @@
 // through its prototype lift together, so the whole program lowers natively
 // and prints what Node and the interpreter print with both compilers.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/arrow.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/arrow.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/arrow.mlir
 // RUN: FileCheck %s --check-prefix=ARROW --implicit-check-not=ctnative.inheritance_reason --implicit-check-not=ctnative.not_native < %t/arrow.mlir
 // RUN: ctjs-opt %t/arrow.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/arrow.cpp
 // RUN: %gxx -O2 %t/arrow.cpp -o %t/arrow-gcc
@@ -65,7 +65,7 @@
 // with their members like any unreachable parent. Base's own copies of
 // Config's members go with Base, so ctnative.copies no longer lists them.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/factory.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=FACTORY
 
 // The module lists every copy with the source function it stands for (the

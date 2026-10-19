@@ -8,7 +8,7 @@
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/direct.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/direct.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/direct.mlir
 // RUN: FileCheck %s --check-prefix=DIRECT --implicit-check-not=ctnative.not_native < %t/direct.mlir
 // RUN: ctjs-opt %t/direct.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/direct.cpp
 // RUN: %gxx -O2 %t/direct.cpp -o %t/direct-gcc
@@ -17,13 +17,13 @@
 // RUN: %t/direct-clang | FileCheck %s --check-prefix=DIRECTOUT
 // RUN: %native_reference %t/direct.js | FileCheck %s --check-prefix=DIRECTOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/arguments.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=ARGUMENTS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/function.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=FUNCTION
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/apply.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=APPLY
 
 // `once` calls its callback, which captures `label`, directly.

@@ -24,7 +24,7 @@
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/table.js --mlir-print-debuginfo 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/table.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/table.mlir
 // RUN: FileCheck %s --check-prefix=TABLE --implicit-check-not=ctnative.not_native < %t/table.mlir
 // RUN: ctjs-opt %t/table.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/table.cpp
 // RUN: %gxx -O2 %t/table.cpp -o %t/table-gcc
@@ -34,7 +34,7 @@
 // RUN: %native_reference %t/table.js | FileCheck %s --check-prefix=OBSERVATION
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/table.js | FileCheck %s --check-prefix=OBSERVATION
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/self.js --mlir-print-debuginfo 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/self.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/self.mlir
 // RUN: FileCheck %s --check-prefix=TABLE --implicit-check-not=ctnative.not_native < %t/self.mlir
 // RUN: ctjs-opt %t/self.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/self.cpp
 // RUN: %gxx -O2 %t/self.cpp -o %t/self-gcc
@@ -44,7 +44,7 @@
 // RUN: %native_reference %t/self.js | FileCheck %s --check-prefix=SELF
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/self.js | FileCheck %s --check-prefix=SELF
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/lifted.js --mlir-print-debuginfo 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/lifted.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/lifted.mlir
 // RUN: FileCheck %s --check-prefix=TABLE --implicit-check-not=ctnative.not_native < %t/lifted.mlir
 // RUN: ctjs-opt %t/lifted.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/lifted.cpp
 // RUN: %gxx -O2 %t/lifted.cpp -o %t/lifted-gcc
@@ -54,22 +54,22 @@
 // RUN: %native_reference %t/lifted.js | FileCheck %s --check-prefix=LIFTED
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/lifted.js | FileCheck %s --check-prefix=LIFTED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/lifted-value.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=LIFTED-VALUE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/this-value.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=THIS-VALUE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/shared.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=SHARED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/value.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=VALUE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/receiver.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=RECEIVER
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/early.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=EARLY
 
 // TABLE-NOT: singleton_reason

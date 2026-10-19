@@ -4,15 +4,15 @@
 // Keep both source alternatives: default precomputation can erase the union.
 //
 // RUN: split-file %s %t
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nullable-map-roundtrip.js | ctjs-opt --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/roundtrip.mlir
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nullable-map-roundtrip.js | ctjs-opt --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false observe-globals=true},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/roundtrip.mlir
 // RUN: %compilation_unit --module %t/roundtrip.mlir --js %t/nullable-map-roundtrip.js --work %t/roundtrip --name nullable_map_roundtrip
 // RUN: %node -e "const vm = require('node:vm'), fs = require('node:fs'); const cx = vm.createContext({}); vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), cx); if (cx.nullValue !== null || cx.undefinedValue !== undefined || cx.presentValue !== 42 || cx.missingValue !== undefined) process.exit(1);" %t/nullable-map-roundtrip.js
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../../../Fixtures/Scalars/optional-scalars.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-string.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=STRING
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed-present.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=MIXED --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-map-payload.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PAYLOAD --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-map.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=MAP
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-array-payload.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=ARRAY
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../../../Fixtures/Scalars/optional-scalars.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false observe-globals=true" | FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-string.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false observe-globals=true" | FileCheck %s --check-prefix=STRING
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed-present.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false observe-globals=true" | FileCheck %s --check-prefix=MIXED --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-map-payload.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false observe-globals=true" | FileCheck %s --check-prefix=PAYLOAD --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-map.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false observe-globals=true" | FileCheck %s --check-prefix=MAP
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-array-payload.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false observe-globals=true" | FileCheck %s --check-prefix=ARRAY
 
 // NATIVE-DAG: emitc.func @absent_{{[0-9]+}}() -> !emitc.opaque<"ctnative::nullable_scalar">
 // NATIVE-DAG: emitc.func @maybeNumber_{{[0-9]+}}({{.*}}) -> !emitc.opaque<"ctnative::nullable_scalar">

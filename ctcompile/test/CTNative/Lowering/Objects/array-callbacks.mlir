@@ -5,15 +5,15 @@
 // callback's shape) or from admission (the types).
 //
 // RUN: split-file %s %t
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/emit.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EMIT --implicit-check-not=ctnative.not_native
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/refusals.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/emit.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true | FileCheck %s --check-prefix=EMIT --implicit-check-not=ctnative.not_native
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/refusals.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true | FileCheck %s
 //
 // In settled.js a callback captures a binding its frame writes only before
 // the callback is made (a defaulted parameter, an assignment under a test),
 // so it takes that binding's value by copy; the native answers equal the
 // interpreter's, and a changed answer is caught.
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/settled.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=SETTLED --implicit-check-not=ctnative.not_native
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/settled.js 2>/dev/null | ctjs-opt --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/settled.mlir
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/settled.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true | FileCheck %s --check-prefix=SETTLED --implicit-check-not=ctnative.not_native
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/settled.js 2>/dev/null | ctjs-opt --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{observe-globals=true},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/settled.mlir
 // RUN: %compilation_unit --module %t/settled.mlir --js %t/settled.js --work %t/settled --name settled_captures
 // RUN: not %compilation_unit --module %t/settled.mlir --js %t/settled.js --work %t/settled --name settled_captures_off --mutate p2 2>&1 | FileCheck %s --check-prefix=SETTLED-OFF
 

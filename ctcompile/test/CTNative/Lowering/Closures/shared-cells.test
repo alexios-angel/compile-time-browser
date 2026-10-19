@@ -15,19 +15,19 @@
 # RUN: split-file %s %t
 # RUN: %node %t/expected.cjs %t/shared.js sn111n113
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/shared.js -o %t/input.mlir
-# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{observe-globals=true},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
 # RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/runtime.mlir
 # RUN: %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/shared.js --work %t --name shared_gcc --core-build %build
 # RUN: %compilation_unit --cxx %dom_clang --module %t/runtime.mlir --js %t/shared.js --work %t --name shared_clang --core-build %build
 # RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/shared.js --work %t --name shared_mutation --mutate seen --mutate-as string --core-build %build 2>&1 | FileCheck %s --check-prefix=MUTATION
 # RUN: %node %t/expected.cjs %t/recursive.js 4
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/recursive.js -o %t/recursive.mlir
-# RUN: ctjs-opt %t/recursive.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/recursive.emitc.mlir
+# RUN: ctjs-opt %t/recursive.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{observe-globals=true},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/recursive.emitc.mlir
 # RUN: FileCheck %s --check-prefix=RECURSIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/recursive.emitc.mlir
 # RUN: %compilation_unit --cxx g++ --module %t/recursive.emitc.mlir --js %t/recursive.js --work %t/recursive-gcc --name recursive_gcc --core-build %build
 # RUN: %compilation_unit --cxx %dom_clang --module %t/recursive.emitc.mlir --js %t/recursive.js --work %t/recursive-clang --name recursive_clang --core-build %build
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/cycle.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=CYCLE
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nested.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=NESTED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/cycle.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true | FileCheck %s --check-prefix=CYCLE
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nested.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true | FileCheck %s --check-prefix=NESTED
 
 # NATIVE-DAG: call_opaque "std::make_shared<ctnative::cell<ctnative::js_num>>"
 # NATIVE-DAG: emitc.func @bump_{{[0-9]+}}(%arg0: !emitc.opaque<"std::shared_ptr<ctnative::cell<ctnative::js_num>>">)

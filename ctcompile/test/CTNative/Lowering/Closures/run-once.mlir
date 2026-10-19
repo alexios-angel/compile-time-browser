@@ -21,7 +21,7 @@
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/iife.js --mlir-print-debuginfo 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/iife.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/iife.mlir
 // RUN: FileCheck %s --check-prefix=IIFE --implicit-check-not=ctnative.not_native < %t/iife.mlir
 // RUN: ctjs-opt %t/iife.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/iife.cpp
 // RUN: %gxx -O2 %t/iife.cpp -o %t/iife-gcc
@@ -31,7 +31,7 @@
 // RUN: %native_reference %t/iife.js | FileCheck %s --check-prefix=OBSERVATION
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/iife.js | FileCheck %s --check-prefix=OBSERVATION
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/umd.js --mlir-print-debuginfo 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/umd.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/umd.mlir
 // RUN: FileCheck %s --check-prefix=UMD --implicit-check-not=ctnative.not_native < %t/umd.mlir
 // RUN: ctjs-opt %t/umd.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/umd.cpp
 // RUN: %gxx -O2 %t/umd.cpp -o %t/umd-gcc
@@ -40,7 +40,7 @@
 // RUN: %t/umd-clang | FileCheck %s --check-prefix=OBSERVATION
 // RUN: %native_reference %t/umd.js | FileCheck %s --check-prefix=OBSERVATION
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/amd.js --mlir-print-debuginfo 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/amd.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/amd.mlir
 // RUN: FileCheck %s --check-prefix=UMD --implicit-check-not=ctnative.not_native < %t/amd.mlir
 // RUN: ctjs-opt %t/amd.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/amd.cpp
 // RUN: %gxx -O2 %t/amd.cpp -o %t/amd-gcc
@@ -50,7 +50,7 @@
 // RUN: %native_reference %t/amd.js | FileCheck %s --check-prefix=OBSERVATION
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/amd.js | FileCheck %s --check-prefix=OBSERVATION
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/declared.js --mlir-print-debuginfo 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/declared.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/declared.mlir
 // RUN: FileCheck %s --check-prefix=DECLARED --implicit-check-not=ctnative.not_native < %t/declared.mlir
 // RUN: ctjs-opt %t/declared.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/declared.cpp
 // RUN: %gxx -O2 %t/declared.cpp -o %t/declared-gcc
@@ -60,7 +60,7 @@
 // RUN: %native_reference %t/declared.js | FileCheck %s --check-prefix=DECLAREDOUT
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/declared.js | FileCheck %s --check-prefix=DECLAREDOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/declared-relayed.js --mlir-print-debuginfo 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/declared-relayed.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/declared-relayed.mlir
 // RUN: FileCheck %s --check-prefix=RELAYED --implicit-check-not=ctnative.not_native --implicit-check-not=static_count < %t/declared-relayed.mlir
 // RUN: ctjs-opt %t/declared-relayed.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/declared-relayed.cpp
 // RUN: %gxx -O2 %t/declared-relayed.cpp -o %t/declared-relayed-gcc
@@ -69,7 +69,7 @@
 // RUN: %t/declared-relayed-clang | FileCheck %s --check-prefix=DECLAREDOUT
 // RUN: %native_reference %t/declared-relayed.js | FileCheck %s --check-prefix=DECLAREDOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/declared-sibling.js --mlir-print-debuginfo 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/declared-sibling.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/declared-sibling.mlir
 // RUN: FileCheck %s --check-prefix=SIBLING --implicit-check-not=ctnative.not_native --implicit-check-not=static_count < %t/declared-sibling.mlir
 // RUN: ctjs-opt %t/declared-sibling.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/declared-sibling.cpp
 // RUN: %gxx -O2 %t/declared-sibling.cpp -o %t/declared-sibling-gcc
@@ -78,13 +78,13 @@
 // RUN: %t/declared-sibling-clang | FileCheck %s --check-prefix=DECLAREDOUT
 // RUN: %native_reference %t/declared-sibling.js | FileCheck %s --check-prefix=DECLAREDOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/twice.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=TWICE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/escapes.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=ESCAPES
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/recursive.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=RECURSIVE
 
 // --- A plain IIFE ------------------------------------------------------------
