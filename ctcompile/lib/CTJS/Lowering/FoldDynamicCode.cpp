@@ -264,11 +264,9 @@ unsigned splice(mlir::ModuleOp module) {
         ++count;
     }
     dropUnusedCompilerLoads(module);
-    llvm::SmallVector<ConstantOp> unused;
-    module.walk([&](ConstantOp constant) {
-        if (constant->use_empty()) { unused.push_back(constant); }
+    module.walk([](ConstantOp constant) {
+        if (constant->use_empty()) { constant.erase(); }
     });
-    for (ConstantOp constant : unused) { constant.erase(); }
     return count;
 }
 
