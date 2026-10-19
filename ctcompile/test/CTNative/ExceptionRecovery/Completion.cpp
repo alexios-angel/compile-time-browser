@@ -461,6 +461,43 @@ function guarded(text) {
     check(!branched.proved() && branched.chain.empty() &&
               branched.refusal.find("one success path") != std::string::npos,
           "a conditional bypass cannot publish a straight-line invocation chain");
+    auto bypass = import(context, R"js(
+function guarded(text) {
+    try {
+        if (text) { return decodeURIComponent(text); }
+        return text;
+    } catch (ignored) { return text; }
+}
+)js",
+                         false);
+    if (!bypass) { return; }
+    const auto beforeBypass = printed(*bypass);
+    for (unsigned maxCalls : {1u, 2u}) {
+        const auto inspected = inspectSingleInvocationRegion(guarded(*bypass), 100000, maxCalls);
+        if (!check(!inspected.proved() && inspected.chain.empty() && !inspected.push &&
+                       inspected.refusal.find("one success path") != std::string::npos &&
+                       printed(*bypass) == beforeBypass,
+                   "a conditional bypass cannot publish even one checked invocation")) {
+            llvm::errs() << "  maxCalls=" << maxCalls << ", proved=" << inspected.proved()
+                         << ", chain=" << inspected.chain.size() << ", refusal="
+                         << inspected.refusal << '\n';
+        }
+    }
+    auto straight = import(context, R"js(
+function guarded(text) {
+    try { return decodeURIComponent(text); }
+    catch (ignored) { return text; }
+}
+)js",
+                           false);
+    if (!straight) { return; }
+    const auto beforeStraight = printed(*straight);
+    for (unsigned maxCalls : {1u, 2u}) {
+        const auto inspected = inspectSingleInvocationRegion(guarded(*straight), 100000, maxCalls);
+        check(inspected.proved() && inspected.chain.size() == 1 &&
+                  printed(*straight) == beforeStraight,
+              "a straight-line checked invocation is proved with either call limit");
+    }
     ctnative::HostContract contract;
     contract.provider = ctnative::HostContract::Provider::ctbrowserDOM;
     contract.entry = function.getSymName().str();
