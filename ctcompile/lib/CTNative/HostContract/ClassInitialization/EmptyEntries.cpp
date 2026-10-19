@@ -127,16 +127,7 @@ std::optional<mlir::Attribute> evaluate(classInitialization & proof, ctjs::FuncO
         }
     }
     if (!proof.reason.empty()) { return std::nullopt; }
-    const auto get = [&](mlir::Value input) {
-        if (auto found = values.find(input); found != values.end()) { return found->second; }
-        if (auto constant = input.getDefiningOp<ctjs::ConstantOp>()) {
-            return value::primitive(constant.getValue());
-        }
-        if (auto constant = input.getDefiningOp<mlir::arith::ConstantOp>()) {
-            return value::primitive(constant.getValue());
-        }
-        return value{};
-    };
+    const auto get = [&](mlir::Value input) { return boundOrLiteral(input, values); };
     const auto is = [](value input, unsigned token) {
         return input.tag == value::kind::reference && input.node == token;
     };

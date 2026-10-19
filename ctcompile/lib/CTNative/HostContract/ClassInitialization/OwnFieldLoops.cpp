@@ -125,16 +125,7 @@ bool classInitialization::clearOwnFieldLoop(ctjs::CallOp snapshot,
     using Values = llvm::SmallVector<value>;
     llvm::DenseMap<mlir::Value, value> values;
     values[snapshot.getResult()] = value::reference(0);
-    const auto get = [&](mlir::Value input) {
-        if (auto found = values.find(input); found != values.end()) { return found->second; }
-        if (auto constant = input.getDefiningOp<ctjs::ConstantOp>()) {
-            return value::primitive(constant.getValue());
-        }
-        if (auto constant = input.getDefiningOp<mlir::arith::ConstantOp>()) {
-            return value::primitive(constant.getValue());
-        }
-        return value{};
-    };
+    const auto get = [&](mlir::Value input) { return boundOrLiteral(input, values); };
     auto * context = module.getContext();
     const auto empty = value::primitive(ctjs::UndefinedAttr::get(context));
     const auto integer = [&](value input) -> std::optional<int64_t> {

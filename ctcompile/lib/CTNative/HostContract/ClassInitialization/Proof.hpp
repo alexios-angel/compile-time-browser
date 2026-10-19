@@ -76,6 +76,20 @@ inline bool declaredElementInput(const HostContract & contract, ctjs::FuncOp sco
                               input.getArgNumber() - ctjs::implicit_arguments);
 }
 
+/// A recorded value, including unknown, or a literal when no value was recorded.
+inline partial_eval::value boundOrLiteral(
+    mlir::Value input, const llvm::DenseMap<mlir::Value, partial_eval::value> & values) {
+    using partial_eval::value;
+    if (auto found = values.find(input); found != values.end()) { return found->second; }
+    if (auto constant = input.getDefiningOp<ctjs::ConstantOp>()) {
+        return value::primitive(constant.getValue());
+    }
+    if (auto constant = input.getDefiningOp<mlir::arith::ConstantOp>()) {
+        return value::primitive(constant.getValue());
+    }
+    return value{};
+}
+
 /// Whether `closure` captures a slot of an enclosing activation (any
 /// nonnegative enclosing index).
 inline bool hasOuterCapture(ctjs::CreateClosureOp closure) {
