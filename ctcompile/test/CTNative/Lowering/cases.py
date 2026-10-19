@@ -21,6 +21,9 @@ HERE = Path(__file__).resolve().parent
 MAINS = {}
 
 CASES = {
+    "Closures/table-cross-block": [
+        "ctjs-opt %s --ctjs-resolve-globals --ctnative-lower-to-emitc=optimize=false | FileCheck %s",
+    ],
     "Objects/json-cross-block": [
         "split-file %s %t",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/conditional.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s",
