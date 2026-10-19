@@ -15,10 +15,11 @@ compile and match Node.
 import json
 import math
 import re
+import threading
 
 from CTNative.Browser.dom import dom
 from CTNative.HostContract.contract import fingerprint
-from CTNative.harness import build_and_run, forge_module, run
+from CTNative.harness import build_and_run, forge_module, run, run_parallel
 from Target.Cpp.harness import FLAGS
 
 STATE = """function state() {
@@ -3260,8 +3261,10 @@ def main(argv=None):
     agreements = oracle(args)
     compilers = args.compilers
     includes, libraries = dom.link_options(args, core_only=True)
-    accepted = {}
-    for name, (source, checks, expected) in CASES.items():
+
+    def check_case(name):
+        """Import, lower and run one CASES entry; return its (ir, contract)."""
+        source, checks, expected = CASES[name]
         entry_name = (
             "bad"
             if name == "global-helper" or name.startswith("capture-witness-")
@@ -3276,7 +3279,6 @@ def main(argv=None):
         )
         if any(name in family for family in (*MISSING_STRING, *STRING_ONLY)):
             contract["initial_intrinsics"] = ["Symbol", "String"]
-        accepted[name] = ir, contract
         for optimize in (False, True):
             output_name = f"{name}-{optimize}"
             native = dom.lower(args, ir, contract, output_name, optimize=optimize)
@@ -3290,24 +3292,36 @@ def main(argv=None):
                 includes,
                 libraries,
             )
+        return ir, contract
+
+    # Each case writes only files named after itself (the two mutation
+    # checks in standalone() belong to one case each), so the cases run
+    # concurrently. `accepted` keeps the CASES order.
+    accepted = dict(zip(CASES, run_parallel(CASES, check_case)))
 
     refusals = 0
+    counting = threading.Lock()
 
     def refuse(ir, contract, name, **options):
         """Lower `ir`, require a refusal, and return the refusal message."""
         nonlocal refusals
         result = dom.lower(args, ir, contract, name, success=False, **options)
-        refusals += 1
+        # family() refuses its bodies on several threads at once.
+        with counting:
+            refusals += 1
         return result
 
     def family(prefix, params, types, bodies, *, string=False, expect=None):
         """Each body, wrapped as bad(params), must be refused with and without
-        optimisation; `expect` = (name, text) also checks one refusal's message."""
-        for name, body in bodies.items():
+        optimisation; `expect` = (name, text) also checks one refusal's message.
+        The bodies run concurrently, each writing only files named after
+        prefix + its name."""
+
+        def check_body(name):
             ir, contract = prepare(
                 args,
                 prefix + name,
-                f"function bad({params}) {{ {body} }}\n",
+                f"function bad({params}) {{ {bodies[name]} }}\n",
                 entry_name="bad",
                 parameter_types=types,
             )
@@ -3317,6 +3331,8 @@ def main(argv=None):
                 reason = refuse(ir, contract, f"{prefix}{name}-{optimize}", optimize=optimize)
                 if expect and name == expect[0] and expect[1] not in reason:
                     raise RuntimeError(f"{prefix}{name}-{optimize}: other refusal\n{reason}")
+
+        run_parallel(bodies, check_body)
 
     def stale(
         label,

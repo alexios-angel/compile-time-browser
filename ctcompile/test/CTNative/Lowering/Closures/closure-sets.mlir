@@ -13,7 +13,7 @@
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/set.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/set.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/set.mlir
 // RUN: FileCheck %s --check-prefix=SET --implicit-check-not=ctnative.not_native < %t/set.mlir
 // RUN: ctjs-opt %t/set.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/set.cpp
 // RUN: FileCheck %s --check-prefix=SETCPP --implicit-check-not=std::variant --implicit-check-not=std::visit < %t/set.cpp
@@ -24,7 +24,7 @@
 // RUN: %native_reference %t/set.js | FileCheck %s --check-prefix=SETOUT
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/set.js | FileCheck %s --check-prefix=SETOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/field.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/field.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/field.mlir
 // RUN: FileCheck %s --check-prefix=FIELD --implicit-check-not=ctnative.not_native < %t/field.mlir
 // RUN: ctjs-opt %t/field.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/field.cpp
 // RUN: FileCheck %s --check-prefix=FIELDCPP --implicit-check-not=std::variant --implicit-check-not=std::visit < %t/field.cpp
@@ -35,7 +35,7 @@
 // RUN: %native_reference %t/field.js | FileCheck %s --check-prefix=FIELDOUT
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/field.js | FileCheck %s --check-prefix=FIELDOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/reassigned.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/reassigned.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/reassigned.mlir
 // RUN: FileCheck %s --check-prefix=REASSIGNED --implicit-check-not=ctnative.not_native < %t/reassigned.mlir
 // RUN: ctjs-opt %t/reassigned.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/reassigned.cpp
 // RUN: FileCheck %s --check-prefix=REASSIGNEDCPP --implicit-check-not=std::variant --implicit-check-not=std::visit < %t/reassigned.cpp
@@ -46,7 +46,7 @@
 // RUN: %native_reference %t/reassigned.js | FileCheck %s --check-prefix=REASSIGNEDOUT
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/reassigned.js | FileCheck %s --check-prefix=REASSIGNEDOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/thisset.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/thisset.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/thisset.mlir
 // RUN: FileCheck %s --check-prefix=THISSET --implicit-check-not=ctnative.not_native < %t/thisset.mlir
 // RUN: ctjs-opt %t/thisset.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/thisset.cpp
 // RUN: FileCheck %s --check-prefix=THISSETCPP --implicit-check-not=std::variant --implicit-check-not=std::visit < %t/thisset.cpp
@@ -57,10 +57,10 @@
 // RUN: %native_reference %t/thisset.js | FileCheck %s --check-prefix=THISSETOUT
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/thisset.js | FileCheck %s --check-prefix=THISSETOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/thisescapes.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=THISESCAPES
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/paramset.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/paramset.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/paramset.mlir
 // RUN: FileCheck %s --check-prefix=PARAMSET --implicit-check-not=ctnative.not_native < %t/paramset.mlir
 // RUN: ctjs-opt %t/paramset.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/paramset.cpp
 // RUN: FileCheck %s --check-prefix=PARAMSETCPP --implicit-check-not=std::variant --implicit-check-not=std::visit < %t/paramset.cpp
@@ -71,31 +71,31 @@
 // RUN: %native_reference %t/paramset.js | FileCheck %s --check-prefix=PARAMSETOUT
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/paramset.js | FileCheck %s --check-prefix=PARAMSETOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/paramescapes.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=PARAMESCAPES
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/fieldescape.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=FIELDESCAPE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/fieldunproved.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=FIELDUNPROVED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/unguarded.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=UNGUARDED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/arity.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=ARITY
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/result.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=RESULT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/unproved.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=UNPROVED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/escapes.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=ESCAPES
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/written.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=WRITTEN
 
 // Both closures are members bound to their captures, and both calls go

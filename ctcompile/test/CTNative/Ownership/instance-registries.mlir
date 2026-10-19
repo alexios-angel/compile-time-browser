@@ -12,14 +12,22 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-test-instance-registries \
 // RUN:   | FileCheck %s --check-prefix=PROVED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/proved.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
-// RUN:   | FileCheck %s --check-prefix=LIFT
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
+// RUN:   | FileCheck %s --check-prefix=LIFT --implicit-check-not=ctnative.not_native
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/proved.js --mlir-print-debuginfo 2>/dev/null \
+// RUN:   | ctjs-opt "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ctnative-lower-to-emitc{observe-globals=true}, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))" \
+// RUN:              --mlir-print-debuginfo -o %t/proved.emitc.mlir
+// RUN: %compilation_unit --module %t/proved.emitc.mlir --js %t/proved.js --work %t/proved-native --name proved
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/tells.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=TELLS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/undefined-global.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
-// RUN:   | FileCheck %s --check-prefix=UNDEFINED-GLOBAL
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
+// RUN:   | FileCheck %s --check-prefix=UNDEFINED-GLOBAL --implicit-check-not=ctnative.not_native
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/undefined-global.js --mlir-print-debuginfo 2>/dev/null \
+// RUN:   | ctjs-opt "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ctnative-lower-to-emitc{observe-globals=true}, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))" \
+// RUN:              --mlir-print-debuginfo -o %t/undefined-global.emitc.mlir
+// RUN: %compilation_unit --module %t/undefined-global.emitc.mlir --js %t/undefined-global.js --work %t/undefined-global-native --name undefined_global
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/unchecked.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-test-instance-registries \
 // RUN:   | FileCheck %s --check-prefix=UNCHECKED
@@ -92,6 +100,20 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
 // RUN:              --ctnative-test-instance-registries=lifted=true \
 // RUN:   | FileCheck %s --check-prefix=NEW-THIS
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/new-this-native.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
+// RUN:   | FileCheck %s --check-prefix=NEW-THIS-NATIVE --implicit-check-not=ctnative.not_native
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/new-this-native.js --mlir-print-debuginfo 2>/dev/null \
+// RUN:   | ctjs-opt "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ctnative-lower-to-emitc{observe-globals=true}, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))" \
+// RUN:              --mlir-print-debuginfo -o %t/new-this-native.emitc.mlir
+// RUN: %compilation_unit --module %t/new-this-native.emitc.mlir --js %t/new-this-native.js --work %t/new-this-native --name new_this_native
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/data-only.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=DATA-ONLY --implicit-check-not=ctnative.not_native
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/data-only.js --mlir-print-debuginfo 2>/dev/null \
+// RUN:   | ctjs-opt "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ctnative-lower-to-emitc{observe-globals=true}, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))" \
+// RUN:              --mlir-print-debuginfo -o %t/data-only.emitc.mlir
+// RUN: %compilation_unit --module %t/data-only.emitc.mlir --js %t/data-only.js --work %t/data-only --name data_only
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/new-this-stored.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
 // RUN:              --ctnative-test-instance-registries=lifted=true \
@@ -107,19 +129,27 @@
 
 // In the lowering, the closure lifter marks the proved constructor, lifts it
 // although it passes `this` to the Map, and resolves the method calls on the
-// instances read back, so `grow` and `dispose` become direct calls.
-// LIFT-DAG: ctjs.call_direct @Widget${{[0-9]+}}({{.*}}{ctnative.receiver
-// LIFT-DAG: ctjs.call_direct @grow${{[0-9]+}}({{.*}}{ctnative.receiver
-// LIFT-DAG: ctjs.call_direct @dispose${{[0-9]+}}({{.*}}{ctnative.receiver
-// LIFT-DAG: ctjs.func private @Widget${{[0-9]+}}({{.*}}ctnative.instance_class = "Widget"
+// instances read back, so `grow` and `dispose` become direct calls. Nothing
+// else in the program can reach Map.prototype (mapRealmUnproved in
+// Analysis/NativeMap.cpp), so the Map, and with it the whole program, is
+// native; the %compilation_unit run checks its answer against the
+// interpreter.
+// LIFT-DAG: emitc.class @Widget
+// LIFT-DAG: call_opaque "std::make_shared<Widget>"
+// LIFT-DAG: call @Widget_{{[0-9]+}}(
+// LIFT-DAG: emitc.call @grow_{{[0-9]+}}(
+// LIFT-DAG: emitc.call @dispose_{{[0-9]+}}(
 
 // The accepted program runs natively end to end in
 // ../Fixtures/Objects/instance-registry.js. Two things its carrier, a
 // `std::shared_ptr<Widget>` that is null for both null and undefined, cannot
 // say are refused in the lowering:
 // TELLS: ctnative.not_native = "a comparison of an instance with something that tells null from undefined, which one null pointer stands for"
-// And reading the global `undefined` beside the Map keeps the Map unproved.
-// UNDEFINED-GLOBAL: ctnative.not_native = "standard Map identity is unproved with other host/global value reads"
+// Reading the global `undefined` beside the Map no longer keeps the Map
+// unproved: it cannot reach Map.prototype, so the program is native (and
+// agrees with the interpreter). ../Lowering/Maps/realm-identity.mlir keeps
+// the global reads that still refuse every Map.
+// UNDEFINED-GLOBAL: emitc.func @run_{{[0-9]+}}
 
 // --- A read used without a check -------------------------------------------
 // UNCHECKED: ctnative.instance_registry = "a value read from the registry Map is used at `ctjs.get_property` without a check - `get` answers undefined for a missing key"
@@ -217,6 +247,31 @@
 // direct calls.
 // NEW-THIS-DAG: ctjs.func @Alert${{[0-9]+}}({{.*}}ctnative.instance_key = "bs.alert", ctnative.instance_registry = "proved"
 // NEW-THIS-DAG: ctjs.func @Button${{[0-9]+}}({{.*}}ctnative.instance_key = "bs.button", ctnative.instance_registry = "proved"
+
+// --- The whole program native, as one of Bootstrap's components --------------
+// A run-once module whose class is made only by getOrCreateInstance's
+// `getInstance(key) || new this(key, size)`: the registry Map is a static
+// (ClosedValueFlow's run-once statics), nothing can reach Map.prototype
+// (NativeMap.cpp's realm rule), the constructor lift takes the registry
+// proof's word for the `new` that joins the read (Constructors.cpp), and
+// that `new` is admitted as the std::shared_ptr it lowers to although its
+// shape is open (Admission/Operations.cpp). The %compilation_unit run
+// checks the answer, 123, against the interpreter.
+// NEW-THIS-NATIVE: emitc.func @getOrCreateInstance_{{[0-9]+}}(
+// NEW-THIS-NATIVE-SAME: -> !emitc.opaque<"std::shared_ptr<Widget>">
+// NEW-THIS-NATIVE: call_opaque "std::make_shared<Widget>"
+
+// --- Bootstrap's Data store alone ---------------------------------------------
+// `elements` is a run-once static, so its one write is the Map the closure
+// builds, and every read of it in `set`, `get` and `remove` is that one
+// instance (Analysis/NativeMap/Presence.cpp's staticOrigins). A `has` on one
+// read then proves the `get` on the next, which the nested Map needs. The
+// object-literal methods lift to closures (fn_N); the program's three Map
+// operations lower to direct map_storage calls, and the %compilation_unit
+// run checks the answer, 11175, against the interpreter.
+// DATA-ONLY: emitc.func @main() -> i32
+// DATA-ONLY-DAG: call_opaque "ctnative::make_map<double, std::shared_ptr<ctnative::string_to_number_map>>"
+// DATA-ONLY-DAG: call_opaque "ctnative::map_get_present"
 
 // --- A fresh instance stored into an object ----------------------------------
 // Only the instance `new this` makes is stored; the read is returned as it
@@ -994,4 +1049,64 @@ var total = (function () {
     if (b) { t = t + b.toggle(); b.dispose(); }
     if (Button.getInstance(el) === null) { t = t + 10; }
     return t;
+})();
+
+//--- new-this-native.js
+var total = (function () {
+    const registry = new Map();
+    class Widget {
+        constructor(key, size) {
+            this.key = key;
+            this.size = size;
+            registry.set(key, this);
+        }
+        static getInstance(key) {
+            return registry.get(key) || null;
+        }
+        static getOrCreateInstance(key, size) {
+            return this.getInstance(key) || new this(key, size);
+        }
+        grow() {
+            this.size = this.size + 1;
+            return this.size;
+        }
+    }
+    const a = Widget.getOrCreateInstance(1, 3).grow();
+    const b = Widget.getOrCreateInstance(1, 9).grow();
+    const c = Widget.getOrCreateInstance(2, 7).grow();
+    return a * 100 + b * 10 + c + registry.size;
+})();
+
+//--- data-only.js
+var total = (function () {
+    const elements = new Map();
+    const Data = {
+        set(element, key, value) {
+            if (!elements.has(element)) {
+                elements.set(element, new Map());
+            }
+            elements.get(element).set(key, value);
+        },
+        get(element, key) {
+            return (elements.has(element) && elements.get(element).get(key)) || 0;
+        },
+        remove(element, key) {
+            if (!elements.has(element)) {
+                return;
+            }
+            const instances = elements.get(element);
+            instances.delete(key);
+            if (instances.size === 0) {
+                elements.delete(element);
+            }
+        }
+    };
+    Data.set(1, "a", 5);
+    Data.set(1, "b", 7);
+    Data.set(2, "a", 11);
+    let t = Data.get(1, "a") + Data.get(1, "b") * 10 + Data.get(2, "a") * 100;
+    Data.remove(1, "a");
+    Data.remove(1, "b");
+    t = t + Data.get(1, "a") * 1000;
+    return t + elements.size * 10000;
 })();

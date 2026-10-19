@@ -20,7 +20,7 @@
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/hoisted.js --mlir-print-debuginfo 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/hoisted.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/hoisted.mlir
 // RUN: FileCheck %s --check-prefix=HOISTED --implicit-check-not=ctnative.not_native < %t/hoisted.mlir
 // RUN: ctjs-opt %t/hoisted.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/hoisted.cpp
 // RUN: %gxx -O2 %t/hoisted.cpp -o %t/hoisted-gcc
@@ -30,7 +30,7 @@
 // RUN: %native_reference %t/hoisted.js | FileCheck %s --check-prefix=OBSERVATION
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/hoisted.js | FileCheck %s --check-prefix=OBSERVATION
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mutual.js --mlir-print-debuginfo 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/mutual.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/mutual.mlir
 // RUN: FileCheck %s --check-prefix=MUTUAL --implicit-check-not=ctnative.not_native < %t/mutual.mlir
 // RUN: ctjs-opt %t/mutual.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/mutual.cpp
 // RUN: %gxx -O2 %t/mutual.cpp -o %t/mutual-gcc
@@ -40,7 +40,7 @@
 // RUN: %native_reference %t/mutual.js | FileCheck %s --check-prefix=MUTUALRUN
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/mutual.js | FileCheck %s --check-prefix=MUTUALRUN
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/early.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=EARLY
 
 // HOISTED-NOT: static_cell

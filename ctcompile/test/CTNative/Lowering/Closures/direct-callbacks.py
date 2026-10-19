@@ -11,7 +11,9 @@ import re
 from CTNative.harness import CLEANUP, build_and_run, find_compilers, prepare_js, run, slotted_run
 
 FUNCTION = re.compile(r"ctjs\.func (?:private )?@([^ (]+)\(.*?(?=\n  ctjs\.func |\n})", re.S)
-NATIVE_PIPELINE = f"builtin.module(ctnative-lower-to-emitc{{optimize=false}},{CLEANUP})"
+NATIVE_PIPELINE = (
+    f"builtin.module(ctnative-lower-to-emitc{{optimize=false observe-globals=true}},{CLEANUP})"
+)
 
 
 def resolve_callbacks(source, mixed=False):
@@ -201,7 +203,9 @@ def main():
     for name, (source, reason) in guard_cases(base).items():
         file = args.work / f"{name}.mlir"
         file.write_text(source)
-        output = run([args.opt, str(file), "--ctnative-lower-to-emitc=optimize=false"]).stdout
+        output = run(
+            [args.opt, str(file), "--ctnative-lower-to-emitc=optimize=false observe-globals=true"]
+        ).stdout
         if (
             'ctnative.callback_refusal = "' + reason + '"' not in output
             or "ctnative.not_native" not in output
@@ -227,7 +231,7 @@ def main():
         file = args.work / f"{name}.mlir"
         file.write_text(source)
         result = slotted_run(
-            [args.opt, str(file), "--ctnative-lower-to-emitc=optimize=false"],
+            [args.opt, str(file), "--ctnative-lower-to-emitc=optimize=false observe-globals=true"],
             text=True,
             capture_output=True,
             timeout=120,

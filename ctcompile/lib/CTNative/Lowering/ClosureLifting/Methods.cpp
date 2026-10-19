@@ -89,6 +89,13 @@ bool closureLifter::ownsByValue(ctjs::SetPropertyOp set,
         if (why) { *why = known->second; }
         return false;
     }
+    // The verdict methodCensus recorded stands: a lift since then reads an
+    // arrow's `this` from a capture parameter, which the walk below no longer
+    // recognises as its maker's.
+    if (const auto known = ownedStores.find(set); known != ownedStores.end()) {
+        if (uses) { uses->append(known->second.begin(), known->second.end()); }
+        return true;
+    }
     llvm::SmallVector<mlir::Operation *> found;
     const std::optional<std::string> refusal = [&]() -> std::optional<std::string> {
         const llvm::StringRef key = ctjs::constantKey(set.getKey());
@@ -133,9 +140,10 @@ bool closureLifter::ownsByValue(ctjs::SetPropertyOp set,
                    " belongs to is not proved, so its prototype is not known to be immutable";
         }
         // Only the constructor and the methods of its prototype read the
-        // field, and only through their own `this`: another object has no
-        // such field. A read before the store, or after a store of null,
-        // finds the field undefined or null, which the member records
+        // field, and only through their own `this`, or the `this` of an arrow
+        // one of them makes and only calls: another object has no such
+        // field. A read before the store, or after a store of null, finds the
+        // field undefined or null, which the member records
         // (Runtime/Owned.hpp), and throws the interpreter's TypeError. A store
         // in the constructor runs once per instance, so no method of an
         // instance the field held is still running when it is replaced; a
@@ -150,11 +158,34 @@ bool closureLifter::ownsByValue(ctjs::SetPropertyOp set,
                 }
             }
         }
+        // An arrow's `this` is its maker's (ArrowThis.cpp), and the arrow
+        // runs only while the maker's call does when every use of its closure
+        // calls it; `escape` names the arrow that could run later instead.
+        std::string escape;
         const auto readersThis = [&](mlir::Value object) {
-            auto from = llvm::dyn_cast<mlir::BlockArgument>(object);
-            return from && from.getArgNumber() == ctjs::arg_receiver &&
-                   from.getOwner()->isEntryBlock() &&
-                   readers.contains(from.getOwner()->getParentOp());
+            escape.clear();
+            // Each step moves to the function that made the arrow, so a chain
+            // longer than this is not a chain of nested arrows.
+            for (unsigned depth = 0; depth < 64; ++depth) {
+                if (auto from = llvm::dyn_cast<mlir::BlockArgument>(object)) {
+                    return from.getArgNumber() == ctjs::arg_receiver &&
+                           from.getOwner()->isEntryBlock() &&
+                           readers.contains(from.getOwner()->getParentOp());
+                }
+                const mlir::Value maker = lexicalThisMaker(object);
+                if (!maker) { return false; }
+                auto arrow = object.getDefiningOp()->getParentOfType<ctjs::FuncOp>();
+                if (mlir::OpOperand * kept = useOutlivingMaker(arrow)) {
+                    escape = ("through the `this` that arrow `" + arrow.getSymName() +
+                              "` captures, and that arrow is " + describeUse(*kept) +
+                              ", so it can run after the call that made it returns, when "
+                              "nothing holds the instance")
+                                 .str();
+                    return false;
+                }
+                object = maker;
+            }
+            return false;
         };
         std::optional<std::string> open;
         module.walk([&](mlir::Operation * op) {
@@ -178,9 +209,10 @@ bool closureLifter::ownsByValue(ctjs::SetPropertyOp set,
                 return mlir::WalkResult::interrupt();
             }
             if (!readersThis(read.getObject())) {
-                open = ("field `" + key + "` is read in " + functionOf(op) +
-                        " through something other than the `this` of the class's constructor "
-                        "or methods")
+                open = ("field `" + key + "` is read in " + functionOf(op) + " " +
+                        (escape.empty() ? "through something other than the `this` of the "
+                                          "class's constructor or methods"
+                                        : escape))
                            .str();
                 return mlir::WalkResult::interrupt();
             }
@@ -479,6 +511,9 @@ bool closureLifter::retainedByLocalMap(mlir::OpOperand & use,
 bool closureLifter::usesCloseTheShape(mlir::Value object) {
     for (mlir::OpOperand & use : object.getUses()) {
         if (isConstantKeyAccess(use)) { continue; }
+        // The receiver of a call of a per-site copy that keeps it
+        // (CallSiteCopies.cpp), as for a method call.
+        if (carriesReceiverToCopy(use)) { continue; }
         // The instance its function returns by value (returnsAnInstance).
         if (auto ret = llvm::dyn_cast<ctjs::ReturnOp>(use.getOwner());
             ret && returnsAnInstance(ret)) {
@@ -1133,7 +1168,36 @@ void closureLifter::methodCensus() {
         for (mlir::Value read : registry.readBack) {
             behind[read].assign(registry.instances.begin(), registry.instances.end());
         }
+        // So does `this` in a method that takes no parameter and captures
+        // nothing: the proof runs every method only on an instance of its class,
+        // which no other class extends, and such a method lifts with no call
+        // (liftsOnRegistryReceiver), so `this.m()` in it resolves as `a.m()`
+        // does on an instance read back from the Map.
+        for (ctjs::FuncOp method : registry.methods) {
+            if (method.getBody().empty() || method.getUpvalueCount() != 0) { continue; }
+            mlir::Block & entry = method.getBody().front();
+            if (llvm::any_of(
+                    entry.getArguments().drop_front(ctjs::implicit_arguments),
+                    [](mlir::BlockArgument parameter) { return !parameter.use_empty(); })) {
+                continue;
+            }
+            llvm::SmallVector<mlir::Value, 2> & named =
+                behind[entry.getArgument(ctjs::arg_receiver)];
+            for (mlir::Value instance : registry.instances) {
+                if (!llvm::is_contained(named, instance)) { named.push_back(instance); }
+            }
+        }
     }
+    // An arrow's `this` names what its maker's receiver names when the arrow
+    // runs only during its maker's calls (ArrowThis.cpp), so `this.m()` in it
+    // resolves as it would in the maker.
+    llvm::SmallVector<std::pair<mlir::Value, mlir::Value>> lexicalThisReads;
+    module.walk([&](ctjs::LoadUpvalueOp read) {
+        const mlir::Value maker = lexicalThisMaker(read.getResult());
+        if (maker && !useOutlivingMaker(read->getParentOfType<ctjs::FuncOp>())) {
+            lexicalThisReads.emplace_back(read.getResult(), maker);
+        }
+    });
     // Fixpoint over the receiver chain. `this.other()` inside a method has
     // `%arg0` as its receiver, and `%arg0` names whatever the call sites pass,
     // which is known only once those call sites resolve. One round per link
@@ -1141,6 +1205,15 @@ void closureLifter::methodCensus() {
     // by the literals in the module.
     for (bool changed = true; changed;) {
         changed = false;
+        for (const auto & [read, maker] : lexicalThisReads) {
+            for (mlir::Value object : behind.lookup(maker)) {
+                llvm::SmallVector<mlir::Value, 2> & named = behind[read];
+                if (!llvm::is_contained(named, object)) {
+                    named.push_back(object);
+                    changed = true;
+                }
+            }
+        }
         for (ctjs::CallOp call : allCalls) {
             auto resolved = resolveMethod(call);
             if (!resolved || resolved->target.getBody().empty() ||
@@ -1150,6 +1223,21 @@ void closureLifter::methodCensus() {
             llvm::SmallVector<mlir::Value, 2> & named =
                 behind[resolved->target.getBody().front().getArgument(0)];
             for (mlir::Value object : behind.lookup(resolved->receiver)) {
+                if (!llvm::is_contained(named, object)) {
+                    named.push_back(object);
+                    changed = true;
+                }
+            }
+        }
+        // A per-site copy that keeps its method call's receiver
+        // (CallSiteCopies.cpp) receives what that receiver names.
+        for (mlir::Operation * op : receiverCopyCalls) {
+            auto call = llvm::cast<ctjs::CallDirectOp>(op);
+            ctjs::FuncOp target = call.getTarget();
+            if (!target || target.getBody().empty()) { continue; }
+            llvm::SmallVector<mlir::Value, 2> & named =
+                behind[target.getBody().front().getArgument(ctjs::arg_receiver)];
+            for (mlir::Value object : behind.lookup(call.getReceiver())) {
                 if (!llvm::is_contained(named, object)) {
                     named.push_back(object);
                     changed = true;
@@ -1222,6 +1310,9 @@ std::optional<std::string> closureLifter::whyThisLeaks(ctjs::FuncOp target) {
             if (use.getOperandNumber() == 1 && resolveMethod(call)) { continue; }
             return "it passes `this` to a call this rewrite cannot make direct";
         }
+        // The receiver of a per-site copy of a method (CallSiteCopies.cpp)
+        // that uses it only as this method may.
+        if (carriesReceiverToCopy(use)) { continue; }
         // `f(this)` is usually a ctjs.call_direct by now, because
         // --ctjs-resolve-globals already named the callee. Give it its own
         // sentence; the default one ("it reaches `ctjs.call_direct`") names
@@ -1236,6 +1327,22 @@ std::optional<std::string> closureLifter::whyThisLeaks(ctjs::FuncOp target) {
             .str();
     }
     return std::nullopt;
+}
+
+/// A proved registry class's method runs only on an instance of its class
+/// (Analysis/Instances.h), and type inference gives its receiver that class
+/// (setToEntryState), so it needs no caller to type it. A capture or a
+/// parameter would have nothing to type it, and a boxed value it stored would
+/// reach the class's fields.
+bool closureLifter::liftsOnRegistryReceiver(ctjs::CreateClosureOp c) {
+    ctjs::FuncOp target = targetOf(c);
+    return methodClosures.contains(c.getOperation()) &&
+           !callsOfTarget.contains(target.getOperation()) &&
+           !copiedAwayMethods.contains(target.getOperation()) &&
+           target->hasAttr(kNativeInstanceMethod) && c.getUpvalues().empty() &&
+           llvm::all_of(target.getBody().front().getArguments(), [](mlir::BlockArgument argument) {
+               return argument.getArgNumber() == ctjs::arg_receiver || argument.use_empty();
+           });
 }
 
 /// The method form of whyNotLiftable: conditions 1 to 4, one sentence each.
@@ -1266,8 +1373,6 @@ std::optional<std::string> closureLifter::whyNotLiftableMethod(ctjs::CreateClosu
             return whyNotAMethodField(set);
         }
     }
-    // Condition 3.
-    if (const std::optional<std::string> leak = whyThisLeaks(target)) { return leak; }
     // Every call of it must be one resolveMethod resolved. A method field
     // nothing calls has nowhere to move the receiver to, and an unresolved
     // call would be left dispatching through a closure that is about to lower
@@ -1277,6 +1382,14 @@ std::optional<std::string> closureLifter::whyNotLiftableMethod(ctjs::CreateClosu
     const auto calls = callsOfTarget.find(target.getOperation());
     const bool copiedAway =
         calls == callsOfTarget.end() && copiedAwayMethods.contains(target.getOperation());
+    // Condition 3. A method whose calls all call copies carries no receiver
+    // any more; each copy that keeps one was asked when it was made. A
+    // registry class's copy of its parent's constructor hands `this` to the
+    // Map as the constructor does, and the registry proof
+    // (Analysis/Instances.h) checked every use of it instead.
+    if (!copiedAway && !isIdentityConstructorCopy(target)) {
+        if (const std::optional<std::string> leak = whyThisLeaks(target)) { return leak; }
+    }
     if (calls == callsOfTarget.end()) {
         // A method read as a value: `var g = o.m;` loads the field without
         // calling it, so there is no call site for the receiver to move to,
@@ -1297,11 +1410,13 @@ std::optional<std::string> closureLifter::whyNotLiftableMethod(ctjs::CreateClosu
                 }
             }
         }
-        if (!copiedAway) { return "nothing calls it"; }
+        // A copied-away method needs no call, and neither does a proved
+        // registry class's method that types its receiver without one.
+        if (!copiedAway && !liftsOnRegistryReceiver(c)) { return "nothing calls it"; }
     }
     const unsigned parameters = entry.getNumArguments() - ctjs::implicit_arguments;
     const llvm::SmallVector<methodCall> sites =
-        copiedAway ? llvm::SmallVector<methodCall>{} : calls->second;
+        calls == callsOfTarget.end() ? llvm::SmallVector<methodCall>{} : calls->second;
     for (methodCall at : sites) {
         if (auto why =
                 whyCallSiteDoesNotLift(at.call, at.call.getArgs().size(), parameters, "a call")) {

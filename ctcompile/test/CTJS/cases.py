@@ -1,4 +1,12 @@
-"""Independent copies of CTJS lit RUN lines; edit both copies."""
+# CASES below copies each case's RUN lines from its .mlir file until that
+# case's switch commit deletes them there; until then, edit both copies.
+"""The CTJS lit cases with no pytest test elsewhere, as pytest tests:
+test_case is parametrized over CASES, whose keys are the cases' lit paths
+relative to this folder without .mlir, so `test_case[IR/invoke]` is lit's
+`ctcompile :: CTJS/IR/invoke.mlir`. Each test runs all of its case's RUN lines
+in order through lit_lines.run, every line under bash, as lit runs them.
+CTJS/Import has its own cases.py.
+"""
 
 from pathlib import Path
 
@@ -8,12 +16,108 @@ import lit_lines
 
 HERE = Path(__file__).resolve().parent
 MAINS = {}
+
 CASES = {
-    "roundtrip": [
-        "ctjs-opt %s | ctjs-opt | FileCheck %s",
+    "Transforms/fold-dynamic-code": [
+        "split-file %s %t",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/newfunction.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=NEWFN",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/functioncall.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=FNCALL",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/eval.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=EVAL",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/timer.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=TIMER",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/dynamic.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=KEPT",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/rebound.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=KEPT",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/computed.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=KEPT",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/defprop.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=KEPT",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/assign.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=KEPT",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/syntaxerror.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=SYNTAX",
     ],
-    "invalid": [
-        "ctjs-opt %s -split-input-file -verify-diagnostics",
+    "IR/exceptions": [
+        "split-file %s %t",
+        "ctjs-opt %t/joined.mlir | ctjs-opt | FileCheck %s --check-prefix=ROUNDTRIP",
+        "ctjs-opt %t/joined.mlir --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=TYPES --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.try",
+        "not ctjs-opt %t/empty-block.mlir 2>&1 | FileCheck %s --check-prefix=EMPTY",
+        "not ctjs-opt %t/state-count.mlir 2>&1 | FileCheck %s --check-prefix=BAD-STATE",
+        "not ctjs-opt %t/catch-type.mlir 2>&1 | FileCheck %s --check-prefix=CATCH-TYPE",
+        "not ctjs-opt %t/body-argument.mlir 2>&1 | FileCheck %s --check-prefix=ARGUMENTS",
+        "not ctjs-opt %t/missing-payload.mlir 2>&1 | FileCheck %s --check-prefix=ARGUMENTS",
+        "not ctjs-opt %t/wrong-terminator.mlir 2>&1 | FileCheck %s --check-prefix=TERMINATOR",
+        "not ctjs-opt %t/misplaced-exit.mlir 2>&1 | FileCheck %s --check-prefix=EXIT",
+        "not ctjs-opt %t/misplaced-yield.mlir 2>&1 | FileCheck %s --check-prefix=YIELD",
+    ],
+    "IR/invoke": [
+        "split-file %s %t",
+        "ctjs-opt %t/roundtrip.mlir | ctjs-opt | FileCheck %s --check-prefix=ROUNDTRIP",
+        "not ctjs-opt %t/body-work.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-0",
+        "not ctjs-opt %t/result-state.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-1",
+        "not ctjs-opt %t/wrong-result.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-2",
+        "not ctjs-opt %t/normal-argument.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-3",
+        "not ctjs-opt %t/body-argument.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-4",
+        "not ctjs-opt %t/payload-type.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-5",
+        "not ctjs-opt %t/state-count.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-6",
+        "not ctjs-opt %t/yield-count.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-7",
+        "not ctjs-opt %t/wrong-yield.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-8",
+        "not ctjs-opt %t/misplaced-exit.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-9",
+        "not ctjs-opt %t/misplaced-yield.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-10",
+        "not ctjs-opt %t/ordinary-result.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-2",
+    ],
+    "Transforms/absent-global-properties": [
+        "split-file %s %t",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/plugin.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=FOLD",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/plugin.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc    | FileCheck %s --check-prefix=DROP",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/dynamic.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/written.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/declared.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/host.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=HOST",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/inherited.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=INHERITED",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/compiled.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=MARK",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/compiled.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc    | FileCheck %s --check-prefix=NATIVE",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/compiled-written.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals    | FileCheck %s --check-prefix=KEPT --implicit-check-not=ctjs.absent_global_property",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/compiled-written.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc    | FileCheck %s --check-prefix=WRITTEN --implicit-check-not=ctnative.absent_globals",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/compiled-eval.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals    | FileCheck %s --check-prefix=KEPT --implicit-check-not=ctjs.absent_global_property",
+    ],
+    "Transforms/absent-globals": [
+        "split-file %s %t",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/probe.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=PROBE",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/stored.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/host.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=HOST",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/dynamic.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/window.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/plain.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=PLAIN",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-umd.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=PREFIXUMD",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-declarations.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=PREFIXPROPS",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-call.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-twice.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT",
+    ],
+    "Transforms/array-iteration": [
+        "ctjs-translate --ctbrowser-js-to-ctjs %s    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf    | FileCheck %s",
+    ],
+    "Transforms/closure-values": [
+        "split-file %s %t",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/handlers.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s",
+        "sed 's|// prototypes: ||' %t/handlers.js > %t/prototypes.js",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/prototypes.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=PROTOTYPES",
+        "sed 's|// mutated: ||' %t/handlers.js > %t/mutated.js",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/mutated.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=MUTATED",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/methods.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=METHODS",
+        "sed 's|// self: ||' %t/methods.js > %t/self.js",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/self.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=SELF",
+        "sed 's|// unknown: ||' %t/methods.js > %t/unknown.js",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/unknown.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=UNKNOWN",
+        "sed 's|// inherited: ||' %t/methods.js > %t/inherited.js",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/inherited.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=INHERITED",
+        "sed 's|// escape: ||' %t/methods.js > %t/escape.js",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/escape.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=ESCAPE",
+    ],
+    "Transforms/closure-values-nested": [
+        "ctjs-opt %s --ctjs-test-closure-values | FileCheck %s",
+    ],
+    "Transforms/closure-values-frames": [
+        "split-file %s %t",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/frames.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s",
+        "sed 's|// open: ||' %t/frames.js > %t/open.js",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/open.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=OPEN",
+        "sed 's|return \\[s\\];|last = s; return [last];|' %t/frames.js > %t/shared.js",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/shared.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=SHARED",
     ],
     "Transforms/resolve-globals": [
         "split-file %s %t",
@@ -84,82 +188,16 @@ CASES = {
         "ctjs-translate --ctbrowser-js-to-ctjs %t/this-handed.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=THISHANDED",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/this-inherited.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=THISINHERITED",
     ],
-    "Transforms/array-iteration": [
-        "ctjs-translate --ctbrowser-js-to-ctjs %s    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf    | FileCheck %s",
+    "invalid": [
+        "ctjs-opt %s -split-input-file -verify-diagnostics",
     ],
-    "Transforms/absent-globals": [
-        "split-file %s %t",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/probe.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=PROBE",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/stored.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/host.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=HOST",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/dynamic.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/window.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/plain.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=PLAIN",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-umd.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=PREFIXUMD",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-declarations.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=PREFIXPROPS",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-call.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-twice.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT",
-    ],
-    "Transforms/absent-global-properties": [
-        "split-file %s %t",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/plugin.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=FOLD",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/plugin.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc    | FileCheck %s --check-prefix=DROP",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/dynamic.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/written.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/declared.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/host.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=HOST",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/inherited.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=INHERITED",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/compiled.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=MARK",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/compiled.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc    | FileCheck %s --check-prefix=NATIVE",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/compiled-written.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals    | FileCheck %s --check-prefix=KEPT --implicit-check-not=ctjs.absent_global_property",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/compiled-written.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc    | FileCheck %s --check-prefix=WRITTEN --implicit-check-not=ctnative.absent_globals",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/compiled-eval.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals    | FileCheck %s --check-prefix=KEPT --implicit-check-not=ctjs.absent_global_property",
-    ],
-    "IR/invoke": [
-        "split-file %s %t",
-        "ctjs-opt %t/roundtrip.mlir | ctjs-opt | FileCheck %s --check-prefix=ROUNDTRIP",
-        "not ctjs-opt %t/body-work.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-0",
-        "not ctjs-opt %t/result-state.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-1",
-        "not ctjs-opt %t/wrong-result.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-2",
-        "not ctjs-opt %t/normal-argument.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-3",
-        "not ctjs-opt %t/body-argument.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-4",
-        "not ctjs-opt %t/payload-type.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-5",
-        "not ctjs-opt %t/state-count.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-6",
-        "not ctjs-opt %t/yield-count.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-7",
-        "not ctjs-opt %t/wrong-yield.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-8",
-        "not ctjs-opt %t/misplaced-exit.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-9",
-        "not ctjs-opt %t/misplaced-yield.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-10",
-        "not ctjs-opt %t/ordinary-result.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-2",
-    ],
-    "IR/exceptions": [
-        "split-file %s %t",
-        "ctjs-opt %t/joined.mlir | ctjs-opt | FileCheck %s --check-prefix=ROUNDTRIP",
-        "ctjs-opt %t/joined.mlir --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=TYPES --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.try",
-        "not ctjs-opt %t/empty-block.mlir 2>&1 | FileCheck %s --check-prefix=EMPTY",
-        "not ctjs-opt %t/state-count.mlir 2>&1 | FileCheck %s --check-prefix=BAD-STATE",
-        "not ctjs-opt %t/catch-type.mlir 2>&1 | FileCheck %s --check-prefix=CATCH-TYPE",
-        "not ctjs-opt %t/body-argument.mlir 2>&1 | FileCheck %s --check-prefix=ARGUMENTS",
-        "not ctjs-opt %t/missing-payload.mlir 2>&1 | FileCheck %s --check-prefix=ARGUMENTS",
-        "not ctjs-opt %t/wrong-terminator.mlir 2>&1 | FileCheck %s --check-prefix=TERMINATOR",
-        "not ctjs-opt %t/misplaced-exit.mlir 2>&1 | FileCheck %s --check-prefix=EXIT",
-        "not ctjs-opt %t/misplaced-yield.mlir 2>&1 | FileCheck %s --check-prefix=YIELD",
-    ],
-    "Transforms/fold-dynamic-code": [
-        "split-file %s %t",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/newfunction.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=NEWFN",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/functioncall.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=FNCALL",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/eval.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=EVAL",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/timer.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=TIMER",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/dynamic.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=KEPT",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/rebound.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=KEPT",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/computed.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=KEPT",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/defprop.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=KEPT",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/assign.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=KEPT",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/syntaxerror.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=SYNTAX",
+    "roundtrip": [
+        "ctjs-opt %s | ctjs-opt | FileCheck %s",
     ],
 }
 
 
 @pytest.mark.parametrize("case", CASES)
 def test_case(lit, case):
-    lit_lines.run(lit, HERE / f"{case}.mlir", CASES[case], MAINS)
+    mlir = HERE / f"{case}.mlir"
+    lit_lines.run(lit, mlir if mlir.is_file() else HERE / f"{case}.test", CASES[case], MAINS)

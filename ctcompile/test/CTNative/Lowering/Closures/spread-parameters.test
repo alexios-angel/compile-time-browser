@@ -16,7 +16,7 @@
 # RUN: split-file %s %t
 # RUN: for name in one forwarded; do \
 # RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --mlir-print-debuginfo 2>/dev/null \
-# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/$name.mlir; \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/$name.mlir; \
 # RUN:   ctjs-opt %t/$name.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/$name.cpp; done
 # RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/one.mlir
 # RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/forwarded.mlir
@@ -36,7 +36,7 @@
 # may not become an own property), and written.js writes the parameter.
 # RUN: for name in two assigned written; do \
 # RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js 2>/dev/null \
-# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 # RUN:   | FileCheck %s --check-prefix=KEPT; done
 #
 # In selfcall.js a named function expression also calls itself by its name,

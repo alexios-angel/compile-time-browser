@@ -10,7 +10,7 @@
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/direct.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/direct.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/direct.mlir
 // RUN: FileCheck %s --check-prefix=DIRECT --implicit-check-not=ctnative.not_native < %t/direct.mlir
 // RUN: ctjs-opt %t/direct.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/direct.cpp
 // RUN: FileCheck %s --check-prefix=DIRECTCPP < %t/direct.cpp
@@ -21,7 +21,7 @@
 // RUN: %native_reference %t/direct.js | FileCheck %s --check-prefix=DIRECTOUT
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/direct.js | FileCheck %s --check-prefix=DIRECTOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nested.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/nested.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/nested.mlir
 // RUN: FileCheck %s --check-prefix=NESTED --implicit-check-not=ctnative.not_native < %t/nested.mlir
 // RUN: ctjs-opt %t/nested.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/nested.cpp
 // RUN: FileCheck %s --check-prefix=NESTEDCPP < %t/nested.cpp
@@ -32,7 +32,7 @@
 // RUN: %native_reference %t/nested.js | FileCheck %s --check-prefix=NESTEDOUT
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/nested.js | FileCheck %s --check-prefix=NESTEDOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/borrowed.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/borrowed.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/borrowed.mlir
 // RUN: FileCheck %s --check-prefix=BORROWED --implicit-check-not=ctnative.not_native < %t/borrowed.mlir
 // RUN: ctjs-opt %t/borrowed.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/borrowed.cpp
 // RUN: FileCheck %s --check-prefix=BORROWEDCPP < %t/borrowed.cpp
@@ -42,15 +42,39 @@
 // RUN: %t/borrowed-clang | FileCheck %s --check-prefix=BORROWEDOUT
 // RUN: %native_reference %t/borrowed.js | FileCheck %s --check-prefix=BORROWEDOUT
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/borrowed.js | FileCheck %s --check-prefix=BORROWEDOUT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/unread.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/unread.mlir
+// RUN: FileCheck %s --check-prefix=UNREAD --implicit-check-not=ctnative.not_native < %t/unread.mlir
+// RUN: ctjs-opt %t/unread.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/unread.cpp
+// RUN: %gxx -O2 %t/unread.cpp -o %t/unread-gcc
+// RUN: %t/unread-gcc | FileCheck %s --check-prefix=UNREADOUT
+// RUN: %clangxx -O2 %t/unread.cpp -o %t/unread-clang
+// RUN: %t/unread-clang | FileCheck %s --check-prefix=UNREADOUT
+// RUN: %native_reference %t/unread.js | FileCheck %s --check-prefix=UNREADOUT
+// RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/unread.js | FileCheck %s --check-prefix=UNREADOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/stored.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=STORED --implicit-check-not="reads its lexical"
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nestedstored.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=NESTEDSTORED --implicit-check-not="reads its lexical"
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/unproved.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=UNPROVED --implicit-check-not="reads its lexical"
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/calls.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/calls.mlir
+// RUN: FileCheck %s --check-prefix=CALLS --implicit-check-not=ctnative.not_native < %t/calls.mlir
+// RUN: ctjs-opt %t/calls.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/calls.cpp
+// RUN: FileCheck %s --check-prefix=CALLSCPP < %t/calls.cpp
+// RUN: %gxx -O2 %t/calls.cpp -o %t/calls-gcc
+// RUN: %t/calls-gcc | FileCheck %s --check-prefix=CALLSOUT
+// RUN: %clangxx -O2 %t/calls.cpp -o %t/calls-clang
+// RUN: %t/calls-clang | FileCheck %s --check-prefix=CALLSOUT
+// RUN: %native_reference %t/calls.js | FileCheck %s --check-prefix=CALLSOUT
+// RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/calls.js | FileCheck %s --check-prefix=CALLSOUT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/callsstored.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
+// RUN:   | FileCheck %s --check-prefix=CALLSSTORED
 
 // A method makes `() => this._x` and calls it twice in its own frame. The
 // arrow lifts with the instance as an object-pointer capture, the method
@@ -78,6 +102,14 @@
 // NESTEDCPP: fn_5([[OUTER]])
 // NESTEDCPP: fn_5(Box* const
 // NESTEDOUT: r=5
+
+// A method makes an arrow that never reads `this`. Nothing can observe the
+// `this` it would capture, so it captures none: its `$enclosing_this` is
+// undefined, the method's receiver does not reach the closure, and the method
+// lifts taking only its instance pointer and argument.
+// UNREAD: emitc.class @Tally
+// UNREAD: emitc.func @add_{{[0-9]+}}(%arg0: !emitc.ptr<!emitc.opaque<"Tally">>, %arg1: !emitc.opaque<"ctnative::js_num">)
+// UNREADOUT: r=13
 
 // Negative: the arrow is stored on the instance and called later, so it is
 // a closure value with no call site to move its capture to. The constructor
@@ -107,6 +139,25 @@
 // method and the program are refused.
 // NESTEDSTORED: ctjs.func private @fn$4({{.*}}ctnative.not_native = "a closure used as a value: it is stored into something that is not an object literal made here - Phase 59 slice 2"
 // NESTEDSTORED: ctjs.func @fn$5({{.*}}ctnative.not_native = "uses its own closure"
+
+// An arrow that calls a method through the `this` it captures, directly and
+// from an arrow inside it. The method only calls them, so the call resolves
+// as the method's own `this.bump()` would (Methods.cpp methodCensus), the
+// arrows lift with the instance pointer, each passes it to `bump` as the
+// receiver, and the program is native.
+// CALLS: emitc.func @total_{{[0-9]+}}
+// CALLSCPP: ctnative::js_num fn_{{[0-9]+}}(Box* const [[SELF:v[0-9]+]]) {
+// CALLSCPP: bump_{{[0-9]+}}([[SELF]],
+// CALLSOUT: r=654
+
+// Negative: an arrow stored on the instance calls `this.bump(1)`. It can run
+// after `keep` returns, so its `this` is not the method's receiver to the
+// method census: the call stays dispatched through the closure, and `bump`,
+// which nothing else calls, is not lifted.
+// CALLSSTORED: ctjs.func @bump${{[0-9]+}}({{.*}}ctnative.not_native = "uses `this` - a method field: nothing calls it"
+// CALLSSTORED: ctjs.func @fn${{[0-9]+}}({{.*}}ctnative.lexical_this
+// CALLSSTORED-NOT: call_direct @bump
+// CALLSSTORED: ctjs.call %{{[0-9]+}}(%{{[0-9]+}}, %{{[0-9]+}})
 
 //--- direct.js
 function run() {
@@ -139,6 +190,22 @@ function run() {
 }
 var r = run();
 
+//--- unread.js
+function run() {
+    class Tally {
+        constructor(start) { this.total = start; }
+        add(n) {
+            const step = n * 2;
+            const twice = () => step + step;
+            this.total = this.total + twice();
+            return this.total;
+        }
+    }
+    const t = new Tally(1);
+    return t.add(3);
+}
+var r = run();
+
 //--- stored.js
 function run() {
     class Box {
@@ -162,6 +229,34 @@ function run() {
         get() { return apply(() => this._x); }
     }
     const b = new Box(4);
+    return b.get();
+}
+var r = run();
+
+//--- calls.js
+function run() {
+    class Box {
+        constructor(x) { this._x = x; }
+        bump(n) { return this._x + n; }
+        total() {
+            const f = () => this.bump(1) * 10 + this._x;
+            const outer = () => { const inner = () => this.bump(2); return inner() * 100; };
+            return f() + outer();
+        }
+    }
+    return new Box(4).total();
+}
+var r = run();
+
+//--- callsstored.js
+function run() {
+    class Box {
+        constructor(x) { this._x = x; this.get = null; }
+        bump(n) { return this._x + n; }
+        keep() { this.get = () => this.bump(1); return 0; }
+    }
+    const b = new Box(4);
+    b.keep();
     return b.get();
 }
 var r = run();

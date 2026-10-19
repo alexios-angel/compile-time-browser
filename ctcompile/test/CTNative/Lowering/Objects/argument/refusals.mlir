@@ -27,22 +27,22 @@
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/opaque.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=OPAQUE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/escapes.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=ESCAPES
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/unread.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=UNREAD
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=MIXED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/otheropen.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=OTHEROPEN
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/otherkey.js --mlir-print-debuginfo 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/otherkey.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/otherkey.mlir
 // RUN: FileCheck %s --check-prefix=OTHERKEY --implicit-check-not=ctnative.not_native < %t/otherkey.mlir
 // RUN: ctjs-opt %t/otherkey.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/otherkey.cpp
 // RUN: %gxx -O2 %t/otherkey.cpp -o %t/otherkey-gcc
@@ -52,13 +52,13 @@
 // RUN: %native_reference %t/otherkey.js | FileCheck %s --check-prefix=OTHERKEYRUN
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/otherkey.js | FileCheck %s --check-prefix=OTHERKEYRUN
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compared.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=COMPARED --implicit-check-not=strict-comparison
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/presence.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=PRESENCE --implicit-check-not=strict-comparison
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/identity.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=IDENTITY
 // The census is a measurement the option reports, not a rule. It is asserted
 // so its numbers stay right: this program has one method-bearing literal and
@@ -66,7 +66,7 @@
 //
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/census.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
-// RUN:              '--ctnative-lower-to-emitc=census=1' -o /dev/null 2>&1 \
+// RUN:              '--ctnative-lower-to-emitc=census=1 observe-globals=true' -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=CENSUS
 // The same census over a call the closed-world pass already resolved.
 // --ctjs-resolve-globals rewrites a call whose callee is a create_closure into
@@ -75,7 +75,7 @@
 //
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/census-named.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
-// RUN:              '--ctnative-lower-to-emitc=census=1' -o /dev/null 2>&1 \
+// RUN:              '--ctnative-lower-to-emitc=census=1 observe-globals=true' -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=CENSUSNAMED
 
 // --- Condition 1: the callee is not one function -----------------------------

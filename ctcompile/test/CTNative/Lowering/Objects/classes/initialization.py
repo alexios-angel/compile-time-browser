@@ -675,7 +675,15 @@ def check_borrowed_helper_inputs(args, prepared):
         source = args.work / f"borrow-{label}.mlir"
         source.write_text(changed)
         output = args.work / f"borrow-{label}.native.mlir"
-        run([args.opt, str(source), "--ctnative-lower-to-emitc=optimize=false", "-o", str(output)])
+        run(
+            [
+                args.opt,
+                str(source),
+                "--ctnative-lower-to-emitc=optimize=false observe-globals=true",
+                "-o",
+                str(output),
+            ]
+        )
         check_refusal(label, output.read_text(), len(FUNCTION.findall(changed)))
     return len(variants)
 
@@ -806,7 +814,7 @@ def check_record_map_inputs(args, prepared):
                 [
                     args.opt,
                     str(source),
-                    f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()}",
+                    f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()} observe-globals=true",
                     "-o",
                     str(output),
                 ]
@@ -835,7 +843,7 @@ def untrusted_change(args, name, optimize, raw, native, functions, expected, ref
                 str(raw),
                 "--ctjs-resolve-globals",
                 "--ctjs-lift-to-scf",
-                f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()}",
+                f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()} observe-globals=true",
                 "-o",
                 str(native),
             ]
@@ -1779,7 +1787,7 @@ def main():
                     [
                         args.opt,
                         str(prepared),
-                        f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()}",
+                        f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()} observe-globals=true",
                         "-o",
                         str(native),
                     ]

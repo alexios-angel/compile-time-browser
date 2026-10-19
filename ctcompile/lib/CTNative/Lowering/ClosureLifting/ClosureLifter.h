@@ -536,6 +536,12 @@ struct closureLifter {
     /// Erases the cells captureLexicalThis made once only such arrows
     /// capture them (ArrowThis.cpp).
     void releaseLexicalThisCells();
+    /// What a read of an arrow's lexical `this` stands for: its maker's
+    /// receiver, or the maker's own such read (ArrowThis.cpp).
+    mlir::Value lexicalThisMaker(mlir::Value value);
+    /// The use of `arrow`'s closure that lets it outlive its maker's call, or
+    /// null when every use calls it (ArrowThis.cpp).
+    mlir::OpOperand * useOutlivingMaker(ctjs::FuncOp arrow);
 
     void specializeCallbacks(liftReport & out);
 
@@ -573,6 +579,18 @@ struct closureLifter {
     /// Rewrites each call of Bootstrap's execute helper with a function and
     /// nothing else into a call of that function (ExecuteCalls.cpp).
     void callExecutedFunctions();
+    /// Whether execute(f) may become f() in this module; decided once.
+    bool executeCallsRewritable();
+    std::optional<bool> executeRewritable;
+    /// A per-call-site copy's callback made where it is called
+    /// (ExecuteCalls.cpp): whether the last link's `parameter` allows it, and
+    /// the rewrite of the copy once `inside`, made from `cells`, replaced it,
+    /// copying functions with the copy's `cloneDeep`; it returns the execute
+    /// helpers whose calls it replaced.
+    bool relaysCallback(mlir::BlockArgument parameter);
+    llvm::SetVector<mlir::Operation *>
+    relayCallback(ctjs::CreateClosureOp inside, llvm::ArrayRef<mlir::Value> cells,
+                  llvm::function_ref<ctjs::FuncOp(ctjs::FuncOp)> cloneDeep);
     void hostCallbackCensus();
     std::optional<std::string> whyNotHostCallback(ctjs::CreateClosureOp c);
     void rewriteHostCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
@@ -582,8 +600,12 @@ struct closureLifter {
     /// that construct or call. Judged by whyNotPromiseCallback and rewritten
     /// by rewritePromiseCallback, as hostCallbacks are.
     llvm::DenseMap<mlir::Operation *, mlir::Operation *> promiseCallbacks;
+    /// The resolve parameter of each executor in promiseCallbacks, taken
+    /// before any lift moves it behind the captures.
+    llvm::DenseSet<mlir::Value> executorResolves;
     void promiseCallbackCensus();
     std::optional<std::string> whyNotPromiseCallback(ctjs::CreateClosureOp c);
+    bool resolveStaysCalled(mlir::BlockArgument resolve);
     void rewritePromiseCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
 
     /// With `cellFactsOnly`, only what isConstantCell reads: no class census
@@ -593,6 +615,10 @@ struct closureLifter {
     void singleWriteCensus();
 
     void sharedCellCensus();
+
+    /// Gives each capture of a binding that no write can change once the
+    /// closure exists a never-written cell of its own (Cells.cpp).
+    void snapshotSettledCaptures();
 
     ctjs::CellSetOp dominatingWriteOf(ctjs::CreateCellOp cell);
 
@@ -1074,6 +1100,12 @@ struct closureLifter {
     /// Whether every object the receiver of `call` may name is known (after
     /// methodCensus).
     bool knowsEveryReceiver(ctjs::CallOp call);
+    /// The direct calls copyCallSitesForClosures made of copies that keep
+    /// their method call's receiver (operand 0, marked kNativeReceiver).
+    llvm::DenseSet<mlir::Operation *> receiverCopyCalls;
+    /// Whether `use` is the receiver of one of those calls whose copy uses
+    /// `this` only as a method's receiver may.
+    bool carriesReceiverToCopy(mlir::OpOperand & use);
     /// The calls a closure passed to `first` at parameter `at` is handed on
     /// through, with the position each passes it at, when copies of that chain
     /// would let the closure lift where the last one uses it.
@@ -1083,6 +1115,10 @@ struct closureLifter {
     /// calls of per-site copies. One left with no call lifts with none
     /// (whyNotLiftableMethod), so its class is not refused for it.
     llvm::DenseSet<mlir::Operation *> copiedAwayMethods;
+    /// Whether method `c`, which no call resolves and nothing copied away, is
+    /// a proved registry class's method that takes nothing but its receiver,
+    /// so it lifts with no call as a copied-away method does (Methods.cpp).
+    bool liftsOnRegistryReceiver(ctjs::CreateClosureOp c);
     /// Whether the cell `capture` holds, at `call`, the value every later read
     /// of it sees.
     bool settledAt(mlir::Value capture, mlir::Operation * call);

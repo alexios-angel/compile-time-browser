@@ -1,0 +1,106 @@
+# A page's classic scripts are separate programs, run as the parser reaches
+# them (ctbrowser/lib/Shell/browser/scripts.cpp). These pin what the VM does,
+# the behaviour a native program built from a whole page must reproduce:
+#
+# - throw.html: a throw ends only its own script; the next one still runs.
+# - hoist.html: a function declared in a later script does not exist while an
+#   earlier one runs, so calling it there is a ReferenceError.
+# - strict.html: "use strict" applies to the script that says it, not to the
+#   scripts around it.
+# - body.html: a head script sees the document as parsed so far, without a
+#   body.
+# - lexical.html: a top-level `let` is shared with later scripts, but an
+#   earlier script cannot read it.
+# - redeclare.html: a second top-level `let` of the same name fails its own
+#   script with a SyntaxError, and the next script still runs.
+# - module.html: a module script waits for the end of the parse.
+#
+# Today no native compile takes a page's scripts as one program:
+# check-workload.py compiles each page script on its own, and its script-run
+# page program joins a library and a probe into one classic script, which
+# page_program refuses when that would change hoisting or strictness.
+#
+# RUN: split-file %s %t
+# RUN: not %native_reference --page %t/throw.html > %t/throw.out 2> %t/throw.err
+# RUN: FileCheck %s --check-prefix=THROW --match-full-lines < %t/throw.out
+# RUN: FileCheck %s --check-prefix=THROWERR < %t/throw.err
+# RUN: %native_reference --page %t/hoist.html | FileCheck %s --check-prefix=HOIST --match-full-lines
+# RUN: %native_reference --page %t/strict.html | FileCheck %s --check-prefix=STRICT --match-full-lines
+# RUN: %native_reference --page %t/body.html | FileCheck %s --check-prefix=BODY --match-full-lines
+# RUN: %native_reference --page %t/lexical.html | FileCheck %s --check-prefix=LEXICAL --match-full-lines
+# RUN: not %native_reference --page %t/redeclare.html > %t/redeclare.out 2> %t/redeclare.err
+# RUN: FileCheck %s --check-prefix=REDECLARE --match-full-lines --implicit-check-not=second < %t/redeclare.out
+# RUN: FileCheck %s --check-prefix=REDECLAREERR < %t/redeclare.err
+# RUN: %native_reference --page %t/module.html | FileCheck %s --check-prefix=MODULE --match-full-lines
+
+# THROW: one
+# THROW-NEXT: two
+# THROWERR: threw: uncaught Error: first
+# HOIST: before ReferenceError undefined
+# HOIST-NEXT: after late
+# STRICT: s1 true
+# STRICT-NEXT: s2 false
+# STRICT-NEXT: s3 true
+# BODY: head null
+# BODY-NEXT: body BODY
+# LEXICAL: early ReferenceError
+# LEXICAL-NEXT: let 1
+# LEXICAL-NEXT: late 1
+# REDECLARE: first 1
+# REDECLARE-NEXT: third 1
+# REDECLAREERR: SyntaxError: Identifier 'dup' has already been declared
+# MODULE: classic null
+# MODULE-NEXT: module BODY
+
+#--- throw.html
+<!doctype html>
+<html><head>
+<script>console.log("one"); throw new Error("first");</script>
+<script>console.log("two");</script>
+</head><body></body></html>
+
+#--- hoist.html
+<!doctype html>
+<html><head>
+<script>var r; try { r = later(); } catch (e) { r = e.name; } console.log("before " + r + " " + typeof later);</script>
+<script>function later() { return "late"; } console.log("after " + later());</script>
+</head><body></body></html>
+
+#--- strict.html
+<!doctype html>
+<html><head>
+<script>"use strict"; var s1 = (function () { return this === undefined; })(); console.log("s1 " + s1);</script>
+<script>var s2 = (function () { return this === undefined; })(); console.log("s2 " + s2);</script>
+<script>"use strict"; var s3 = (function () { return this === undefined; })(); console.log("s3 " + s3);</script>
+</head><body></body></html>
+
+#--- body.html
+<!doctype html>
+<html><head>
+<script>console.log("head " + String(document.body));</script>
+</head><body><p>x</p>
+<script>console.log("body " + (document.body ? document.body.tagName : "null"));</script>
+</body></html>
+
+#--- lexical.html
+<!doctype html>
+<html><head>
+<script>var t; try { t = String(shared); } catch (e) { t = e.name; } console.log("early " + t);</script>
+<script>let shared = 1; console.log("let " + shared);</script>
+<script>console.log("late " + shared);</script>
+</head><body></body></html>
+
+#--- redeclare.html
+<!doctype html>
+<html><head>
+<script>let dup = 1; console.log("first " + dup);</script>
+<script>let dup = 2; console.log("second " + dup);</script>
+<script>console.log("third " + dup);</script>
+</head><body></body></html>
+
+#--- module.html
+<!doctype html>
+<html><head>
+<script type="module">console.log("module " + (document.body ? document.body.tagName : "null"));</script>
+<script>console.log("classic " + String(document.body));</script>
+</head><body><p>x</p></body></html>
