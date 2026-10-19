@@ -623,113 +623,132 @@ def main(argv=None):
     expected = oracles(args)
     compilers = args.compilers
     includes, libraries = dom.link_options(args)
-    prepared = [
-        (name, *dom.prepare(args, name, source, 1, entry_name=name))
-        for name, source in SOURCES.items()
-    ]
-    for optimize in (False, True):
-        for layout in ("explicit", "deduced"):
-            headers, bodies, clients, wanted = set(), [], [], []
-            for provider in dom.PROVIDERS:
-                owned = "session" in provider
-                for name, ir, contract in prepared:
-                    label = f"{name}-{owned}-{optimize}-{layout}"
-                    native = dom.lower(
-                        args,
-                        ir,
-                        dict(
-                            contract,
-                            provider=provider,
-                            initial_intrinsics=(
-                                ITERATION_INTRINSICS + ["Number", "JSON", "decodeURIComponent"]
-                                if name in NORMALIZED_SOURCES
-                                else (
-                                    PREFIX_INTRINSICS
-                                    if name in PREFIX_SOURCES
-                                    else (
-                                        ITERATION_INTRINSICS
-                                        if name in LOOP_SOURCES
-                                        else (
-                                            ["Object", "Array", "String"]
-                                            if name not in BODIES
-                                            else ["Object"]
-                                        )
-                                    )
-                                )
-                            ),
-                            dataset_parameters=[0],
-                        ),
-                        label,
-                        optimize=optimize,
+    # Each prepare writes only files named after its source, so they run side
+    # by side (dom.parallel).
+    prepared = dom.parallel(
+        lambda item: (item[0], *dom.prepare(args, item[0], item[1], 1, entry_name=item[0])),
+        SOURCES.items(),
+    )
+
+    # Every lowered module and its translated C++ are named
+    # name-owned-optimize-layout (plus .deduced.mlir), so the per-source work
+    # for one (optimize, layout) pair runs side by side; the combined C++
+    # still aggregates the results in the original provider/name order.
+    def lower_source(row):
+        label, provider, (name, ir, contract), optimize, layout = row
+        owned = "session" in provider
+        native = dom.lower(
+            args,
+            ir,
+            dict(
+                contract,
+                provider=provider,
+                initial_intrinsics=(
+                    ITERATION_INTRINSICS + ["Number", "JSON", "decodeURIComponent"]
+                    if name in NORMALIZED_SOURCES
+                    else (
+                        PREFIX_INTRINSICS
+                        if name in PREFIX_SOURCES
+                        else (
+                            ITERATION_INTRINSICS
+                            if name in LOOP_SOURCES
+                            else (["Object", "Array", "String"] if name not in BODIES else ["Object"])
+                        )
                     )
-                    if layout == "deduced":
-                        deduced = args.work / f"{label}.deduced.mlir"
-                        run([args.opt, native, "--ctnative-print-deduced", "-o", deduced])
-                        native = deduced
-                    entries = dom.NATIVE.findall(native.read_text())
-                    assert len(entries) == (
-                        1
-                        if name in BODIES
-                        or name in ("dataset_loop_prefix_all", "dataset_values_all")
-                        else 2
-                    ) and not dom.FUNCTION.search(native.read_text()), native.read_text()
-                    entry = next(
-                        symbol
-                        for symbol in entries
-                        if re.fullmatch(re.escape(name) + r"_\d+", symbol)
-                    )
-                    cpp = run([args.translate, "--mlir-to-cpp", native]).stdout
-                    assert "ctnative::dataset_keys" in cpp and not dom.VM.search(cpp), cpp
-                    assert "__ctbrowser_" not in cpp, cpp
-                    if name in PREFIX_SOURCES:
-                        assert ".startsWith(" in cpp and ".substr(" in cpp, cpp
-                        assert not re.search(r"regex|RegExp", cpp), cpp
-                    if name in VALUE_SOURCES and name != "dataset_normalized_attribute":
-                        assert "ctnative::dataset_value(" in cpp and ".at(" in cpp, cpp
-                    if name in NORMALIZED_SOURCES:
-                        assert all(
-                            token in cpp
-                            for token in (
-                                "ctbrowser::parse_json",
-                                "ctbrowser::decode_uri_component",
-                                "ctbrowser::json_value",
-                            )
-                        ), cpp
-                    if name == "dataset_normalized_attribute":
-                        assert "ctnative::get_attribute(" in cpp, cpp
-                    assert not re.search(
-                        r"shared_ptr|weak_ptr|nullable_scalar|std::variant|std::function", cpp
-                    ), cpp
-                    headers.update(re.findall(r"^#(?:include|define CTNATIVE_)[^\n]*", cpp, re.M))
-                    body = re.sub(r"^#(?:include|define CTNATIVE_)[^\n]*\n?", "", cpp, flags=re.M)
-                    namespace = name + ("_session" if owned else "_free")
-                    bodies.append(f"namespace {namespace} {{\n{body}\n}}\n")
-                    clients.append(client(namespace + "::" + entry, owned, name))
-                    # Each client runs every fixture on an HTML and an SVG
-                    # element, so each expected line appears twice.
-                    wanted += [value for value in expected[name] for _ in range(2)]
-            path = args.work / f"combined-{optimize}-{layout}.cpp"
-            path.write_text(
-                "\n".join(sorted(headers))
-                + "\n#include <cassert>\n#include <iostream>\n"
-                + "".join(bodies)
-                + "\nusing namespace ctbrowser;\nint main() {\n"
-                + "".join(clients)
-                + "}\n"
+                ),
+                dataset_parameters=[0],
+            ),
+            label,
+            optimize=optimize,
+        )
+        if layout == "deduced":
+            deduced = args.work / f"{label}.deduced.mlir"
+            run([args.opt, native, "--ctnative-print-deduced", "-o", deduced])
+            native = deduced
+        entries = dom.NATIVE.findall(native.read_text())
+        assert len(entries) == (
+            1 if name in BODIES or name in ("dataset_loop_prefix_all", "dataset_values_all") else 2
+        ) and not dom.FUNCTION.search(native.read_text()), native.read_text()
+        entry = next(
+            symbol for symbol in entries if re.fullmatch(re.escape(name) + r"_\d+", symbol)
+        )
+        cpp = run([args.translate, "--mlir-to-cpp", native]).stdout
+        assert "ctnative::dataset_keys" in cpp and not dom.VM.search(cpp), cpp
+        assert "__ctbrowser_" not in cpp, cpp
+        if name in PREFIX_SOURCES:
+            assert ".startsWith(" in cpp and ".substr(" in cpp, cpp
+            assert not re.search(r"regex|RegExp", cpp), cpp
+        if name in VALUE_SOURCES and name != "dataset_normalized_attribute":
+            assert "ctnative::dataset_value(" in cpp and ".at(" in cpp, cpp
+        if name in NORMALIZED_SOURCES:
+            assert all(
+                token in cpp
+                for token in (
+                    "ctbrowser::parse_json",
+                    "ctbrowser::decode_uri_component",
+                    "ctbrowser::json_value",
+                )
+            ), cpp
+        if name == "dataset_normalized_attribute":
+            assert "ctnative::get_attribute(" in cpp, cpp
+        assert not re.search(
+            r"shared_ptr|weak_ptr|nullable_scalar|std::variant|std::function", cpp
+        ), cpp
+        body = re.sub(r"^#(?:include|define CTNATIVE_)[^\n]*\n?", "", cpp, flags=re.M)
+        namespace = name + ("_session" if owned else "_free")
+        return (
+            set(re.findall(r"^#(?:include|define CTNATIVE_)[^\n]*", cpp, re.M)),
+            f"namespace {namespace} {{\n{body}\n}}\n",
+            client(namespace + "::" + entry, owned, name),
+            # Each client runs every fixture on an HTML and an SVG element, so
+            # each expected line appears twice.
+            [value for value in expected[name] for _ in range(2)],
+        )
+
+    def build_combined(pair):
+        _, optimize, layout = pair
+        rows = [
+            (f"{item[0]}-{'session' in provider}-{optimize}-{layout}", provider, item, optimize, layout)
+            for provider in dom.PROVIDERS
+            for item in prepared
+        ]
+        results = dom.parallel(lower_source, rows)
+        headers = set().union(*(result[0] for result in results))
+        bodies = [result[1] for result in results]
+        clients = [result[2] for result in results]
+        wanted = [value for result in results for value in result[3]]
+        path = args.work / f"combined-{optimize}-{layout}.cpp"
+        path.write_text(
+            "\n".join(sorted(headers))
+            + "\n#include <cassert>\n#include <iostream>\n"
+            + "".join(bodies)
+            + "\nusing namespace ctbrowser;\nint main() {\n"
+            + "".join(clients)
+            + "}\n"
+        )
+        flags = [*FLAGS, *includes]
+        for index, compiler in enumerate(compilers):
+            binary = path.with_suffix(f".{index}")
+            result = build_and_run(
+                compiler, path, binary, flags=flags, libraries=libraries, nm=args.nm, vm=dom.VM
             )
-            flags = [*FLAGS, *includes]
-            for index, compiler in enumerate(compilers):
-                binary = path.with_suffix(f".{index}")
-                result = build_and_run(
-                    compiler, path, binary, flags=flags, libraries=libraries, nm=args.nm, vm=dom.VM
-                )
-                assert result.stdout.splitlines() == wanted
-            if optimize and layout == "explicit":
-                binary = path.with_suffix(".sanitized")
-                result = build_and_run(
-                    compilers[1], path, binary, flags=flags, libraries=libraries, sanitize=True
-                )
-                assert result.stdout.splitlines() == wanted and not result.stderr, result.stderr
+            assert result.stdout.splitlines() == wanted
+        if optimize and layout == "explicit":
+            binary = path.with_suffix(".sanitized")
+            result = build_and_run(
+                compilers[1], path, binary, flags=flags, libraries=libraries, sanitize=True
+            )
+            assert result.stdout.splitlines() == wanted and not result.stderr, result.stderr
+
+    # The four combined builds write only their own combined-* files.
+    dom.parallel(
+        build_combined,
+        [
+            (f"combined-{optimize}-{layout}", optimize, layout)
+            for optimize in (False, True)
+            for layout in ("explicit", "deduced")
+        ],
+    )
     refusals = 0
     refused_sources = [
         (name, f"function {name}(element) {{ {body} }}", 1) for name, body in REFUSALS.items()
@@ -744,8 +763,17 @@ def main(argv=None):
             2,
         )
     )
-    for name, source, parameters in refused_sources:
-        ir, contract = dom.prepare(args, name, source, parameters, entry_name=name)
+    refused_prepared = dom.parallel(
+        lambda item: (
+            item[0],
+            item[2],
+            *dom.prepare(args, item[0], item[1], item[2], entry_name=item[0]),
+        ),
+        refused_sources,
+    )
+
+    def refuse_source(item):
+        name, parameters, ir, contract = item
         for provider in dom.PROVIDERS:
             dom.refuse(
                 args,
@@ -758,93 +786,84 @@ def main(argv=None):
                 ),
                 f"refuse-{name}-{provider}",
             )
-            refusals += 2
+        return 2 * len(dom.PROVIDERS)
+
+    refusals += sum(dom.parallel(refuse_source, refused_prepared))
     # Negative controls on valid sources: lowering must fail when the contract
     # leaves out a needed intrinsic or parameter role ("premise"), or when the
-    # analysis step budget (max_steps) is too small to finish ("budget").
-    _, ir, contract = next(item for item in prepared if item[0] == "dataset_guarded_values")
+    # analysis step budget (max_steps) is too small to finish ("budget"). Each
+    # job's label is built from its role and parameters, so the jobs run side
+    # by side (dom.parallel).
+    by_name = {item[0]: item for item in prepared}
+    controls = []
+
+    def control(label, name, contract, *, optimize=False, max_steps=None):
+        controls.append((label, by_name[name][1], contract, optimize, max_steps))
+
+    guarded = dict(
+        by_name["dataset_guarded_values"][2],
+        initial_intrinsics=ITERATION_INTRINSICS,
+        dataset_parameters=[0],
+    )
     for provider in dom.PROVIDERS:
         for optimize in (False, True):
-            for changes in ({"element_parameters": []}, {"dataset_parameters": []}):
-                dom.lower(
-                    args,
-                    ir,
-                    dict(
-                        contract,
-                        provider=provider,
-                        initial_intrinsics=ITERATION_INTRINSICS,
-                        dataset_parameters=[0],
-                    )
-                    | changes,
-                    f"guard-premise-{refusals}",
+            for role in ("element_parameters", "dataset_parameters"):
+                control(
+                    f"guard-premise-{role}-{provider}-{optimize}",
+                    "dataset_guarded_values",
+                    dict(guarded, provider=provider) | {role: []},
                     optimize=optimize,
-                    success=False,
                 )
-                refusals += 1
             for budget in (0, 64, 256):
-                dom.lower(
-                    args,
-                    ir,
-                    dict(
-                        contract,
-                        provider=provider,
-                        initial_intrinsics=ITERATION_INTRINSICS,
-                        dataset_parameters=[0],
-                    ),
-                    f"guard-budget-{refusals}",
+                control(
+                    f"guard-budget-{budget}-{provider}-{optimize}",
+                    "dataset_guarded_values",
+                    dict(guarded, provider=provider),
                     optimize=optimize,
                     max_steps=budget,
-                    success=False,
                 )
-                refusals += 1
-    _, ir, contract = next(item for item in prepared if item[0] == "dataset_values")
+    values = dict(
+        by_name["dataset_values"][2], dataset_parameters=[0]
+    )
     for provider in dom.PROVIDERS:
         for optimize in (False, True):
             for missing in ITERATION_INTRINSICS:
-                dom.lower(
-                    args,
-                    ir,
+                control(
+                    f"value-premise-{missing}-{provider}-{optimize}",
+                    "dataset_values",
                     dict(
-                        contract,
+                        values,
                         provider=provider,
-                        dataset_parameters=[0],
                         initial_intrinsics=[
                             name for name in ITERATION_INTRINSICS if name != missing
                         ],
                     ),
-                    f"value-premise-{refusals}",
                     optimize=optimize,
-                    success=False,
                 )
-                refusals += 1
             for budget in (0, 64, 256):
-                dom.lower(
-                    args,
-                    ir,
+                control(
+                    f"value-budget-{budget}-{provider}-{optimize}",
+                    "dataset_values",
                     dict(
-                        contract,
-                        provider=provider,
-                        dataset_parameters=[0],
-                        initial_intrinsics=ITERATION_INTRINSICS,
+                        values, provider=provider, initial_intrinsics=ITERATION_INTRINSICS
                     ),
-                    f"value-budget-{refusals}",
                     optimize=optimize,
                     max_steps=budget,
-                    success=False,
                 )
-                refusals += 1
-    _, ir, contract = prepared[0]
-    for changes in (
-        {},
-        {"initial_intrinsics": ["Object"]},
-        {"dataset_parameters": [0]},
-        {"initial_intrinsics": ["Object", "Object"], "dataset_parameters": [0]},
-        {"initial_intrinsics": ["Object"], "dataset_parameters": [1]},
-        {"initial_intrinsics": ["Object"], "dataset_parameters": [0, 0]},
+    for index, changes in enumerate(
+        (
+            {},
+            {"initial_intrinsics": ["Object"]},
+            {"dataset_parameters": [0]},
+            {"initial_intrinsics": ["Object", "Object"], "dataset_parameters": [0]},
+            {"initial_intrinsics": ["Object"], "dataset_parameters": [1]},
+            {"initial_intrinsics": ["Object"], "dataset_parameters": [0, 0]},
+        )
     ):
-        dom.lower(args, ir, dict(contract, **changes), f"premise-{refusals}", success=False)
-        refusals += 1
-    _, ir, contract = next(item for item in prepared if item[0] == "dataset_filter")
+        control(
+            f"premise-{index}", prepared[0][0], dict(prepared[0][2], **changes)
+        )
+    filter_base = dict(by_name["dataset_filter"][2], dataset_parameters=[0])
     for provider in dom.PROVIDERS:
         for optimize in (False, True):
             for intrinsics in (
@@ -853,70 +872,66 @@ def main(argv=None):
                 ["Object", "String"],
                 ["Array", "String"],
             ):
-                dom.lower(
-                    args,
-                    ir,
-                    dict(
-                        contract,
-                        provider=provider,
-                        initial_intrinsics=intrinsics,
-                        dataset_parameters=[0],
-                    ),
-                    f"filter-premise-{refusals}",
+                control(
+                    f"filter-premise-{'-'.join(intrinsics)}-{provider}-{optimize}",
+                    "dataset_filter",
+                    dict(filter_base, provider=provider, initial_intrinsics=intrinsics),
                     optimize=optimize,
-                    success=False,
                 )
-                refusals += 1
-    _, ir, contract = next(item for item in prepared if item[0] == "dataset_loop")
+    loop_base = dict(
+        by_name["dataset_loop"][2],
+        initial_intrinsics=ITERATION_INTRINSICS,
+        dataset_parameters=[0],
+    )
     for budget in (0, 64, 256):
         for optimize in (False, True):
-            dom.lower(
-                args,
-                ir,
-                dict(contract, initial_intrinsics=ITERATION_INTRINSICS, dataset_parameters=[0]),
-                f"loop-budget-{refusals}",
+            control(
+                f"loop-budget-{budget}-{optimize}",
+                "dataset_loop",
+                dict(loop_base),
                 optimize=optimize,
                 max_steps=budget,
-                success=False,
             )
-            refusals += 1
     for missing in ITERATION_INTRINSICS:
         for provider in dom.PROVIDERS:
             for optimize in (False, True):
-                dom.lower(
-                    args,
-                    ir,
+                control(
+                    f"loop-premise-{missing}-{provider}-{optimize}",
+                    "dataset_loop",
                     dict(
-                        contract,
+                        loop_base,
                         provider=provider,
                         initial_intrinsics=[
                             name for name in ITERATION_INTRINSICS if name != missing
                         ],
-                        dataset_parameters=[0],
                     ),
-                    f"loop-premise-{refusals}",
                     optimize=optimize,
-                    success=False,
                 )
-                refusals += 1
-    _, ir, contract = next(item for item in prepared if item[0] == "dataset_loop_prefix")
+    prefix_base = dict(by_name["dataset_loop_prefix"][2], dataset_parameters=[0])
     for missing in ("String", "RegExp", "__ctbrowser_regexp"):
         for provider in dom.PROVIDERS:
             for optimize in (False, True):
-                dom.lower(
-                    args,
-                    ir,
+                control(
+                    f"prefix-premise-{missing}-{provider}-{optimize}",
+                    "dataset_loop_prefix",
                     dict(
-                        contract,
+                        prefix_base,
                         provider=provider,
-                        dataset_parameters=[0],
-                        initial_intrinsics=[name for name in PREFIX_INTRINSICS if name != missing],
+                        initial_intrinsics=[
+                            name for name in PREFIX_INTRINSICS if name != missing
+                        ],
                     ),
-                    f"prefix-premise-{refusals}",
                     optimize=optimize,
-                    success=False,
                 )
-                refusals += 1
+
+    def run_control(job):
+        label, ir, contract, optimize, max_steps = job
+        dom.lower(
+            args, ir, contract, label, optimize=optimize, max_steps=max_steps, success=False
+        )
+        return 1
+
+    refusals += sum(dom.parallel(run_control, controls))
     print(
         f"native DOM dataset: {len(SOURCES)} sources, {sum(map(len, expected.values()))} Node/VM source-double observations, 8 GCC/Clang binaries, HTML/SVG and lifetime sanitizer, {refusals} refusals"
     )
