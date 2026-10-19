@@ -33,6 +33,7 @@
 
 #include <ctbrowser/core/algorithms.hpp>
 
+#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <cstddef>
@@ -53,7 +54,6 @@
 #include <vector>
 
 #ifdef CTNATIVE_DOM
-#include <algorithm>
 #include <array>
 #include <expected>
 #include <limits>
@@ -986,10 +986,8 @@ template <class K, class V> struct ordered_map_storage {
     using key_type = K;
     std::vector<std::pair<K, V>> entries;
     auto find(const K & key) {
-        for (auto it = entries.begin(); it != entries.end(); ++it) {
-            if (map_key_equal(it->first, key)) { return it; }
-        }
-        return entries.end();
+        return std::ranges::find_if(entries,
+                                    [&](const auto & entry) { return map_key_equal(entry.first, key); });
     }
     auto end() { return entries.end(); }
     void insert_or_assign(const K & key, const V & value) {
