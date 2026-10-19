@@ -62,9 +62,10 @@
 //
 // The receiver rule (condition 3) still applies on this route. In calls.js
 // the registry proof accepts `reset`, whose `this` only writes a field and
-// calls `grow`, but no call ties that receiver to the objects a method call
-// resolves on, so `this.grow()` is not a direct call and `reset` keeps that
-// refusal.
+// calls `grow`, but `reset` takes a parameter, so the method census does not
+// let its `this` name the class's instances (that is for methods this route
+// lifts; registry-receivers.mlir), `this.grow()` is not a direct call, and
+// `reset` keeps that refusal.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/calls.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=CALLS
@@ -215,7 +216,7 @@ function run() {
     class Widget {
         constructor(key, size) { this.key = key; this.size = size; registry.set(key, this); }
         grow() { this.size = this.size + 1; return this.size; }
-        reset() { this.size = 0; return this.grow(); }
+        reset(n) { this.size = n; return this.grow(); }
     }
     function getInstance(key) { return registry.get(key) || null; }
     new Widget("a", 3);
