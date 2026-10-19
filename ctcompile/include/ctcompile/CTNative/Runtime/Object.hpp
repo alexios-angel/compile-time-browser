@@ -32,7 +32,7 @@ struct object_to_string_method {
     js_string call(undefined_t) const { return js_string{"[object Undefined]"}; }
     js_string call(js_null_t) const { return js_string{"[object Null]"}; }
     js_string call(const js_string &) const { return js_string{"[object String]"}; }
-    template <class T> js_string call(js_basic_num<T>) const {
+    js_string call(js_num) const {
         return js_string{"[object Number]"};
     }
     template <class T>
