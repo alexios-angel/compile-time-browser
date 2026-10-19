@@ -632,8 +632,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             }
             // All actuals are already evaluated SSA values. Only their unused
             // argument slots go; their effects and exceptions stay before new.
-            const auto actuals =
-                built.getArgs().take_front(std::min<size_t>(built.getArgs().size(), parameters));
+            const auto actuals = built.getArgs().take_front(parameters);
             auto direct = directCall(at, built.getLoc(), target,
                                      carriesReceiver ? instance.getResult() : undefined,
                                      preserveReceiver ? built.getCallee() : undefined, undefined,
