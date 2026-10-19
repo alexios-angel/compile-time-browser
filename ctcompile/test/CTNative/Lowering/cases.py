@@ -35,6 +35,13 @@ CASES = {
         "ctjs-opt %t/native.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/native.cpp",
         "%gxx -O2 %t/native.cpp -o %t/gcc && %t/gcc | FileCheck %s --check-prefix=OUTPUT",
         "%clangxx -O2 %t/native.cpp -o %t/clang && %t/clang | FileCheck %s --check-prefix=OUTPUT",
+        "%node %t/nul.js > %t/nul-node.txt",
+        "FileCheck %s --check-prefix=NUL --match-full-lines < %t/nul-node.txt",
+        "%native_reference --page %t/nul.html --script %t/nul.js > %t/nul-vm.txt",
+        "cmp %t/nul-node.txt %t/nul-vm.txt",
+        "%cmake -DTRANSLATE=ctjs-translate -DOPT=ctjs-opt -DSOURCE=%t/nul.js -DOUTPUT=%t/nul.mlir -P %S/../../Checks/pipeline.cmake",
+        "ctjs-translate --mlir-to-cpp %t/nul.mlir -o %t/nul.cpp",
+        "python3 %S/../../Fixtures/Scalars/console_log.py --cpp %t/nul.cpp --expected %t/nul-vm.txt --build %build --include %{monorepo}/ctbrowser/include --work %t",
     ],
     "Admission/divergence-refusals": [
         "split-file %s %t",

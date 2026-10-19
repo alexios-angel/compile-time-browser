@@ -1356,6 +1356,10 @@ int main() {
         CHECK(static_cast<bool>(test.call(RegExp("number"), js_string{"a number!"})));
         CHECK(!static_cast<bool>(test.call(RegExp("boolean"), js_string{})));
         CHECK(static_cast<bool>(test.call(RegExp("(null|element)", ""), js_string{"null"})));
+        CHECK(!static_cast<bool>(test.call(RegExp("a\0b"), js_string{"a"})));
+        CHECK(static_cast<bool>(test.call(RegExp("a\0b"), js_string{"a\0b"})));
+        CHECK(ctnative::String.prototype.replace.call(js_string{"xa\0by"}, RegExp("a\0b"),
+                                                      js_string{"-"}) == js_string{"x-y"});
     }
 
     // String.prototype.match without `g` (RegExp.hpp), as Bootstrap's toType
