@@ -181,10 +181,6 @@ mlir::Type typeOfConstant(mlir::MLIRContext * c, mlir::Attribute value) {
     return {};
 }
 
-mlir::Type typeOfConstant(ctjs::ConstantOp constant) {
-    return typeOfConstant(constant.getContext(), constant.getValue());
-}
-
 } // namespace
 
 /// The result type an operation has whatever its operands are, or a null Type
@@ -207,7 +203,9 @@ mlir::Type staticResultType(mlir::Operation * op) {
         tag && llvm::isa<ctjs::ConstantOp>(op)) {
         return ClassTagType::get(c, tag.getValue());
     }
-    if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(op)) { return typeOfConstant(constant); }
+    if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(op)) {
+        return typeOfConstant(c, constant.getValue());
+    }
 
     // Every comparison is a boolean, including the relational ones on BigInts:
     // `1n < 2` is a perfectly good comparison and its answer is still a bool.
