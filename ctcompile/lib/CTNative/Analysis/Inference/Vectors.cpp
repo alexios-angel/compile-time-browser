@@ -527,15 +527,12 @@ bool TypeInference::isBoundedIndexRead(mlir::Operation * op) {
     // is always an integer at least 0.
     if (constantIndex(loop.getInits()[index]) < 0) { return false; }
     auto step = loop.getYieldOp().getOperand(index).getDefiningOp();
-    const auto addsOne = [&](mlir::Value lhs, mlir::Value rhs) {
-        return lhs == counter && constantIndex(rhs) == 1;
+    const auto addsOne = [&](auto add) {
+        return add.getKind() == ctjs::BinaryKind::Add && add.getLhs() == counter &&
+               constantIndex(add.getRhs()) == 1;
     };
-    if (auto add = llvm::dyn_cast_or_null<ctjs::BinaryStaticOp>(step)) {
-        return add.getKind() == ctjs::BinaryKind::Add && addsOne(add.getLhs(), add.getRhs());
-    }
-    if (auto add = llvm::dyn_cast_or_null<ctjs::BinaryOp>(step)) {
-        return add.getKind() == ctjs::BinaryKind::Add && addsOne(add.getLhs(), add.getRhs());
-    }
+    if (auto add = llvm::dyn_cast_or_null<ctjs::BinaryStaticOp>(step)) { return addsOne(add); }
+    if (auto add = llvm::dyn_cast_or_null<ctjs::BinaryOp>(step)) { return addsOne(add); }
     return false;
 }
 
