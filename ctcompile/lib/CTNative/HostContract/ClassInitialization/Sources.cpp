@@ -1287,10 +1287,8 @@ bool classInitialization::ownFieldSnapshots(
         auto constant = ctjs::ConstantOp::create(at, read->getLoc(), value);
         // A fixed cell may record this read as its value; point it at the
         // constant too before erasing the read.
-        for (auto & cell : cells) {
-            if (!step()) { return false; }
-            if (cell.second == result) { cell.second = constant; }
-        }
+        if (!spend(cells.size())) { return false; }
+        retargetCells(result, constant);
         result.replaceAllUsesWith(constant);
         read->erase();
     }

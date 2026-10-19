@@ -316,10 +316,8 @@ bool classInitialization::clearOwnFieldLoop(ctjs::CallOp snapshot,
         } else {
             constant = ctjs::ConstantOp::create(at, first->getLoc(), literal);
         }
-        for (auto & cell : cells) {
-            if (!step()) { return false; }
-            if (cell.second == output) { cell.second = constant; }
-        }
+        if (!spend(cells.size())) { return false; }
+        retargetCells(output, constant);
         output.replaceAllUsesWith(constant);
     }
     for (auto key : cleared) {
