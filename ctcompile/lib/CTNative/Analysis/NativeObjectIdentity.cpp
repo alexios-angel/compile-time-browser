@@ -27,9 +27,8 @@ namespace ctcompile::ctnative {
 namespace {
 
 bool operandsInScope(mlir::Operation * op, mlir::DominanceInfo & dominance) {
-    return llvm::all_of(op->getOperands(), [&](mlir::Value value) {
-        return dominance.properlyDominates(value, op);
-    });
+    return llvm::all_of(op->getOperands(),
+                        [&](mlir::Value value) { return dominance.properlyDominates(value, op); });
 }
 
 /// True when `use` is the key operand of a native Map set/get/has/delete.
@@ -109,9 +108,7 @@ bool comparisonFieldEnvironment(mlir::ModuleOp module, const OwnedGlobalRoots * 
                                 OrdinaryObject ordinaryObject) {
     mlir::DominanceInfo dominance;
     const auto result = module.walk([&](mlir::Operation * op) {
-        if (!operandsInScope(op, dominance)) {
-            return mlir::WalkResult::interrupt();
-        }
+        if (!operandsInScope(op, dominance)) { return mlir::WalkResult::interrupt(); }
         bool safe = false;
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
             safe = !liveNativeMapAction(call).empty();

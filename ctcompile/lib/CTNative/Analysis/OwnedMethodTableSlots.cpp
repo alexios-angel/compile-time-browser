@@ -105,7 +105,9 @@ OwnedMethodTableSlots::OwnedMethodTableSlots(mlir::ModuleOp module, unsigned max
     }
     for (auto [index, slot] : llvm::enumerate(checked)) {
         indices[slot.initialization] = static_cast<unsigned>(index);
-        for (ctjs::GetPropertyOp read : slot.reads) { indices[read] = static_cast<unsigned>(index); }
+        for (ctjs::GetPropertyOp read : slot.reads) {
+            indices[read] = static_cast<unsigned>(index);
+        }
     }
 }
 
