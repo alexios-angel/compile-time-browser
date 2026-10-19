@@ -103,8 +103,8 @@ struct lowering {
     mlir::Type instanceType(mlir::Type type);
     llvm::StringSet<> instanceSpellings;
     /// The owner of `borrowed`, a method's `C *` to an instance a registry
-    /// owns: `borrowed->shared_from_this()`. Its class is remembered in
-    /// sharedFromThis, whose structs derive std::enable_shared_from_this.
+    /// owns, through its qualified std::enable_shared_from_this base so JS
+    /// fields cannot shadow the lookup. sharedFromThis records its class.
     mlir::Value ownerOf(mlir::OpBuilder & b, mlir::Location where, mlir::Value borrowed,
                         mlir::Type type);
     /// The function `call` runs: its ctjs.func, or the emitc.func lowered from

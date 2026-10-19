@@ -13,7 +13,7 @@
 // The negatives pin the refused lifetime and escape cases.
 //
 // RUN: split-file %s %t
-// RUN: for name in timer constructor owned by-value writes passes stored constructor-stored promise; do \
+// RUN: for name in timer constructor owned field-collision by-value writes passes stored constructor-stored promise; do \
 // RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/$name.mlir; done
 // RUN: FileCheck %s --check-prefix=TIMER --implicit-check-not="this rewrite cannot make direct" --implicit-check-not="carry a receiver through" --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/timer.mlir
@@ -25,12 +25,16 @@
 // RUN: FileCheck %s --check-prefix=STORED < %t/stored.mlir
 // RUN: FileCheck %s --check-prefix=CONSTRUCTOR-STORED < %t/constructor-stored.mlir
 // RUN: FileCheck %s --check-prefix=PROMISE < %t/promise.mlir
+// RUN: FileCheck %s --check-prefix=COLLISION --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/field-collision.mlir
+// RUN: ctjs-opt %t/field-collision.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/field-collision.cpp
+// RUN: %gxx -fsyntax-only %t/field-collision.cpp
+// RUN: %clangxx -fsyntax-only %t/field-collision.cpp
 
 // timer.js: a method borrows Widget, but the bound timer keeps its owner.
 // TIMER: emitc.class @Widget attributes {ctnative.bases = ["std::enable_shared_from_this<Widget>"]
 // TIMER: emitc.func @later_{{[0-9]+}}(%arg0: !emitc.ptr<!emitc.opaque<"Widget">>)
 // TIMER: %[[FN:[0-9]+]] = literal "fn_[[CB:[0-9]+]]"
-// TIMER: %[[OWNER:[0-9]+]] = member_call_opaque %arg0 "shared_from_this"(){{.*}}-> !emitc.opaque<"std::shared_ptr<Widget>">
+// TIMER: %[[OWNER:[0-9]+]] = member_call_opaque %arg0 "std::enable_shared_from_this<Widget>::shared_from_this"(){{.*}}-> !emitc.opaque<"std::shared_ptr<Widget>">
 // TIMER: %[[BOUND:[0-9]+]] = call_opaque "std::bind_front"(%[[FN]], %[[OWNER]])
 // TIMER: call_opaque "ctnative::setTimeout"(%[[BOUND]],
 // TIMER: emitc.func @fn_[[CB]](%arg0: !emitc.opaque<"std::shared_ptr<Widget>">)
@@ -53,7 +57,7 @@
 // OWNED: emitc.field @_scrollBar : !emitc.opaque<"ctnative::owned<ScrollBarHelper>">
 // OWNED: emitc.func @hide_{{[0-9]+}}(%arg0: !emitc.ptr<!emitc.opaque<"Modal">>)
 // OWNED: %[[FN:[0-9]+]] = literal "fn_[[CB:[0-9]+]]"
-// OWNED: %[[OWNER:[0-9]+]] = member_call_opaque %arg0 "shared_from_this"(){{.*}}-> !emitc.opaque<"std::shared_ptr<Modal>">
+// OWNED: %[[OWNER:[0-9]+]] = member_call_opaque %arg0 "std::enable_shared_from_this<Modal>::shared_from_this"(){{.*}}-> !emitc.opaque<"std::shared_ptr<Modal>">
 // OWNED: %[[BOUND:[0-9]+]] = call_opaque "std::bind_front"(%[[FN]], %[[OWNER]])
 // OWNED: call_opaque "ctnative::setTimeout"(%[[BOUND]],
 // OWNED: emitc.func @fn_[[CB]](%arg0: !emitc.opaque<"std::shared_ptr<Modal>">)
@@ -62,6 +66,11 @@
 // OWNED: %[[ADDRESS:[0-9]+]] = address_of %[[MEMBER]]
 // OWNED: %[[HELPER:[0-9]+]] = call_opaque "ctnative::reading"(%[[ADDRESS]],
 // OWNED: call @reset_{{[0-9]+}}(%[[HELPER]])
+
+// A JS field keeps its original name, even when it shadows the owner's method.
+// COLLISION: emitc.field @shared_from_this : !emitc.opaque<"ctnative::js_num">
+// COLLISION: %[[OWNER:[0-9]+]] = member_call_opaque %arg0 "std::enable_shared_from_this<Widget>::shared_from_this"()
+// COLLISION: call_opaque "std::bind_front"(%{{[0-9]+}}, %[[OWNER]])
 
 // Negative: an instance with no registry (by-value.js) has no owner the host
 // could keep, and neither has a registry class whose arrow writes a field
@@ -94,6 +103,28 @@ function run() {
     class Widget {
         constructor(key, size) { this.key = key; this.size = size; registry.set(key, this); }
         grow() { this.size = this.size + 1; return this.size; }
+        later() { setTimeout(() => { this.grow(); }, 0); return this.size; }
+        dispose() { registry.delete(this.key); this.size = 0; return 0; }
+    }
+    new Widget("a", 3);
+    const a = registry.get("a") || null;
+    let total = 0;
+    if (a !== null) { total = a.later() + a.dispose(); }
+    return total;
+}
+var result = run();
+
+//--- field-collision.js
+function run() {
+    const registry = new Map();
+    class Widget {
+        constructor(key, size) {
+            this.key = key;
+            this.size = size;
+            this.shared_from_this = 7;
+            registry.set(key, this);
+        }
+        grow() { this.size = this.size + this.shared_from_this; return this.size; }
         later() { setTimeout(() => { this.grow(); }, 0); return this.size; }
         dispose() { registry.delete(this.key); this.size = 0; return 0; }
     }

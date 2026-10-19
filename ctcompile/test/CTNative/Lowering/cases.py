@@ -1302,7 +1302,7 @@ CASES = {
     ],
     "Objects/classes/held-this": [
         "split-file %s %t",
-        "for name in timer constructor owned by-value writes passes stored constructor-stored promise; do    ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/$name.mlir; done",
+        "for name in timer constructor owned field-collision by-value writes passes stored constructor-stored promise; do    ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/$name.mlir; done",
         'FileCheck %s --check-prefix=TIMER --implicit-check-not="this rewrite cannot make direct" --implicit-check-not="carry a receiver through" --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/timer.mlir',
         'FileCheck %s --check-prefix=CONSTRUCTOR --implicit-check-not="this rewrite cannot make direct" --implicit-check-not="carry a receiver through" --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/constructor.mlir',
         'FileCheck %s --check-prefix=OWNED --implicit-check-not="own it by value" --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/owned.mlir',
@@ -1312,6 +1312,10 @@ CASES = {
         "FileCheck %s --check-prefix=STORED < %t/stored.mlir",
         "FileCheck %s --check-prefix=CONSTRUCTOR-STORED < %t/constructor-stored.mlir",
         "FileCheck %s --check-prefix=PROMISE < %t/promise.mlir",
+        "FileCheck %s --check-prefix=COLLISION --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/field-collision.mlir",
+        "ctjs-opt %t/field-collision.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/field-collision.cpp",
+        "%gxx -fsyntax-only %t/field-collision.cpp",
+        "%clangxx -fsyntax-only %t/field-collision.cpp",
     ],
     "Objects/array/overwrite": [
         "ctjs-translate --ctbrowser-js-to-ctjs %S/../../../Fixtures/Objects/array/overwrite.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=STORED",

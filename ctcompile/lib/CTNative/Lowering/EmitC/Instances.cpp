@@ -36,8 +36,11 @@ mlir::Type lowering::instanceType(mlir::Type type) {
 
 mlir::Value lowering::ownerOf(mlir::OpBuilder & b, mlir::Location where, mlir::Value borrowed,
                               mlir::Type type) {
-    sharedFromThis.insert(instanceClassSpelling(instanceClassName(type)));
-    return memberCall(b, where, instanceType(type), borrowed, "shared_from_this");
+    const std::string name = instanceClassSpelling(instanceClassName(type));
+    sharedFromThis.insert(name);
+    // A JS field may shadow the unqualified member name.
+    return memberCall(b, where, instanceType(type), borrowed,
+                      "std::enable_shared_from_this<" + name + ">::shared_from_this");
 }
 
 bool lowering::isInstanceValue(mlir::Value v) const {
