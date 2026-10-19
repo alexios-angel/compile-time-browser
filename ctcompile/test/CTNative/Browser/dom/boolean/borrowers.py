@@ -432,10 +432,17 @@ def bad_programs():
 def main(argv=None):
     args = dom.parse_args(__doc__, oracles=True, argv=argv)
     includes, libraries = dom.link_options(args)
-    executions = refusals = 0
-    for name, (fixture, text, body, *expected) in CASES.items():
+
+    # Every case writes only files named after itself (the oracle source,
+    # the prepared module, the name-owned-optimize builds and the
+    # name-budget-N refusals), so they run side by side (dom.parallel).
+    # budget_boundary's fixed budget-boundary-* outputs stay sequential below.
+    def check_case(item):
+        name, (fixture, text, body, *expected) = item
         fixture.oracle(args, name, body, *expected)
         ir, contract = cells.prepare(args, name, text)
+        boundary = None
+        executions = 0
         for owned, optimize, manifest in dom.variants(contract):
             label = f"{name}-{owned}-{optimize}"
             native = dom.lower(args, ir, manifest, label, optimize=optimize, max_steps=1000000)
@@ -446,12 +453,23 @@ def main(argv=None):
         dom.exhaust(
             args, ir, contract, name, [0, 8], "{budget} did not exhaust conditional borrower proof"
         )
-        refusals += 2
+        refusals = 2
         if name in ("scoped-owner", "owner-result-prefix"):
-            refusals += cells.budget_boundary(args, ir, contract)
-    for name, text in bad_programs().items():
+            boundary = (ir, contract)
+        return executions, refusals, boundary
+
+    case_results = dom.parallel(check_case, CASES.items())
+    executions = sum(result[0] for result in case_results)
+    refusals = sum(result[1] for result in case_results)
+    for boundary in (result[2] for result in case_results):
+        if boundary is not None:
+            refusals += cells.budget_boundary(args, *boundary)
+
+    def check_bad(item):
+        name, text = item
         ir, contract = cells.prepare(args, "bad-" + name, text)
         original = cells.source_operations(args, ir.read_text())
+        count = 0
         for owned, optimize, manifest in dom.variants(contract):
             diagnostic = dom.lower(
                 args,
@@ -470,33 +488,51 @@ def main(argv=None):
                 assert cells.source_operations(args, diagnostic) == original, diagnostic
             if name.startswith("combined-depth-"):
                 assert "combined conditional depth exhausted" in diagnostic, diagnostic
-            refusals += 1
+            count += 1
+        return count
+
+    refusals += sum(dom.parallel(check_bad, bad_programs().items()))
+
     # Malformed IR that the ctjs verifier itself must reject.
-    for name, text in {
-        "nested-return": program(CONDITIONAL.replace(WRITE, "ctjs.return %read\n" + WRITE)),
-        "yield-result": program(CONDITIONAL.replace("scf.yield", "scf.yield %read : !ctjs.value")),
-        "yield-missing-result": program(
-            MULTIPLE_RESULTS.replace(
-                "scf.yield %read, %after : !ctjs.value, !ctjs.value",
-                "scf.yield %read : !ctjs.value",
-                1,
-            )
-        ),
-        "yield-type-mismatch": program(
-            SELECTED_RESULT.replace("scf.yield %read : !ctjs.value", "scf.yield %condition : i1", 1)
-        ),
-        "yield-sibling-value": program(
-            SELECTED_RESULT.replace("} else {\nscf.yield %read", "} else {\nscf.yield %yes")
-        ),
-        "missing-argument": program(
-            owner=OWNER.replace("@mark$3(%u, %u, %u, %seen)", "@mark$3(%u, %u, %u)")
-        ),
-    }.items():
+    def check_malformed(item):
+        name, text = item
         path = args.work / f"verifier-{name}.mlir"
         path.write_text(text)
         actual = slotted_run([args.opt, str(path)], text=True, capture_output=True, timeout=30)
         assert actual.returncode == 1 and "error:" in actual.stderr, actual.stderr
-        refusals += 1
+        return 1
+
+    refusals += sum(
+        dom.parallel(
+            check_malformed,
+            {
+                "nested-return": program(
+                    CONDITIONAL.replace(WRITE, "ctjs.return %read\n" + WRITE)
+                ),
+                "yield-result": program(
+                    CONDITIONAL.replace("scf.yield", "scf.yield %read : !ctjs.value")
+                ),
+                "yield-missing-result": program(
+                    MULTIPLE_RESULTS.replace(
+                        "scf.yield %read, %after : !ctjs.value, !ctjs.value",
+                        "scf.yield %read : !ctjs.value",
+                        1,
+                    )
+                ),
+                "yield-type-mismatch": program(
+                    SELECTED_RESULT.replace(
+                        "scf.yield %read : !ctjs.value", "scf.yield %condition : i1", 1
+                    )
+                ),
+                "yield-sibling-value": program(
+                    SELECTED_RESULT.replace("} else {\nscf.yield %read", "} else {\nscf.yield %yes")
+                ),
+                "missing-argument": program(
+                    owner=OWNER.replace("@mark$3(%u, %u, %u, %seen)", "@mark$3(%u, %u, %u)")
+                ),
+            }.items(),
+        )
+    )
     print(
         f"DOM Boolean borrowers: {len(CASES)} Node/VM sources, {executions} native executions, {refusals} refusals"
     )
