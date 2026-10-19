@@ -34,14 +34,12 @@ public:
 
     [[nodiscard]] llvm::ArrayRef<OwnedMethodTableSlot> slots() const { return checked; }
     /// The slot a store initialises or a read reads, or null.
-    [[nodiscard]] const OwnedMethodTableSlot * lookup(ctjs::SetPropertyOp store) const;
-    [[nodiscard]] const OwnedMethodTableSlot * lookup(ctjs::GetPropertyOp read) const;
+    [[nodiscard]] const OwnedMethodTableSlot * lookup(mlir::Operation * operation) const;
     [[nodiscard]] bool exhausted() const { return budget.exhausted; }
 
 private:
     llvm::SmallVector<OwnedMethodTableSlot> checked;
-    llvm::DenseMap<mlir::Operation *, unsigned> stores;
-    llvm::DenseMap<mlir::Operation *, unsigned> loads;
+    llvm::DenseMap<mlir::Operation *, unsigned> indices;
     WorkBudget budget;
 };
 
