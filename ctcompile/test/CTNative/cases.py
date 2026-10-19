@@ -19,6 +19,7 @@ HERE = Path(__file__).resolve().parent
 MAINS = {}
 
 CASES = {
+    "HostContract/completion-tags": ["%build/ctcompile/test/ctcompile-test-host-contract"],
     "BindingTime/binding-time": [
         "split-file %s %t",
         "ctjs-opt %t/mixed.mlir --ctnative-binding-time-analysis | FileCheck %s --check-prefix=MIXED",
