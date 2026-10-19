@@ -53,7 +53,7 @@
 // RUN:   2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --implicit-check-not=ctjs.runtime_code
 
-// RUN: for name in sink-srcdoc-property sink-srcdoc-attribute sink-srcdoc-attribute-ns sink-sethtml-script sink-sethtml-runscripts sink-parsehtml-script sink-fragment-script sink-write-script sink-writeln-script sink-outer-handler sink-adjacent-handler sink-srcdoc-nested sink-markup-frame sink-iframe-url sink-object-url sink-embed-url sink-anchor-url sink-form-url sink-location-url sink-location-href-url sink-location-assign-url sink-location-replace-url sink-window-open-url sink-global-open-url sink-attribute-src-url sink-attribute-data-url sink-attribute-href-url sink-attribute-action-url sink-script-create sink-script-create-ns sink-script-insert sink-script-before sink-script-replace sink-script-append sink-script-text sink-script-src sink-script-text-content sink-script-src-attribute sink-safe-img sink-safe-anchor-text sink-safe-div-text sink-safe-append-div sink-safe-srcdoc sink-safe-sethtml sink-safe-parsehtml sink-frame-data-url sink-frame-https-url sink-object-data-html sink-embed-data-html sink-frame-src-attribute sink-object-data-attribute-ns sink-key-srcdoc sink-key-sethtml sink-key-append sink-key-script-text sink-attr-value-srcdoc sink-attr-named-srcdoc sink-descriptor-srcdoc sink-attr-node-srcdoc sink-define-property-srcdoc sink-script-append-string sink-script-prepend-string sink-script-adjacent-text; do \
+// RUN: for name in sink-srcdoc-property sink-srcdoc-attribute sink-srcdoc-attribute-ns sink-sethtml-script sink-sethtml-runscripts sink-parsehtml-script sink-fragment-script sink-write-script sink-writeln-script sink-outer-handler sink-adjacent-handler sink-srcdoc-nested sink-markup-frame sink-iframe-url sink-object-url sink-embed-url sink-anchor-url sink-form-url sink-location-url sink-location-href-url sink-location-assign-url sink-location-replace-url sink-window-open-url sink-global-open-url sink-attribute-src-url sink-attribute-data-url sink-attribute-href-url sink-attribute-action-url sink-script-create sink-script-create-ns sink-script-insert sink-script-before sink-script-replace sink-script-append sink-script-text sink-script-src sink-script-text-content sink-script-src-attribute sink-safe-img sink-safe-anchor-text sink-safe-div-text sink-safe-append-div sink-safe-srcdoc sink-safe-sethtml sink-safe-parsehtml sink-frame-data-url sink-frame-https-url sink-object-data-html sink-embed-data-html sink-frame-src-attribute sink-object-data-attribute-ns sink-key-srcdoc sink-key-sethtml sink-key-append sink-key-script-text sink-attr-value-srcdoc sink-attr-named-srcdoc sink-descriptor-srcdoc sink-attr-node-srcdoc sink-define-property-srcdoc sink-script-append-string sink-script-prepend-string sink-script-adjacent-text sink-script-append-param sink-script-prepend-param sink-script-innerhtml sink-script-adjacent-html sink-reflect-set-srcdoc sink-reflect-set-innerhtml sink-reflect-set-src sink-descriptors-plural; do \
 // RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --whole-page --mlir-print-debuginfo 2>/dev/null \
 // RUN:     | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc > %t/$name.mlir; done
 // RUN: FileCheck %s --check-prefix=SINKSRCDOCPROPERTY < %t/sink-srcdoc-property.mlir
@@ -119,6 +119,14 @@
 // RUN: FileCheck %s --check-prefix=SINKSCRIPTAPPENDSTRING < %t/sink-script-append-string.mlir
 // RUN: FileCheck %s --check-prefix=SINKSCRIPTPREPENDSTRING < %t/sink-script-prepend-string.mlir
 // RUN: FileCheck %s --check-prefix=SINKSCRIPTADJACENTTEXT < %t/sink-script-adjacent-text.mlir
+// RUN: FileCheck %s --check-prefix=SINKSCRIPTAPPENDPARAM < %t/sink-script-append-param.mlir
+// RUN: FileCheck %s --check-prefix=SINKSCRIPTPREPENDPARAM < %t/sink-script-prepend-param.mlir
+// RUN: FileCheck %s --check-prefix=SINKSCRIPTINNERHTML < %t/sink-script-innerhtml.mlir
+// RUN: FileCheck %s --check-prefix=SINKSCRIPTADJACENTHTML < %t/sink-script-adjacent-html.mlir
+// RUN: FileCheck %s --check-prefix=SINKREFLECTSETSRCDOC < %t/sink-reflect-set-srcdoc.mlir
+// RUN: FileCheck %s --check-prefix=SINKREFLECTSETINNERHTML < %t/sink-reflect-set-innerhtml.mlir
+// RUN: FileCheck %s --check-prefix=SINKREFLECTSETSRC < %t/sink-reflect-set-src.mlir
+// RUN: FileCheck %s --check-prefix=SINKDESCRIPTORSPLURAL < %t/sink-descriptors-plural.mlir
 
 // RUN: for name in computed-document-method reflected-document-method; do \
 // RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --whole-page 2>/dev/null \
@@ -455,6 +463,34 @@ arm(document.body, 1);
 // SINKSCRIPTADJACENTTEXT: ctnative.not_native = "`insertAdjacentText` writes text into a possibly-script element, whose new code a native program cannot compile
 // SINKSCRIPTADJACENTTEXT: ctjs.runtime_code = "`insertAdjacentText` writes text into a possibly-script element, whose new code a native program cannot compile
 
+// The text rule follows values through calls the way the node rule does: an
+// argument that is not proved to be a node becomes text in a script receiver.
+// SINKSCRIPTAPPENDPARAM: ctnative.not_native = "`append` writes text into a possibly-script element, whose new code a native program cannot compile
+// SINKSCRIPTAPPENDPARAM: ctjs.runtime_code = "`append` writes text into a possibly-script element, whose new code a native program cannot compile
+// SINKSCRIPTPREPENDPARAM: ctnative.not_native = "`prepend` writes text into a possibly-script element, whose new code a native program cannot compile
+// SINKSCRIPTPREPENDPARAM: ctjs.runtime_code = "`prepend` writes text into a possibly-script element, whose new code a native program cannot compile
+
+// Setting a script element's HTML content writes its code, and so does
+// inserting HTML beside it: the same text rule, spelled through a markup API.
+// SINKSCRIPTINNERHTML: ctnative.not_native = "`innerHTML` writes a possibly-script element, whose new code a native program cannot compile
+// SINKSCRIPTINNERHTML: ctjs.runtime_code = "`innerHTML` writes a possibly-script element, whose new code a native program cannot compile
+// SINKSCRIPTADJACENTHTML: ctnative.not_native = "`insertAdjacentHTML` writes text into a possibly-script element, whose new code a native program cannot compile
+// SINKSCRIPTADJACENTHTML: ctjs.runtime_code = "`insertAdjacentHTML` writes text into a possibly-script element, whose new code a native program cannot compile
+
+// Reflect.set writes a property, so the property's sink rules apply to it
+// with that property's own reason.
+// SINKREFLECTSETSRCDOC: ctnative.not_native = "`srcdoc` with executable markup may add a script or browsing context, whose code a native program cannot compile
+// SINKREFLECTSETSRCDOC: ctjs.runtime_code = "`srcdoc` with executable markup may add a script or browsing context, whose code a native program cannot compile
+// SINKREFLECTSETINNERHTML: ctnative.not_native = "`innerHTML` with executable markup may add a script or browsing context, whose code a native program cannot compile
+// SINKREFLECTSETINNERHTML: ctjs.runtime_code = "`innerHTML` with executable markup may add a script or browsing context, whose code a native program cannot compile
+// SINKREFLECTSETSRC: ctnative.not_native = "`src` navigates a frame to a document that may run scripts, whose code a native program cannot compile
+// SINKREFLECTSETSRC: ctjs.runtime_code = "`src` navigates a frame to a document that may run scripts, whose code a native program cannot compile
+
+// Every descriptor of every property comes back from the plural form, so its
+// property name is never known at build time.
+// SINKDESCRIPTORSPLURAL: ctnative.not_native = "`getOwnPropertyDescriptors` of a property not known at build time can reach code a native program cannot compile
+// SINKDESCRIPTORSPLURAL: ctjs.runtime_code = "`getOwnPropertyDescriptors` of a property not known at build time can reach code a native program cannot compile
+
 //--- sink-srcdoc-property.js
 document.querySelector("iframe").srcdoc = "<script>x=1</script>";
 
@@ -643,6 +679,30 @@ document.querySelector("script").prepend("x=1");
 
 //--- sink-script-adjacent-text.js
 document.querySelector("script").insertAdjacentText("beforeend","x=1");
+
+//--- sink-script-append-param.js
+(function(){function f(el, s) { el.append(s); } f(document.querySelector("script"), "x=1");})();
+
+//--- sink-script-prepend-param.js
+(function(){function f(el, s) { el.prepend(s); } f(document.querySelector("script"), "x=1");})();
+
+//--- sink-script-innerhtml.js
+document.querySelector("script").innerHTML = "x=1";
+
+//--- sink-script-adjacent-html.js
+document.querySelector("script").insertAdjacentHTML("beforeend","x=1");
+
+//--- sink-reflect-set-srcdoc.js
+Reflect.set(document.querySelector("iframe"), "srcdoc", "<script>x=1</script>");
+
+//--- sink-reflect-set-innerhtml.js
+Reflect.set(document.body, "innerHTML", "<script>x=1</script>");
+
+//--- sink-reflect-set-src.js
+Reflect.set(document.querySelector("iframe"), "src", "data:text/html,<script>x=1</script>");
+
+//--- sink-descriptors-plural.js
+Object.getOwnPropertyDescriptors(document.querySelector("iframe")).srcdoc.set.call(document.querySelector("iframe"), "<script>x=1</script>");
 
 //--- computed-document-method.js
 document[location.hash] = function () { return document.querySelector("script"); };
