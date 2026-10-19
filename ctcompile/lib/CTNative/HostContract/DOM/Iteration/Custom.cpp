@@ -2202,10 +2202,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                             ctjs::constantKey(get.getKey()) == "done") {
                             continue; // The done-field walk above already refused Try exits.
                         }
-                        if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(user);
-                            compare && compare.getKind() == ctjs::CompareKind::StrictEq &&
-                            undefined(use.getOperandNumber() == 0 ? compare.getRhs()
-                                                                  : compare.getLhs())) {
+                        if (strictUndefinedTest(llvm::dyn_cast<ctjs::CompareOp>(user), value)) {
                             continue;
                         }
                     }
