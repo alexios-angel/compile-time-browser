@@ -269,9 +269,7 @@ run_result context::run_script_fenced(const program & prog, value & thrown) {
     bool threw = false;
     const value returned = call_fenced(start, {}, global_this(), threw, thrown);
     const rooted keep_thrown{*this, thrown};
-    run_result result;
-    result.returned = returned;
-    result.ok = !threw && !failed_;
+    run_result result{.returned = returned, .ok = !threw && !failed_, .error = {}};
     if (!result.ok) { result.error = failed_ ? error_ : "uncaught " + describe_thrown(thrown); }
     return result;
 }

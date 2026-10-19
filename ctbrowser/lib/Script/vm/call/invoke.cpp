@@ -306,8 +306,7 @@ std::string context::describe_thrown(value thrown) {
     const throw_site site = throw_site_;
     const std::uint64_t site_value = throw_site_value_;
     const bool failed = std::exchange(failed_, false);
-    std::string error = std::move(error_);
-    error_.clear();
+    std::string error = std::exchange(error_, std::string{});
     const bool pending = std::exchange(has_pending_throw_, false);
     const bool fenced = std::exchange(fence_hit_, false);
     const std::size_t depth = frames_.size();
