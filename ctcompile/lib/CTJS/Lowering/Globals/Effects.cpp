@@ -224,7 +224,7 @@ static bool realm_function_member(llvm::StringRef key) {
 /// by writing through it, which clause 5 refuses or counts as a binding, or
 /// through a prototype table the realm made, which it inherits from
 /// (Function.prototype, Object.prototype, Window.prototype, ...). So this
-/// reads, with constant keys only:
+/// reads:
 ///   - every path that may yield such a table: `prototype` off
 ///     anything but a function made here (whose own table it is), and
 ///     `__proto__`, may be read through and nothing else; a prototype link
@@ -235,10 +235,8 @@ static bool realm_function_member(llvm::StringRef key) {
 ///   - the keys written onto an object this module did not create (a
 ///     literal, a closure or an array made here cannot be one of those
 ///     tables), and every key string used other than as a property key;
-///   - a spread into such an object, which may write any key.
-/// A key computed at run time is not seen. A table reached through one and
-/// written through one is the hole the `.constructor` marking above has too,
-/// since it follows only a constant `constructor` read.
+///   - a computed-key write or spread into such an object, which may write
+///     any key, including when a computed read reached the object.
 prototype_writes read_prototype_writes(mlir::ModuleOp module) {
     prototype_writes keys;
     // Through the block arguments the importer's register file uses, as
@@ -280,7 +278,16 @@ prototype_writes read_prototype_writes(mlir::ModuleOp module) {
                 note(keys.prototypes, "a `prototype` table is replaced", op);
             }
             if (!key.empty()) { keys.defined.insert(key); }
-            if (!key.empty() && !made_here(set.getObject())) { keys.written.insert(key); }
+            if (!made_here(set.getObject())) {
+                if (!key.empty()) {
+                    keys.written.insert(key);
+                } else {
+                    note(keys.any_key,
+                         "a key computed at run time is written onto an object this program did "
+                         "not create",
+                         op);
+                }
+            }
         } else if (auto accessor = mlir::dyn_cast<DefineAccessorOp>(op)) {
             keys.defined.insert(accessor.getName());
             if (!made_here(accessor.getTarget())) { keys.written.insert(accessor.getName()); }

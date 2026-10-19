@@ -51,7 +51,8 @@ struct prototype_writes {
     /// Why a realm prototype table may be written; empty when no constant-key
     /// path reaches one other than to read it.
     std::string prototypes;
-    /// Why any key at all may be written onto such an object; empty if none.
+    /// Why a computed-key write or spread may write any key onto an object
+    /// the program did not create; empty if none.
     std::string any_key;
     /// The keys the program may write onto an object it did not create.
     llvm::StringSet<> written;
