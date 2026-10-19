@@ -258,6 +258,12 @@ CASES = {
         "%compilation_unit --module %t/data-only.emitc.mlir --js %t/data-only.js --work %t/data-only --name data_only",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/new-this-stored.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf               --ctnative-test-instance-registries=lifted=true    | FileCheck %s --check-prefix=NEW-THIS-STORED",
     ],
+    "Ownership/registry-families": [
+        "split-file %s %t",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/family.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf               --ctnative-test-instance-registries=lifted=true    | FileCheck %s --check-prefix=FAMILY",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/family.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc    | FileCheck %s --check-prefix=BOUNDARY",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/leak.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc    | FileCheck %s --check-prefix=LEAK",
+    ],
     "Precomputation/arguments": [
         "split-file %s %t",
         "ctjs-opt %t/arguments.mlir --ctnative-precompute | FileCheck %s",

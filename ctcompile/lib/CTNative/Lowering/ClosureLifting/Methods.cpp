@@ -1329,8 +1329,11 @@ std::optional<std::string> closureLifter::whyNotLiftableMethod(ctjs::CreateClosu
     const bool copiedAway =
         calls == callsOfTarget.end() && copiedAwayMethods.contains(target.getOperation());
     // Condition 3. A method whose calls all call copies carries no receiver
-    // any more; each copy that keeps one was asked when it was made.
-    if (!copiedAway) {
+    // any more; each copy that keeps one was asked when it was made. A
+    // registry class's copy of its parent's constructor hands `this` to the
+    // Map as the constructor does, and the registry proof
+    // (Analysis/Instances.h) checked every use of it instead.
+    if (!copiedAway && !isIdentityConstructorCopy(target)) {
         if (const std::optional<std::string> leak = whyThisLeaks(target)) { return leak; }
     }
     if (calls == callsOfTarget.end()) {
