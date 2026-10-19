@@ -753,32 +753,18 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         }
     }
 
-    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
-        read && domEntry_ && domEntry_->isSymbolDescription(read)) {
-        return answer(OptType::get(c, stringType(c)));
-    }
-
-    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
-        read && domEntry_ && !domEntry_->wellKnownSymbol(read).empty()) {
-        return answer(SymbolType::get(c));
-    }
-
-    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
-        read && domEntry_ &&
-        (domEntry_->isElementVectorIndex(read) || domEntry_->isDocumentElement(read))) {
-        return answer(DOMElementType::get(c));
-    }
-
-    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
-        read && domEntry_ &&
-        (domEntry_->isStringVectorIndex(read) || domEntry_->datasetValueElement(read))) {
-        return answer(stringType(c));
-    }
-
-    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
-        read && domEntry_ &&
-        (domEntry_->isStringVectorLength(read) || domEntry_->isElementVectorLength(read))) {
-        return answer(doubleType(c));
+    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op); read && domEntry_) {
+        if (domEntry_->isSymbolDescription(read)) { return answer(OptType::get(c, stringType(c))); }
+        if (!domEntry_->wellKnownSymbol(read).empty()) { return answer(SymbolType::get(c)); }
+        if (domEntry_->isElementVectorIndex(read) || domEntry_->isDocumentElement(read)) {
+            return answer(DOMElementType::get(c));
+        }
+        if (domEntry_->isStringVectorIndex(read) || domEntry_->datasetValueElement(read)) {
+            return answer(stringType(c));
+        }
+        if (domEntry_->isStringVectorLength(read) || domEntry_->isElementVectorLength(read)) {
+            return answer(doubleType(c));
+        }
     }
 
     if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(op);
