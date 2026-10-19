@@ -261,6 +261,59 @@ def main():
             [(1, "SyntaxError")],
         ),
     ]
+    diagnostic_setup = (
+        "var same = 'not reported', fifth = false;"
+        "var token = { get name() { try { throw 7; } catch(ignored) {} return 'Token'; },"
+        "message: 'original' };"
+        "window.onerror = function(m,u,l,c,e) { fifth = e === token; };"
+        "window.addEventListener('error', function(e) { same = e.error === token; });"
+    )
+    for appended in (False, True):
+        sources = [diagnostic_setup + "throw token;", "console.log('payload', same, fifth);"]
+        witnesses.append(
+            (
+                "payload-diagnostic-" + ("appended" if appended else "inline"),
+                [] if appended else sources,
+                sources if appended else [],
+                "payload true true\n",
+                [("append0" if appended else 0, "uncaught Token: original")],
+            )
+        )
+    for getter in ("name", "message"):
+        witnesses.append(
+            (
+                "payload-nested-throwing-" + getter,
+                [
+                    "var same = false, fifth = false; var token = { get "
+                    + getter
+                    + "() { throw 7; }, "
+                    + ("message: 'original'" if getter == "name" else "name: 'Token'")
+                    + " };"
+                    "window.onerror = function(m,u,l,c,e) { fifth = e === token; };"
+                    "window.addEventListener('error', function(e) { same = e.error === token; });"
+                    "try { document.write('<script>throw token;<' + '/script>');"
+                    "console.log('writer'); } catch(e) { console.log('escaped', e); }"
+                    "console.log('payload', same, fifth);",
+                    "console.log('next');",
+                ],
+                [],
+                "writer\npayload true true\nnext\n",
+                [(0, "uncaught")],
+            )
+        )
+    for body, name in (("pending = 9;", "plain"), ("with ({}) { pending = 9; }", "with")):
+        witnesses.append(
+            (
+                "tdz-const-closure-" + name,
+                [
+                    "function writePending() { " + body + " } throw 0; const pending = 1;",
+                    "try { writePending(); } catch(e) { console.log('assignment', e.name); }",
+                ],
+                [],
+                "assignment ReferenceError\n",
+                [(0, "uncaught")],
+            )
+        )
     for declaration in ("let pending = 1;", "const pending = 1;", "class pending {}"):
         kind = declaration.split()[0]
         witnesses.append(

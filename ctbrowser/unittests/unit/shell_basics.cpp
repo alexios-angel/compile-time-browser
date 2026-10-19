@@ -781,6 +781,49 @@ void test_script_error_payload_survives_listener_reentry() {
           "an otherwise unreferenced exception stays rooted across error callbacks");
     check(!page.script_error().empty(), "reporting leaves the original diagnostic visible");
 
+    browser diagnostic_page{browser_options{200, 100}};
+    diagnostic_page.define_native("collectNow", [](script::context & cx, std::span<script::value>) {
+        (void)cx.collect();
+        return script::value::undefined();
+    });
+    diagnostic_page.load_html(
+        "<body><script>var same = false, fifth = false;"
+        "var token = {get name() { try { throw 7; } catch(e) {}"
+        "collectNow(); return 'Token'; }, message: 'original'};"
+        "window.onerror = function(m,u,l,c,e) { fifth = e === token; };"
+        "window.addEventListener('error', function(e) { same = e.error === token; });"
+        "throw token;</script><script>alert(same + ',' + fifth);</script>");
+    check(diagnostic_page.alerts() == std::vector<std::string>{"true,true"},
+          "diagnostic reentry cannot replace the original exception payload");
+    check(diagnostic_page.script_error().find("Token: original") != std::string::npos,
+          "the diagnostic describes the original exception after caught getter throws");
+
+    browser collected_page{browser_options{200, 100}};
+    collected_page.define_native("collectNow", [](script::context & cx, std::span<script::value>) {
+        (void)cx.collect();
+        return script::value::undefined();
+    });
+    collected_page.load_html(
+        "<body><script>var payload = false;"
+        "window.addEventListener('error', function(e) { payload = e.error.payload === 73; });"
+        "throw {get name() { try { throw 7; } catch(e) {} collectNow(); return 'Token'; },"
+        "message: 'original', payload: 73};</script><script>alert(payload);</script>");
+    check(collected_page.alerts() == std::vector<std::string>{"true"},
+          "an otherwise unreferenced exception stays rooted during diagnostic collection");
+
+    browser nested_page{browser_options{200, 100}};
+    nested_page.load_html(
+        "<body><script>var same = false, fifth = false;"
+        "var token = {get name() { throw 7; }, message: 'original'};"
+        "window.onerror = function(m,u,l,c,e) { fifth = e === token; };"
+        "window.addEventListener('error', function(e) { same = e.error === token; });"
+        "try { document.write('<script>throw token;<' + '/script>'); alert('writer'); }"
+        "catch(e) { alert('escaped ' + e); }"
+        "alert(same + ',' + fifth);</script><script>alert('next');</script>");
+    check(nested_page.alerts() == std::vector<std::string>{"writer", "true,true", "next"},
+          "a throwing diagnostic getter stays inside the nested script boundary");
+    check(!nested_page.script_error().empty(), "a throwing diagnostic getter still reports");
+
     browser fault_page{browser_options{200, 100}};
     fault_page.define_native("vmFault", [](script::context & cx, std::span<script::value>) {
         cx.refuse("test fault", "not a JavaScript exception");

@@ -145,6 +145,15 @@ int main() {
             expect({stranded, next}, refused);
         }
     }
+    for (const std::string_view body : {"pending = 9;", "with ({}) { pending = 9; }",
+                                        "for (pending of [9]) {}", "[pending] = [9];"}) {
+        const std::string writer = "function writePending() { " + std::string{body} + " } ";
+        expect({writer + "throw 0; const pending = 1;", "writePending();"}, "ReferenceError");
+        expect({writer + "const pending = 1;", "writePending();"}, "TypeError");
+        expect({writer + "throw 0; const pending = 1;", "try { writePending(); } catch(e) {}",
+                "typeof pending;"},
+               "ReferenceError");
+    }
     expect({"let pending = (function () { throw 0; })();", "typeof pending;"}, "ReferenceError");
     expect({"const pending = (function () { throw 0; })();", "typeof pending;"}, "ReferenceError");
     expect({"class pending { static { throw 0; } }", "typeof pending;"}, "ReferenceError");

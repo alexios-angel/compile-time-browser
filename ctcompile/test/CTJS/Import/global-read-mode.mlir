@@ -1,6 +1,8 @@
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/source.js 2>/dev/null | ctjs-opt | FileCheck %s
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/refused.js 2>/dev/null | ctjs-opt | FileCheck %s --check-prefix=REFUSED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/pending.js 2>/dev/null | ctjs-opt | FileCheck %s --check-prefix=PENDING
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/pending.js 2>/dev/null | ctjs-opt --ctjs-lower-to-emitc | mlir-translate --mlir-to-cpp --declare-variables-at-top | FileCheck %s --check-prefix=PENDINGCPP
 
 // Only `typeof` applied directly to an identifier (parenthesised or not) may read
 // a missing global without throwing (typeof_lookup = true). Comma expressions,
@@ -76,3 +78,23 @@ function* refused() { typeof Function; yield 1; }
 // REFUSED-SAME: opaque = "a refused body reads `Function`, and the program it compiles can store any global"
 // REFUSED-SAME: opcode = "yield_value"
 // REFUSED-NOT: ctjs.func @refused$
+
+//--- pending.js
+function writePending() { pending = 9; }
+function plainWritePending() { for (pending of [9]) {} }
+throw 0;
+const pending = 1;
+
+// SetMutableBinding checks TDZ before immutability, even when the function
+// compiled beside its const. The hard read must survive into checked AOT code.
+// PENDING-LABEL: ctjs.func @writePending$
+// PENDING: ctjs.load_global "pending"{{$}}
+// PENDING: ctjs.load_global "TypeError"{{$}}
+// PENDING: ctjs.throw
+// PENDING-LABEL: ctjs.func @plainWritePending$
+// PENDING: ctjs.load_global "pending"{{$}}
+// PENDING: ctjs.load_global "TypeError"{{$}}
+// PENDING: ctjs.throw
+// PENDINGCPP: ct_aot_global_get({{.*}}, "pending", 7,
+// PENDINGCPP: ct_aot_global_get({{.*}}, "TypeError", 9,
+// PENDINGCPP: ct_aot_throw

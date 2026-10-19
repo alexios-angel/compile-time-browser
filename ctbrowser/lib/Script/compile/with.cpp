@@ -190,7 +190,7 @@ void compiler_impl::emit_plain_read(std::string_view name, std::uint16_t dst, bo
 
 void compiler_impl::emit_plain_write(std::string_view name, std::uint16_t src) {
     if (!declaring_) { emit_ready_check(binding_ready_flag(name)); }
-    if (!declaring_ && refuse_immutable_write(binding_immutability(name))) { return; }
+    if (!declaring_ && refuse_immutable_write(binding_immutability(name), name)) { return; }
     if (const local * l = find_local_entry(fn(), name)) {
         if (l->boxed) {
             proto().emit(instruction{op::cell_set, l->reg, src});
