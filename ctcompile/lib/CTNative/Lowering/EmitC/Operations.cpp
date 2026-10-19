@@ -829,7 +829,7 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                     b, where, mlir::TypeRange{},
                     b.getStringAttr("ctnative::microtasks::program().checkpoint"), {});
             }
-            printObservations(b, where);
+            if (observeGlobals) { printObservations(b, where); }
             mlir::Value zero = ec::ConstantOp::create(b, where, mlir::IntegerType::get(context, 32),
                                                       b.getI32IntegerAttr(0));
             ec::ReturnOp::create(b, where, zero);

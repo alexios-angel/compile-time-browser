@@ -1386,7 +1386,7 @@ def object_constructors(args, constructor):
                 [
                     args.opt,
                     str(prepared),
-                    f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()}",
+                    f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()} observe-globals=true",
                     "-o",
                     str(native),
                 ]

@@ -16,7 +16,7 @@
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/shared.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/shared.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/shared.mlir
 // RUN: FileCheck %s --check-prefix=SHARED --implicit-check-not=ctnative.not_native < %t/shared.mlir
 // RUN: ctjs-opt %t/shared.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/shared.cpp
 // RUN: %gxx -O2 %t/shared.cpp -o %t/shared-gcc
@@ -25,10 +25,10 @@
 // RUN: %t/shared-clang | FileCheck %s --check-prefix=SHAREDOUT
 // RUN: %native_reference %t/shared.js | FileCheck %s --check-prefix=SHAREDOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/noshared.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=NOSHARED --implicit-check-not=ctnative.not_native
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/escaped.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=ESCAPED
 
 // SHARED: function = "on${{[0-9]+}}", reason = "removed: unreachable

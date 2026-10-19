@@ -1198,7 +1198,7 @@ def check_constructed_methods(args):
                     str(raw),
                     "--ctjs-resolve-globals",
                     "--ctjs-lift-to-scf",
-                    f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()}",
+                    f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()} observe-globals=true",
                 ]
             )
             check_refusal(name, result.stdout, functions)
@@ -1840,7 +1840,7 @@ def check_helper_guards(args, declaration):
                     str(raw),
                     "--ctjs-resolve-globals",
                     "--ctjs-lift-to-scf",
-                    f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()}",
+                    f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()} observe-globals=true",
                     "-o",
                     str(native),
                 ]
@@ -1889,7 +1889,15 @@ def check_prototype_keys(args, prepared):
             text.replace(literal, key).replace('#ctjs.string<"read">', f'#ctjs.string<"{method}">')
         )
         native = args.work / f"{name}.native.mlir"
-        run([args.opt, str(source), "--ctnative-lower-to-emitc", "-o", str(native)])
+        run(
+            [
+                args.opt,
+                str(source),
+                "--ctnative-lower-to-emitc=observe-globals=true",
+                "-o",
+                str(native),
+            ]
+        )
         if label in ("empty", "dynamic"):
             checked += check_executable(args, name, native, 7)
         else:
