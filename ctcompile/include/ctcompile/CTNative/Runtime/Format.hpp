@@ -36,10 +36,10 @@ concept js_formattable = detail::one_of<T, js_num, js_boolean_t, js_string, null
                          detail::primitive_union<T>;
 
 /// std::format with every argument spelled by ToString, as a String: a
-/// template literal's value.
-template <class... Args>
-js_string format(std::format_string<const Args &...> text, const Args &... args) {
-    std::string out = std::format(text, args...);
+/// template literal's value. Keep every literal byte, including embedded NULs.
+template <std::size_t N, class... Args>
+js_string format(const char (&text)[N], const Args &... args) {
+    std::string out = std::vformat(std::string_view{text, N - 1}, std::make_format_args(args...));
     ctbrowser::join_surrogates(out);
     return js_string{std::move(out)};
 }

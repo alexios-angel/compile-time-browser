@@ -25,4 +25,6 @@
 # CHECK-NEXT:nested inner 2 outer
 # CHECK-NEXT:braces {x} and {{[{][{]y[}][}]}}: 3
 # CHECK-NEXT:multi 1 two true null undefined
+# CHECK-NEXT:9 true
+# CHECK-NEXT:6 true
 # CHECK-NOT:{{.}}
