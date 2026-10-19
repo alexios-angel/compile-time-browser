@@ -237,6 +237,11 @@ static bool realm_function_member(llvm::StringRef key) {
 ///     tables), and every key string used other than as a property key;
 ///   - a computed-key write or spread into such an object, which may write
 ///     any key, including when a computed read reached the object.
+/// A computed-key read is not recognized as a prototype-table path. Writes
+/// through its result can therefore leave `prototypes` empty. A computed-key
+/// write still sets `any_key`, but ClosureValues checks only `prototypes` for
+/// array destructuring. The `.constructor` marking above likewise follows
+/// only a constant `constructor` read.
 prototype_writes read_prototype_writes(mlir::ModuleOp module) {
     prototype_writes keys;
     // Through the block arguments the importer's register file uses, as
