@@ -370,7 +370,7 @@ std::string attrValueWrite(mlir::Value object, mlir::Value value, mlir::ModuleOp
             return "`value` writes an attribute whose name is not known at build time, which may "
                    "create code";
         }
-        if (startsWithLower(name, "on")) {
+        if (name.starts_with_insensitive("on")) {
             return "`value` with the name `" + name.str() +
                    "` adds an on* event handler, whose code a native program cannot compile";
         }
@@ -573,7 +573,7 @@ std::string methodCall(llvm::StringRef method, CallOp call,
         llvm::SmallVector<llvm::StringRef> names;
         attrNamesOf(arg(0), call->getParentOfType<mlir::ModuleOp>(), 0, names);
         const auto sink = [](llvm::StringRef name) {
-            return name.empty() || startsWithLower(name, "on") ||
+            return name.empty() || name.starts_with_insensitive("on") ||
                    llvm::StringSwitch<bool>(name.lower())
                        .Cases({"srcdoc", "href", "src", "data", "action", "formaction",
                                "xlink:href"},
