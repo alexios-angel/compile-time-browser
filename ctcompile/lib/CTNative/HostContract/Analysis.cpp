@@ -263,7 +263,8 @@ bool analyzer::capturedMapParameters(
     // A method's entry block starts with the ctjs::implicit_arguments (3) hidden
     // arguments, plus the captured Map itself when the family is `prepared`;
     // the source formals follow.
-    const unsigned count = function.getBody().front().getNumArguments() - (prepared ? 4u : 3u);
+    const unsigned formals = prepared ? 4u : 3u;
+    const unsigned count = function.getBody().front().getNumArguments() - formals;
     std::optional<std::vector<PrimitiveAlternatives>> found;
     std::vector<mlir::BlockArgument> objectKeys;
     for (mlir::Operation * operation : calls) {
@@ -288,7 +289,7 @@ bool analyzer::capturedMapParameters(
                     // A provisional object-capable formal only. The completed
                     // family must prove every input use is an outer Map key.
                     const auto parameter = function.getBody().front().getArgument(
-                        (prepared ? 4u : 3u) + static_cast<unsigned>(tags.size()));
+                        formals + static_cast<unsigned>(tags.size()));
                     if (!llvm::is_contained(objectKeys, parameter)) {
                         objectKeys.push_back(parameter);
                     }
@@ -297,7 +298,7 @@ bool analyzer::capturedMapParameters(
                 }
                 if (!checkLeaf(actual, operation, false)) { return false; }
                 const auto parameter = function.getBody().front().getArgument(
-                    (prepared ? 4u : 3u) + static_cast<unsigned>(tags.size()));
+                    formals + static_cast<unsigned>(tags.size()));
                 if (!llvm::is_contained(objectKeys, parameter)) { objectKeys.push_back(parameter); }
             }
             tags.push_back(categories);
@@ -318,9 +319,8 @@ bool analyzer::capturedMapParameters(
     if (found) {
         for (auto [index, alternatives] : llvm::enumerate(*found)) {
             if (!step()) { return false; }
-            if (llvm::is_contained(objectKeys,
-                                   function.getBody().front().getArgument(
-                                       (prepared ? 4u : 3u) + static_cast<unsigned>(index)))) {
+            if (llvm::is_contained(objectKeys, function.getBody().front().getArgument(
+                                                   formals + static_cast<unsigned>(index)))) {
                 continue;
             }
             const auto mask = alternatives.truthy | alternatives.falsy;
