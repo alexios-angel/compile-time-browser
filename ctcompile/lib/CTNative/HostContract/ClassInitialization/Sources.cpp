@@ -607,8 +607,7 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
             continue;
         }
         auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(use.getOwner());
-        if (!load || use.getOperandNumber() != 0 || load.getIndex() < 0 ||
-            static_cast<size_t>(load.getIndex()) >= method.getUpvalues().size()) {
+        if (!load || use.getOperandNumber() != 0 || !capturesSlot(load, method)) {
             return refuse("class method observes or changes its captured identity");
         }
         auto value = sourceValue(cells.lookup(method.getUpvalues()[load.getIndex()]));
