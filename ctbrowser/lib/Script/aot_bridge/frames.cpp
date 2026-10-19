@@ -88,6 +88,7 @@ ct_aot_frame * ct_aot_enter(ct_aot_ctx * c, const ct_aot_site * site, std::uint3
     // warns about. Nothing collects in that gap today; ordering it correctly
     // costs a line and removes the question.
     cx.frames_.push_back(entered);
+    cx.frames_.back().receiver = cx.bind_this(*proto, *entered.realm, entered.receiver);
     // The arriving argument window, consumed and cleared like the two roots
     // around it. enter_compiled_body set it, as the last place that knows where
     // the caller put the arguments.
@@ -111,13 +112,7 @@ std::uint64_t ct_aot_this(ct_aot_frame * f) {
     const aot_frame_storage & held = aot_bridge::frame_of(f);
     const context & cx = *held.ctx;
     if (held.frame_index >= cx.frames_.size()) { return value::undefined().bits(); }
-    const auto & record = cx.frames_[held.frame_index];
-    const value receiver = context::effective_this(record);
-    // OrdinaryCallBindThis (10.2.1.2), as in the VM's load_this handler.
-    if (!record.proto->is_strict && !record.proto->is_arrow && receiver.is_nullish()) {
-        return record.realm->global_this.bits();
-    }
-    return receiver.bits();
+    return context::effective_this(cx.frames_[held.frame_index]).bits();
 }
 
 /// ct_aot_callee. VM_CASE(load_callee) is

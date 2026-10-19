@@ -85,6 +85,16 @@ void test_separate_bindings() {
     // object (ECMA-262 10.2.1.2 OrdinaryCallBindThis step 5).
     r.expect("var h = other.g; var result = (h() === other) + '|' + (h() === globalThis);",
              "true|false");
+    r.run_there("function arrow() { return () => this; }"
+                "function strict() { 'use strict'; return this; }");
+    r.expect("var result = [h.call(null) === other, h.call(undefined) === other,"
+             "h.apply(null, []) === other, h.bind(null)() === other,"
+             "Reflect.apply(h, null, []) === other, (0, other.arrow)()() === other].join();",
+             "true,true,true,true,true,true");
+    r.expect("var n = Reflect.apply(h, 5, []); var result = [typeof n, n instanceof Number,"
+             "n.valueOf(), other.strict.call(null) === null,"
+             "Reflect.apply(other.strict, 5, []) === 5].join();",
+             "object,true,5,true,true");
     // A generator and an async function resume in their own realm, whoever
     // resumes them.
     r.expect("var result = other.gen().next().value;", "from-frame");

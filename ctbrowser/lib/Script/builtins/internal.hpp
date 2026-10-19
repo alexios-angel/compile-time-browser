@@ -188,25 +188,12 @@ namespace detail {
 /// String.prototype's own methods read the slot. A prototype `self` already has
 /// (a subclass instance) is kept.
 [[nodiscard]] inline value wrap_primitive(context & cx, value self, value primitive) {
-    auto * obj = static_cast<object_object *>(self.as_heap());
-    if (!obj->prototype.is_object()) {
-        const context::proto_kind kind = primitive.is_number()    ? context::proto_kind::number
-                                         : primitive.is_boolean() ? context::proto_kind::boolean
-                                         : primitive.is_string()  ? context::proto_kind::string
-                                         : primitive.is_kind(heap_kind::symbol)
-                                             ? context::proto_kind::symbol
-                                             : context::proto_kind::bigint;
-        if (object_object * table = cx.prototype(kind)) { obj->prototype = value::object(table); }
-    }
-    obj->define(primitive_slot_key, primitive, attr_none);
-    return self;
+    return cx.wrap_primitive(self, primitive);
 }
 /// ToObject of a primitive. An object passes through; null and undefined are
 /// returned unchanged for the caller to refuse.
 [[nodiscard]] inline value box_primitive(context & cx, value v) {
-    if (v.is_object_like() || v.is_nullish()) { return v; }
-    const value made = cx.make_object();
-    return wrap_primitive(cx, made, v);
+    return cx.box_primitive(v);
 }
 /// Whether a native constructor is being run under `new`. A native has no
 /// new.target: what it has is `this`, which context::construct makes as a
