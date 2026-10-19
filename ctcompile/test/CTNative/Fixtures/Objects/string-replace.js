@@ -56,3 +56,21 @@ var first1 = same(first("foo"), "f0o");
 var counted1 = same(counted("abcxab"), "2x2");
 var untouched1 = same(dashed("été"), "été");
 var dashedLength11 = dashed("fooBarBaz").length;
+
+// A high surrogate in kept text pairs with a low one from either replacer.
+function stringSeam(text) {
+    return text.replace(/x/, "\uDE00");
+}
+
+function functionSeam(text) {
+    return text.replace(/x/, function () {
+        return "\uDE00";
+    });
+}
+
+var surrogateString = stringSeam("\uD83Dx");
+var surrogateFunction = functionSeam("\uD83Dx");
+var surrogateStringEqual1 = same(stringSeam("\uD83Dx"), "\u{1f600}");
+var surrogateFunctionEqual1 = same(functionSeam("\uD83Dx"), "\u{1f600}");
+var surrogateStringLength2 = stringSeam("\uD83Dx").length;
+var surrogateFunctionLength2 = functionSeam("\uD83Dx").length;

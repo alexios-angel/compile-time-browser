@@ -187,6 +187,7 @@ js_string replace_matches(const js_string & self, const reg_exp & pattern, Appen
         if (!pattern.global()) { break; }
     }
     out.append(kept, text.cend());
+    ctbrowser::join_surrogates(out);
     return js_string{std::move(out)};
 }
 } // namespace detail

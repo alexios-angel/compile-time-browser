@@ -406,6 +406,8 @@ CASES = {
         "ctjs-translate --ctbrowser-js-to-ctjs %t/emit.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EMIT --implicit-check-not=ctnative.not_native",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/refusals.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/dynamic.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DYNAMIC",
+        'ctjs-opt %t/event-init-siblings.mlir --ctjs-resolve-globals --ctnative-lower-to-emitc="optimize=false observe-globals=true" | FileCheck %s --check-prefix=SIBLINGS --implicit-check-not=ctnative::event_init',
+        'ctjs-translate --ctbrowser-js-to-ctjs %t/event-init-value.js --whole-page | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false observe-globals=true" | FileCheck %s --check-prefix=VALUE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func',
     ],
     "Closures/lift": [
         "ctjs-translate --ctbrowser-js-to-ctjs %s 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc    | FileCheck %s --implicit-check-not=ctnative.not_native                   --implicit-check-not=ctjs.func",

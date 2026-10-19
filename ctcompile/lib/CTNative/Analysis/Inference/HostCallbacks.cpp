@@ -18,6 +18,7 @@
 
 #include "ctcompile/CTNative/IR/CTNativeLattice.h"
 
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/SymbolTable.h"
 
 namespace ctcompile::ctnative {
@@ -93,6 +94,7 @@ std::optional<llvm::SmallVector<std::pair<llvm::StringRef, mlir::Value>>> TypeIn
     if (construct.getArgs().size() < 2) { return fields; }
     auto literal = construct.getArgs()[1].getDefiningOp<ctjs::CreateObjectOp>();
     if (!literal) { return std::nullopt; }
+    mlir::DominanceInfo order(op->getParentOp());
     for (mlir::OpOperand & use : literal.getResult().getUses()) {
         if (use.getOwner() == op) {
             // Only as the init, never also as the type.
@@ -105,6 +107,7 @@ std::optional<llvm::SmallVector<std::pair<llvm::StringRef, mlir::Value>>> TypeIn
         }
         const llvm::StringRef key = ctjs::constantKey(define.getKey());
         if (key != "bubbles" && key != "cancelable") { return std::nullopt; }
+        if (!order.properlyDominates(define.getOperation(), op)) { return std::nullopt; }
         fields.emplace_back(key, define.getValue());
     }
     return fields;
