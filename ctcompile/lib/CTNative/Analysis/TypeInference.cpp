@@ -50,6 +50,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/SymbolTable.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cmath>
@@ -110,10 +111,7 @@ bool couldBeBigInt(mlir::Type type) {
     if (llvm::isa<BoolType, NumType, StrType, StrViewType, BottomType>(type)) { return false; }
     if (auto opt = llvm::dyn_cast<OptType>(type)) { return couldBeBigInt(opt.getElementType()); }
     if (auto variant = llvm::dyn_cast<VariantType>(type)) {
-        for (mlir::Type alternative : variant.getAlternatives()) {
-            if (couldBeBigInt(alternative)) { return true; }
-        }
-        return false;
+        return llvm::any_of(variant.getAlternatives(), couldBeBigInt);
     }
     // Boxed, json and every container type. A container cannot be a BigInt, but
     // no rule in this file produces a container operand here, so no case is
@@ -154,10 +152,9 @@ bool isProvedNumeric(const TypeLattice * operand) {
 }
 
 bool noneAreBigInt(llvm::ArrayRef<const TypeLattice *> operands) {
-    for (const TypeLattice * operand : operands) {
-        if (couldBeBigInt(operand->getValue().getType())) { return false; }
-    }
-    return true;
+    return llvm::none_of(operands, [](const TypeLattice * operand) {
+        return couldBeBigInt(operand->getValue().getType());
+    });
 }
 
 /// The type of a literal. This is the only place an i32 comes from without a
