@@ -205,6 +205,7 @@ bool replaceEvent(lowering & lower, mlir::Operation * o, llvm::StringRef kind) {
                 parts.push_back(user);
             }
             mlir::DominanceInfo order(o->getParentOp());
+            // Analysis proves every definition dominates construction, so their order is total.
             llvm::sort(parts, [&](mlir::Operation * a, mlir::Operation * b) {
                 return order.properlyDominates(a, b);
             });

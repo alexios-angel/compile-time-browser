@@ -10,6 +10,16 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/emit.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EMIT --implicit-check-not=ctnative.not_native
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/refusals.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/dynamic.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DYNAMIC
+// RUN: ctjs-opt %t/event-init-siblings.mlir --ctjs-resolve-globals --ctnative-lower-to-emitc="optimize=false observe-globals=true" | FileCheck %s --check-prefix=SIBLINGS --implicit-check-not=ctnative::event_init
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/event-init-value.js --whole-page | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false observe-globals=true" | FileCheck %s --check-prefix=VALUE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+
+// A field written in only one arm does not dominate construction. A conditional
+// value is different: its field store runs after the arms merge.
+// SIBLINGS: ctjs.func private @probe$1({{.*}}ctnative.not_native = "new Event with an init that is not an object literal of `bubbles` and `cancelable` - only that EventInit is native"
+// VALUE: emitc.func @conditionalInit_1(
+// VALUE: scf.if
+// VALUE: call_opaque "ctnative::event_init"
+// VALUE: call_opaque "ctnative::Event"
 
 // A window listener leaves the globals typed (EMIT stores them and registers
 // one); a window that also flows into a property write may write any global,
@@ -328,3 +338,48 @@ window.addEventListener('click', function () {
     count = count + 1;
 });
 window.foo = 1;
+
+//--- event-init-siblings.mlir
+module {
+  ctjs.func private @probe$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %flag: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %Event = ctjs.load_global "Event"
+    %undefined = ctjs.constant #ctjs.undefined
+    %yes = ctjs.constant #ctjs.boolean<true>
+    %no = ctjs.constant #ctjs.boolean<false>
+    %key = ctjs.constant #ctjs.string<"cancelable">
+    %type = ctjs.constant #ctjs.string<"review">
+    %init = ctjs.create_object
+    %condition = ctjs.truthy %flag
+    scf.if %condition {
+      ctjs.set_property %init[%key], %yes {ctjs.define_own}
+    } else {
+      ctjs.set_property %init[%key], %no {ctjs.define_own}
+    }
+    %event = ctjs.construct %Event(%Event, %type, %init)
+    %preventKey = ctjs.constant #ctjs.string<"preventDefault">
+    %prevent = ctjs.get_property %event[%preventKey]
+    %ignored = ctjs.call %prevent(%event)
+    %defaultKey = ctjs.constant #ctjs.string<"defaultPrevented">
+    %result = ctjs.get_property %event[%defaultKey]
+    ctjs.return %result
+  }
+  ctjs.func @_script_$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %undefined = ctjs.constant #ctjs.undefined
+    %yes = ctjs.constant #ctjs.boolean<true>
+    %no = ctjs.constant #ctjs.boolean<false>
+    %left = ctjs.call_direct @probe$1(%undefined, %undefined, %undefined, %yes)
+    ctjs.store_global "left", %left
+    %right = ctjs.call_direct @probe$1(%undefined, %undefined, %undefined, %no)
+    ctjs.store_global "right", %right
+    ctjs.return %undefined
+  }
+}
+
+//--- event-init-value.js
+function conditionalInit(c, a, b) {
+    var event = new Event('conditional', {cancelable: c ? a : b});
+    event.preventDefault();
+    return event.defaultPrevented;
+}
+var conditionalYes = conditionalInit(true, true, false);
+var conditionalNo = conditionalInit(false, true, false);
