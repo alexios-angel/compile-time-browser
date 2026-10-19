@@ -1453,28 +1453,24 @@ bool closureLifter::bindClassStatics(liftReport & out) {
         // the budget before their string expressions are visited.
         auto getters = mlir::ModuleOp::create(module.getLoc());
         mlir::OwningOpRef<mlir::ModuleOp> ownedGetters(getters);
+        mlir::IRMapping mapping;
         for (mlir::Operation * getter : boundGetters) {
-            getters.getBody()->push_back(getter->clone());
+            getters.getBody()->push_back(getter->clone(mapping));
         }
         WorkBudget budget{100000};
         symbolic::Analysis facts(getters, budget);
         facts.run();
         if (budget.exhausted) { return changed; }
         for (mlir::Operation * getter : boundGetters) {
-            auto original = llvm::cast<ctjs::FuncOp>(getter);
-            auto copy = getters.lookupSymbol<ctjs::FuncOp>(original.getSymName());
-            llvm::SmallVector<ctjs::ReturnOp> exits, copiedExits;
-            original.walk([&](ctjs::ReturnOp ret) { exits.push_back(ret); });
-            copy.walk([&](ctjs::ReturnOp ret) { copiedExits.push_back(ret); });
-            for (auto [ret, copied] : llvm::zip_equal(exits, copiedExits)) {
-                auto text =
-                    llvm::dyn_cast_or_null<ctjs::StringAttr>(facts.get(copied.getValue()).literal);
-                if (!text || ctjs::constantAttr<ctjs::StringAttr>(ret.getValue())) { continue; }
+            getter->walk([&](ctjs::ReturnOp ret) {
+                auto text = llvm::dyn_cast_or_null<ctjs::StringAttr>(
+                    facts.get(mapping.lookup(ret.getValue())).literal);
+                if (!text || ctjs::constantAttr<ctjs::StringAttr>(ret.getValue())) { return; }
                 mlir::OpBuilder at(ret);
                 auto constant =
                     ctjs::ConstantOp::create(at, ret.getLoc(), ret.getValue().getType(), text);
                 ret->setOperand(0, constant.getResult());
-            }
+            });
         }
     }
     return changed;
