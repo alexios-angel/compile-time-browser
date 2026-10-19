@@ -807,9 +807,6 @@ std::optional<partial_eval::value> classInitialization::evaluateHelper(
     if (depth == 16 || !fn || !fn.getBody().hasOneBlock()) { return std::nullopt; }
     auto * context = module.getContext();
     using partial_eval::value;
-    const auto known = [](const value & data) {
-        return data.tag == value::kind::constant || data.tag == value::kind::reference;
-    };
     llvm::DenseMap<mlir::Value, value> values;
     llvm::DenseMap<mlir::Value, ctjs::FuncOp> callees;
     auto & entry = fn.getBody().front();
@@ -842,7 +839,7 @@ std::optional<partial_eval::value> classInitialization::evaluateHelper(
             }
             if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(op)) {
                 auto data = values.lookup(result.getValue());
-                if (!known(data)) { return false; }
+                if (!data.known()) { return false; }
                 returned = data;
                 return true;
             }
@@ -882,7 +879,7 @@ std::optional<partial_eval::value> classInitialization::evaluateHelper(
                 llvm::SmallVector<value> arguments;
                 for (mlir::Value argument : call.getArgs()) {
                     arguments.push_back(values.lookup(argument));
-                    if (!known(arguments.back())) { return false; }
+                    if (!arguments.back().known()) { return false; }
                 }
                 auto answer = helper && undefined(call.getReceiver())
                                   ? evaluateHelper(helper, arguments, depth + 1)
@@ -942,7 +939,7 @@ std::optional<partial_eval::value> classInitialization::evaluateHelper(
             } else if (auto boxed = llvm::dyn_cast<ctjs::FromBoolOp>(op)) {
                 data = values.lookup(boxed.getOperand());
             }
-            if (!known(data) || op.getNumResults() != 1) { return false; }
+            if (!data.known() || op.getNumResults() != 1) { return false; }
             values[op.getResult(0)] = data;
         }
         return false;
