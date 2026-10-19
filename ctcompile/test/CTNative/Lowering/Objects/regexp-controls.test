@@ -6,6 +6,15 @@
 # RUN: %gxx -O2 %t/native.cpp -o %t/gcc && %t/gcc | FileCheck %s --check-prefix=OUTPUT
 # RUN: %clangxx -O2 %t/native.cpp -o %t/clang && %t/clang | FileCheck %s --check-prefix=OUTPUT
 
+# RUN: %node %t/nul.js > %t/nul-node.txt
+# RUN: FileCheck %s --check-prefix=NUL --match-full-lines < %t/nul-node.txt
+# RUN: %native_reference --page %t/nul.html --script %t/nul.js > %t/nul-vm.txt
+# RUN: cmp %t/nul-node.txt %t/nul-vm.txt
+# RUN: %cmake -DTRANSLATE=ctjs-translate -DOPT=ctjs-opt -DSOURCE=%t/nul.js -DOUTPUT=%t/nul.mlir -P %S/../../Checks/pipeline.cmake
+# RUN: ctjs-translate --mlir-to-cpp %t/nul.mlir -o %t/nul.cpp
+# RUN: python3 %S/../../Fixtures/Scalars/console_log.py --cpp %t/nul.cpp --expected %t/nul-vm.txt --build %build --include %{monorepo}/ctbrowser/include --work %t
+# NUL: false true
+
 # NATIVE: ctnative::RegExp.prototype.test.call
 # OUTPUT-DAG: line=true
 # OUTPUT-DAG: carriage=true
@@ -17,3 +26,8 @@ var line = new RegExp("\n").test("\n");
 var carriage = new RegExp("\r").test("\r");
 var tab = new RegExp("\t").test("\t");
 var control = new RegExp("\x01F").test("\x01F");
+
+#--- nul.html
+<!doctype html><html><body></body></html>
+#--- nul.js
+console.log(new RegExp("a\0b").test("a"), new RegExp("a\0b").test("a\0b"));

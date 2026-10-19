@@ -50,12 +50,8 @@ mlir::Value regExp(mlir::OpBuilder & b, mlir::Location where, mlir::Operation * 
     const auto text = ec::PointerType::get(ec::OpaqueType::get(context, "const char"));
     return callValue(
         b, where, ec::OpaqueType::get(context, "ctnative::reg_exp"), "ctnative::RegExp",
-        mlir::ValueRange{ec::LiteralOp::create(b, where, text,
-                                               cpp::c_string_literal(std::string_view(
-                                                   pattern.data(), pattern.size()))),
-                         ec::LiteralOp::create(
-                             b, where, text,
-                             cpp::c_string_literal(std::string_view(flags.data(), flags.size())))});
+        mlir::ValueRange{ec::LiteralOp::create(b, where, text, cpp::c_string_literal(pattern)),
+                         ec::LiteralOp::create(b, where, text, cpp::c_string_literal(flags))});
 }
 } // namespace
 
