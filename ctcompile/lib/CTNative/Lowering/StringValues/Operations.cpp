@@ -11,6 +11,7 @@
 #include "../EmitC/Emitter.h"
 
 #include "ctcompile/Support/CppLiterals.hpp"
+#include "llvm/ADT/SetVector.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -18,10 +19,11 @@ namespace {
 /// On a ctnative::format call a template literal made, its format text, so
 /// the literal's next piece extends the call instead of starting another.
 constexpr llvm::StringLiteral kTemplateText = "ctnative.template_text";
+constexpr llvm::StringLiteral kTemplateConcatenation = "ctnative.template_concatenation";
 
 /// Appends one piece of a template literal to `text` and `arguments`: a String
 /// constant's bytes, with braces doubled for std::format, or `{}` and a value
-/// whose carrier the formatter prints as ToString. False for anything else.
+/// whose carrier the formatter prints as ToString. Embedded NULs keep `+`.
 bool appendTemplatePiece(mlir::Value piece, std::string & text,
                          llvm::SmallVectorImpl<mlir::Value> & arguments) {
     if (auto constant = piece.getDefiningOp<ec::ConstantOp>()) {
@@ -33,7 +35,9 @@ bool appendTemplatePiece(mlir::Value piece, std::string & text,
         }
         spelled = spelled.rsplit(", ").first;
         std::string bytes;
-        if (!cpp::parse_c_string_literal(spelled, bytes)) { return false; }
+        if (!cpp::parse_c_string_literal(spelled, bytes) || bytes.find('\0') != std::string::npos) {
+            return false;
+        }
         for (const char c : bytes) {
             text += c;
             if (c == '{' || c == '}') { text += c; }
@@ -88,6 +92,37 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
         // the first makes it, each later one extends the call its left side
         // is, and a piece the formatter cannot print keeps `+`.
         if (binary.getKind() == ctjs::BinaryKind::Concat) {
+            // Check the pending tail before fusing a prefix: a later NUL must
+            // keep the whole chain length-aware, not just its final addition.
+            llvm::SetVector<ctjs::BinaryOp> chain;
+            chain.insert(binary);
+            bool concatenate = binary->hasAttr(kTemplateConcatenation);
+            for (std::size_t index = 0; index < chain.size(); ++index) {
+                auto part = chain[index];
+                for (mlir::Value operand : part.getOperands()) {
+                    if (auto literal = ctjs::constantAttr<ctjs::StringAttr>(operand)) {
+                        concatenate |= literal.getValue().contains('\0');
+                    } else if (operand.getType() == string &&
+                               operand.getDefiningOp<ec::ConstantOp>()) {
+                        std::string literal;
+                        llvm::SmallVector<mlir::Value> unused;
+                        concatenate |= !appendTemplatePiece(operand, literal, unused);
+                    }
+                    if (auto producer = operand.getDefiningOp<ctjs::BinaryOp>();
+                        producer && producer.getKind() == ctjs::BinaryKind::Concat) {
+                        chain.insert(producer);
+                    }
+                }
+                for (mlir::Operation * user : part.getResult().getUsers()) {
+                    if (auto next = llvm::dyn_cast<ctjs::BinaryOp>(user);
+                        next && next.getKind() == ctjs::BinaryKind::Concat) {
+                        chain.insert(next);
+                    }
+                }
+            }
+            if (concatenate) {
+                for (auto part : chain) { part->setAttr(kTemplateConcatenation, b.getUnitAttr()); }
+            }
             std::string text;
             llvm::SmallVector<mlir::Value> arguments;
             auto previous = binary.getLhs().getDefiningOp<ec::CallOpaqueOp>();
@@ -97,7 +132,8 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
                 text = previous->getAttrOfType<mlir::StringAttr>(kTemplateText).getValue();
                 llvm::append_range(arguments, previous.getOperands().drop_front());
             }
-            if ((extends || appendTemplatePiece(binary.getLhs(), text, arguments)) &&
+            if (!concatenate &&
+                (extends || appendTemplatePiece(binary.getLhs(), text, arguments)) &&
                 appendTemplatePiece(binary.getRhs(), text, arguments) && !arguments.empty()) {
                 llvm::SmallVector<mlir::Value> operands{ec::LiteralOp::create(
                     b, where, ec::PointerType::get(ec::OpaqueType::get(context, "const char")),

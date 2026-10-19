@@ -15,9 +15,15 @@ function template_literal_kinds(flag) {
     console.log(`nested ${`inner ${1 + 1}`} outer`);
     console.log(`braces {x} and {{y}}: ${flag}`);
     console.log(`multi ${1} ${"two"} ${true} ${null} ${void 0}`);
-    const nulBefore = `pre\0${flag}post`;
-    console.log(nulBefore.length, nulBefore === "pre\0" + flag + "post");
-    const nulAfter = `${flag}\0tail`;
-    console.log(nulAfter.length, nulAfter === flag + "\0tail");
+}
+function template_nul_before(value) {
+    const text = `pre\0${value}post`;
+    console.log(text.length, text === "pre\0" + value + "post");
+}
+function template_nul_after(value) {
+    const text = `${value}\0tail`;
+    console.log(text.length, text === value + "\0tail");
 }
 template_literal_kinds(3);
+template_nul_before(3);
+template_nul_after(3);
