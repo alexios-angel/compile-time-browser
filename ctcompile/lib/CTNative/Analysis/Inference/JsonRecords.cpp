@@ -41,6 +41,9 @@ bool TypeInference::passesARecord(mlir::OpOperand & use) {
 std::string TypeInference::stringifiedRecordProblem(mlir::Value object, mlir::Operation * call) {
     auto literal = object.getDefiningOp<ctjs::CreateObjectOp>();
     if (!literal) { return "it is not an object literal"; }
+    if (call->getBlock() != literal->getBlock()) {
+        return "the call is not in the literal's own block";
+    }
     for (mlir::OpOperand & use : object.getUses()) {
         mlir::Operation * user = use.getOwner();
         if (user == call || llvm::isa<ctjs::GetPropertyOp>(user)) { continue; }
@@ -57,9 +60,6 @@ std::string TypeInference::stringifiedRecordProblem(mlir::Value object, mlir::Op
             return ("its field `" + key + "` is not written in its own block before the call")
                 .str();
         }
-    }
-    if (call->getBlock() != literal->getBlock()) {
-        return "the call is not in the literal's own block";
     }
     return {};
 }

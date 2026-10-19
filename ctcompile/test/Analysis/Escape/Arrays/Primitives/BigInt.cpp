@@ -316,7 +316,7 @@ void checkLiteralBigIntIndices(mlir::MLIRContext & context) {
                             ArrayContentsFailure::UnknownIndex},
                   std::pair{mlir::Attribute(ctjs::BigIntAttr::get(&context, "0x1n")),
                             ArrayContentsFailure::UnknownIndex},
-                  std::pair{mlir::Attribute(ctjs::NumberAttr::get(&context, 1.0)),
+                  std::pair{mlir::Attribute(ctjs::numberAttr(&context, 1.0)),
                             ArrayContentsFailure::UnknownIndex},
                   std::pair{mlir::Attribute(ctjs::StringAttr::get(&context, "1")),
                             ArrayContentsFailure::UnknownIndex},
