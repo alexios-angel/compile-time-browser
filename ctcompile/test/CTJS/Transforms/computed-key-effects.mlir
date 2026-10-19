@@ -9,6 +9,7 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/window.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=WINDOW --implicit-check-not='call_direct @add'
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compiler.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=COMPILER --implicit-check-not='call_direct @add'
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/local.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=LOCAL
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/destructuring.js --mlir-print-debuginfo 2>/dev/null | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=DESTRUCTURING
 
 // The overwritten DOM method gets the global object as an argument. Assuming
 // contains is still the realm's method hides its write to the add binding.
@@ -32,6 +33,11 @@
 // computed writes do not disable the three otherwise valid absence proofs.
 // LOCAL: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
 // LOCAL: ctjs.call_direct @add$1
+
+// A computed read can reach Array.prototype and replace its iterator. Even
+// with no known prototype key, destructuring cannot name the literal's handler.
+// DESTRUCTURING-LABEL: ctjs.func @fn$1(
+// DESTRUCTURING: ctjs.call {{.*}} {ctjs.test_closures_unknown = "an array destructuring, and the program may change how arrays iterate: a computed-key read may yield a prototype table, which is then used other than to read it (ctjs.get_property at {{.*}}destructuring.js:5)"}
 
 //--- argument.js
 function add(a, b) { return a + b; }
@@ -60,6 +66,17 @@ table[location.search.slice(1)] = function () {
 function grab(o) { return o.constructor.eventName(); }
 var compiled = grab(function () {});
 var z = add(1, 2);
+
+//--- destructuring.js
+(function () {
+    function pass(f) { return [f]; }
+    const [handler] = pass(function expected() { return 1; });
+    handler();
+    var table = [][location.hash.slice(1)];
+    table[Symbol.iterator] = function () {
+        return {next: function () { return {done: true}; }};
+    };
+})();
 
 //--- local.js
 function add(a, b) { return a + b; }

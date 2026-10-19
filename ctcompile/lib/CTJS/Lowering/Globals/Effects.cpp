@@ -225,9 +225,9 @@ static bool realm_function_member(llvm::StringRef key) {
 /// through a prototype table the realm made, which it inherits from
 /// (Function.prototype, Object.prototype, Window.prototype, ...). So this
 /// reads:
-///   - every path that may yield such a table: `prototype` off
-///     anything but a function made here (whose own table it is), and
-///     `__proto__`, may be read through and nothing else; a prototype link
+///   - every path that may yield such a table: a computed-key read,
+///     `prototype` off anything but a function made here (whose own table it
+///     is), and `__proto__`, may be read through and nothing else; a prototype link
 ///     (ctjs.get_proto, as `super` compiles) the same; `getPrototypeOf` and
 ///     `getOwnPropertyDescriptor(s)` are not read at all, and neither
 ///     "prototype" nor "__proto__" is passed as a value;
@@ -237,11 +237,10 @@ static bool realm_function_member(llvm::StringRef key) {
 ///     tables), and every key string used other than as a property key;
 ///   - a computed-key write or spread into such an object, which may write
 ///     any key, including when a computed read reached the object.
-/// A computed-key read is not recognized as a prototype-table path. Writes
-/// through its result can therefore leave `prototypes` empty. A computed-key
-/// write still sets `any_key`, but ClosureValues checks only `prototypes` for
-/// array destructuring. The `.constructor` marking above likewise follows
-/// only a constant `constructor` read.
+/// A computed-key read may expose a realm prototype table, so using its result
+/// other than for constant-key reads sets `prototypes`, which ClosureValues
+/// checks for array destructuring. The `.constructor` marking above still
+/// follows only a constant `constructor` read.
 prototype_writes read_prototype_writes(mlir::ModuleOp module) {
     prototype_writes keys;
     // Through the block arguments the importer's register file uses, as
@@ -263,6 +262,12 @@ prototype_writes read_prototype_writes(mlir::ModuleOp module) {
     module.walk([&](mlir::Operation * op) {
         if (auto get = mlir::dyn_cast<GetPropertyOp>(op)) {
             const llvm::StringRef key = constantKey(get.getKey());
+            if (key.empty() && !only_read(get.getResult())) {
+                note(keys.prototypes,
+                     "a computed-key read may yield a prototype table, which is then used other "
+                     "than to read it",
+                     op);
+            }
             const bool table =
                 key == "__proto__" ||
                 (key == "prototype" && !get.getObject().getDefiningOp<CreateClosureOp>());
