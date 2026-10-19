@@ -74,29 +74,6 @@ namespace {
 
 using Reason = std::optional<std::string>;
 
-/// Whether `call` calls the engine helper `name` (Classes.cpp).
-bool callsIntrinsic(ctjs::CallOp call, llvm::StringRef name) {
-    auto load = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-    return load && load.getName() == name;
-}
-
-/// The constructor closure `read` names when every store into its binding
-/// stores that one closure (Classes.cpp keeps the same rule), or null.
-ctjs::CreateClosureOp boundConstructor(mlir::Value read) {
-    auto get = read.getDefiningOp<ctjs::CellGetOp>();
-    auto cell = get ? get.getCell().getDefiningOp<ctjs::CreateCellOp>() : ctjs::CreateCellOp{};
-    if (!cell) { return read.getDefiningOp<ctjs::CreateClosureOp>(); }
-    ctjs::CreateClosureOp held;
-    for (mlir::Operation * user : cell.getResult().getUsers()) {
-        auto set = llvm::dyn_cast<ctjs::CellSetOp>(user);
-        if (!set || set.getCell() != cell.getResult()) { continue; }
-        auto made = set.getValue().getDefiningOp<ctjs::CreateClosureOp>();
-        if (!made || (held && held != made)) { return {}; }
-        held = made;
-    }
-    return held;
-}
-
 /// The function name without the importer's `$N` index.
 llvm::StringRef stemOf(ctjs::FuncOp fn) {
     llvm::StringRef name = fn.getSymName();
@@ -233,8 +210,6 @@ struct flattener {
     }
 
     /// Every `load_home` in `fn` read as `super.<key>`, or why one is not.
-    /// `constructorRead` admits `super.constructor`, which is how the
-    /// importer spells the callee of `super(...)`.
     static Reason superReads(ctjs::FuncOp fn, llvm::SmallVectorImpl<superRead> & out) {
         Reason why;
         fn.walk([&](ctjs::LoadHomeOp home) {
@@ -349,11 +324,6 @@ struct flattener {
                                     object);
         return copy;
     }
-
-    /// The C++ class name of `cls` (Classes.cpp's classNameOf, without its
-    /// sanitising, which the copies' names do not need: the emitter spells
-    /// function names itself).
-    llvm::StringRef nameOf(jsClassShape & cls) { return stemOf(targetOf(cls.constructor)); }
 
     Reason check(jsClassShape & cls) {
         if (!cls.parent) { return std::string("its parent is not one class this module defines"); }
@@ -957,7 +927,7 @@ struct flattener {
         if (auto why = check(cls)) { return why; }
         jsClassShape & parent = *classOf(cls.parent);
         ctjs::FuncOp ctorFn = targetOf(cls.constructor);
-        const std::string name = nameOf(cls).str();
+        const std::string name = stemOf(targetOf(cls.constructor)).str();
         const std::string superStem = ("super:" + targetOf(parent.constructor).getSymName()).str();
 
         // Read every `super` use before anything changes.
