@@ -53,6 +53,63 @@
 // RUN:   2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --implicit-check-not=ctjs.runtime_code
 
+// RUN: for name in sink-srcdoc-property sink-srcdoc-attribute sink-srcdoc-attribute-ns sink-sethtml-script sink-sethtml-runscripts sink-parsehtml-script sink-fragment-script sink-write-script sink-writeln-script sink-outer-handler sink-adjacent-handler sink-srcdoc-nested sink-markup-frame sink-iframe-url sink-object-url sink-embed-url sink-anchor-url sink-form-url sink-location-url sink-location-href-url sink-location-assign-url sink-location-replace-url sink-window-open-url sink-global-open-url sink-attribute-src-url sink-attribute-data-url sink-attribute-href-url sink-attribute-action-url sink-script-create sink-script-create-ns sink-script-insert sink-script-before sink-script-replace sink-script-append sink-script-text sink-script-src sink-script-text-content sink-script-src-attribute sink-safe-img sink-safe-anchor-text sink-safe-div-text sink-safe-append-div sink-safe-srcdoc sink-safe-sethtml sink-safe-parsehtml; do \
+// RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --whole-page --mlir-print-debuginfo 2>/dev/null \
+// RUN:     | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc > %t/$name.mlir; done
+// RUN: FileCheck %s --check-prefix=SINKSRCDOCPROPERTY < %t/sink-srcdoc-property.mlir
+// RUN: FileCheck %s --check-prefix=SINKSRCDOCATTRIBUTE < %t/sink-srcdoc-attribute.mlir
+// RUN: FileCheck %s --check-prefix=SINKSRCDOCATTRIBUTENS < %t/sink-srcdoc-attribute-ns.mlir
+// RUN: FileCheck %s --check-prefix=SINKSETHTMLSCRIPT < %t/sink-sethtml-script.mlir
+// RUN: FileCheck %s --check-prefix=SINKSETHTMLRUNSCRIPTS < %t/sink-sethtml-runscripts.mlir
+// RUN: FileCheck %s --check-prefix=SINKPARSEHTMLSCRIPT < %t/sink-parsehtml-script.mlir
+// RUN: FileCheck %s --check-prefix=SINKFRAGMENTSCRIPT < %t/sink-fragment-script.mlir
+// RUN: FileCheck %s --check-prefix=SINKWRITESCRIPT < %t/sink-write-script.mlir
+// RUN: FileCheck %s --check-prefix=SINKWRITELNSCRIPT < %t/sink-writeln-script.mlir
+// RUN: FileCheck %s --check-prefix=SINKOUTERHANDLER < %t/sink-outer-handler.mlir
+// RUN: FileCheck %s --check-prefix=SINKADJACENTHANDLER < %t/sink-adjacent-handler.mlir
+// RUN: FileCheck %s --check-prefix=SINKSRCDOCNESTED < %t/sink-srcdoc-nested.mlir
+// RUN: FileCheck %s --check-prefix=SINKMARKUPFRAME < %t/sink-markup-frame.mlir
+// RUN: FileCheck %s --check-prefix=SINKIFRAMEURL < %t/sink-iframe-url.mlir
+// RUN: FileCheck %s --check-prefix=SINKOBJECTURL < %t/sink-object-url.mlir
+// RUN: FileCheck %s --check-prefix=SINKEMBEDURL < %t/sink-embed-url.mlir
+// RUN: FileCheck %s --check-prefix=SINKANCHORURL < %t/sink-anchor-url.mlir
+// RUN: FileCheck %s --check-prefix=SINKFORMURL < %t/sink-form-url.mlir
+// RUN: FileCheck %s --check-prefix=SINKLOCATIONURL < %t/sink-location-url.mlir
+// RUN: FileCheck %s --check-prefix=SINKLOCATIONHREFURL < %t/sink-location-href-url.mlir
+// RUN: FileCheck %s --check-prefix=SINKLOCATIONASSIGNURL < %t/sink-location-assign-url.mlir
+// RUN: FileCheck %s --check-prefix=SINKLOCATIONREPLACEURL < %t/sink-location-replace-url.mlir
+// RUN: FileCheck %s --check-prefix=SINKWINDOWOPENURL < %t/sink-window-open-url.mlir
+// RUN: FileCheck %s --check-prefix=SINKGLOBALOPENURL < %t/sink-global-open-url.mlir
+// RUN: FileCheck %s --check-prefix=SINKATTRIBUTESRCURL < %t/sink-attribute-src-url.mlir
+// RUN: FileCheck %s --check-prefix=SINKATTRIBUTEDATAURL < %t/sink-attribute-data-url.mlir
+// RUN: FileCheck %s --check-prefix=SINKATTRIBUTEHREFURL < %t/sink-attribute-href-url.mlir
+// RUN: FileCheck %s --check-prefix=SINKATTRIBUTEACTIONURL < %t/sink-attribute-action-url.mlir
+// RUN: FileCheck %s --check-prefix=SINKSCRIPTCREATE < %t/sink-script-create.mlir
+// RUN: FileCheck %s --check-prefix=SINKSCRIPTCREATENS < %t/sink-script-create-ns.mlir
+// RUN: FileCheck %s --check-prefix=SINKSCRIPTINSERT < %t/sink-script-insert.mlir
+// RUN: FileCheck %s --check-prefix=SINKSCRIPTBEFORE < %t/sink-script-before.mlir
+// RUN: FileCheck %s --check-prefix=SINKSCRIPTREPLACE < %t/sink-script-replace.mlir
+// RUN: FileCheck %s --check-prefix=SINKSCRIPTAPPEND < %t/sink-script-append.mlir
+// RUN: FileCheck %s --check-prefix=SINKSCRIPTTEXT < %t/sink-script-text.mlir
+// RUN: FileCheck %s --check-prefix=SINKSCRIPTSRC < %t/sink-script-src.mlir
+// RUN: FileCheck %s --check-prefix=SINKSCRIPTTEXTCONTENT < %t/sink-script-text-content.mlir
+// RUN: FileCheck %s --check-prefix=SINKSCRIPTSRCATTRIBUTE < %t/sink-script-src-attribute.mlir
+// RUN: FileCheck %s --check-prefix=SINKSAFEIMG --implicit-check-not=ctjs.runtime_code < %t/sink-safe-img.mlir
+// RUN: FileCheck %s --check-prefix=SINKSAFEANCHORTEXT --implicit-check-not=ctjs.runtime_code < %t/sink-safe-anchor-text.mlir
+// RUN: FileCheck %s --check-prefix=SINKSAFEDIVTEXT --implicit-check-not=ctjs.runtime_code < %t/sink-safe-div-text.mlir
+// RUN: FileCheck %s --check-prefix=SINKSAFEAPPENDDIV --implicit-check-not=ctjs.runtime_code < %t/sink-safe-append-div.mlir
+// RUN: FileCheck %s --check-prefix=SINKSAFESRCDOC --implicit-check-not=ctjs.runtime_code < %t/sink-safe-srcdoc.mlir
+// RUN: FileCheck %s --check-prefix=SINKSAFESETHTML --implicit-check-not=ctjs.runtime_code < %t/sink-safe-sethtml.mlir
+// RUN: FileCheck %s --check-prefix=SINKSAFEPARSEHTML --implicit-check-not=ctjs.runtime_code < %t/sink-safe-parsehtml.mlir
+
+// RUN: for name in computed-document-method reflected-document-method; do \
+// RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --whole-page 2>/dev/null \
+// RUN:     | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:     | FileCheck %s --check-prefix=UNTRUSTED-SRC; done
+// RUN: for name in object-define reflect-define set-prototype; do \
+// RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --whole-page 2>/dev/null \
+// RUN:     | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=PROTOTYPE; done
+
 // The op is marked, and the function holding it is refused with the reason.
 // SCRIPT: ctjs.func {{.*}}@load$1({{.*}}ctnative.not_native = "`createElement` makes a `script` element
 // SCRIPT: ctjs.call {{.*}}ctjs.runtime_code = "`createElement` makes a `script` element, whose code a native program cannot run (ctjs.call at {{.*}}script.js:1)"
@@ -83,6 +140,12 @@
 // its scalar alternative. The reason itself pins the runtime-code clause.
 // MIXED: ctnative.not_native = "`{{setTimeout|setInterval}}` compiles a String first argument as code at run time
 // MIXED: ctjs.runtime_code = "`{{setTimeout|setInterval}}` compiles a String first argument as code at run time
+
+// An overwritten document method cannot prove a non-script receiver, and the
+// shared prototype census already rejects reflected writes to realm prototypes.
+// UNTRUSTED-SRC: ctnative.not_native = "`src` writes a possibly-script element
+// UNTRUSTED-SRC: ctjs.runtime_code = "`src` writes a possibly-script element
+// PROTOTYPE: ctjs.test_closures_unknown = "an array destructuring, and the program may change how arrays iterate: a prototype table is used other than to read it
 
 // Without --whole-page, the String timer marks nothing.
 
@@ -237,3 +300,245 @@ function arm(el, which) {
     el.setAttribute(name, "1");
 }
 arm(document.body, 1);
+
+// Every sink pins its census mark and the same API-specific admission reason.
+// SINKSRCDOCPROPERTY: ctnative.not_native = "`srcdoc` with executable markup may add a script or browsing context, whose code a native program cannot compile
+// SINKSRCDOCPROPERTY: ctjs.runtime_code = "`srcdoc` with executable markup may add a script or browsing context, whose code a native program cannot compile
+// SINKSRCDOCATTRIBUTE: ctnative.not_native = "`setAttribute(\22srcdoc\22)` with executable markup may add a script or browsing context, whose code a native program cannot compile
+// SINKSRCDOCATTRIBUTE: ctjs.runtime_code = "`setAttribute(\22srcdoc\22)` with executable markup may add a script or browsing context, whose code a native program cannot compile
+// SINKSRCDOCATTRIBUTENS: ctnative.not_native = "`setAttributeNS(\22srcdoc\22)` with executable markup may add a script or browsing context, whose code a native program cannot compile
+// SINKSRCDOCATTRIBUTENS: ctjs.runtime_code = "`setAttributeNS(\22srcdoc\22)` with executable markup may add a script or browsing context, whose code a native program cannot compile
+// SINKSETHTMLSCRIPT: ctnative.not_native = "`setHTMLUnsafe` with executable markup may add a script or browsing context, whose code a native program cannot compile
+// SINKSETHTMLSCRIPT: ctjs.runtime_code = "`setHTMLUnsafe` with executable markup may add a script or browsing context, whose code a native program cannot compile
+// SINKSETHTMLRUNSCRIPTS: ctnative.not_native = "`setHTMLUnsafe` with executable markup may add a script or browsing context, whose code a native program cannot compile
+// SINKSETHTMLRUNSCRIPTS: ctjs.runtime_code = "`setHTMLUnsafe` with executable markup may add a script or browsing context, whose code a native program cannot compile
+// SINKPARSEHTMLSCRIPT: ctnative.not_native = "`parseHTMLUnsafe` with executable markup may add a script or browsing context, whose code a native program cannot compile
+// SINKPARSEHTMLSCRIPT: ctjs.runtime_code = "`parseHTMLUnsafe` with executable markup may add a script or browsing context, whose code a native program cannot compile
+// SINKFRAGMENTSCRIPT: ctnative.not_native = "`createContextualFragment` can add a script element, whose code a native program cannot run
+// SINKFRAGMENTSCRIPT: ctjs.runtime_code = "`createContextualFragment` can add a script element, whose code a native program cannot run
+// SINKWRITESCRIPT: ctnative.not_native = "`write` can add a script element, whose code a native program cannot run
+// SINKWRITESCRIPT: ctjs.runtime_code = "`write` can add a script element, whose code a native program cannot run
+// SINKWRITELNSCRIPT: ctnative.not_native = "`writeln` can add a script element, whose code a native program cannot run
+// SINKWRITELNSCRIPT: ctjs.runtime_code = "`writeln` can add a script element, whose code a native program cannot run
+// SINKOUTERHANDLER: ctnative.not_native = "`outerHTML` with markup holding an on* attribute adds an event handler, whose code a native program cannot compile
+// SINKOUTERHANDLER: ctjs.runtime_code = "`outerHTML` with markup holding an on* attribute adds an event handler, whose code a native program cannot compile
+// SINKADJACENTHANDLER: ctnative.not_native = "`insertAdjacentHTML` with markup holding an on* attribute adds an event handler, whose code a native program cannot compile
+// SINKADJACENTHANDLER: ctjs.runtime_code = "`insertAdjacentHTML` with markup holding an on* attribute adds an event handler, whose code a native program cannot compile
+// SINKSRCDOCNESTED: ctnative.not_native = "`srcdoc` with executable markup may add a script or browsing context, whose code a native program cannot compile
+// SINKSRCDOCNESTED: ctjs.runtime_code = "`srcdoc` with executable markup may add a script or browsing context, whose code a native program cannot compile
+// SINKMARKUPFRAME: ctnative.not_native = "`innerHTML` with executable markup may add a script or browsing context, whose code a native program cannot compile
+// SINKMARKUPFRAME: ctjs.runtime_code = "`innerHTML` with executable markup may add a script or browsing context, whose code a native program cannot compile
+// SINKIFRAMEURL: ctnative.not_native = "`src` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKIFRAMEURL: ctjs.runtime_code = "`src` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKOBJECTURL: ctnative.not_native = "`data` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKOBJECTURL: ctjs.runtime_code = "`data` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKEMBEDURL: ctnative.not_native = "`src` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKEMBEDURL: ctjs.runtime_code = "`src` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKANCHORURL: ctnative.not_native = "`href` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKANCHORURL: ctjs.runtime_code = "`href` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKFORMURL: ctnative.not_native = "`action` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKFORMURL: ctjs.runtime_code = "`action` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKLOCATIONURL: ctnative.not_native = "`location` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKLOCATIONURL: ctjs.runtime_code = "`location` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKLOCATIONHREFURL: ctnative.not_native = "`href` set to the javascript: URL `java\09script:x=1`, which runs code when followed
+// SINKLOCATIONHREFURL: ctjs.runtime_code = "`href` set to the javascript: URL `java\09script:x=1`, which runs code when followed
+// SINKLOCATIONASSIGNURL: ctnative.not_native = "`assign` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKLOCATIONASSIGNURL: ctjs.runtime_code = "`assign` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKLOCATIONREPLACEURL: ctnative.not_native = "`replace` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKLOCATIONREPLACEURL: ctjs.runtime_code = "`replace` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKWINDOWOPENURL: ctnative.not_native = "`open` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKWINDOWOPENURL: ctjs.runtime_code = "`open` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKGLOBALOPENURL: ctnative.not_native = "`open` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKGLOBALOPENURL: ctjs.runtime_code = "`open` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKATTRIBUTESRCURL: ctnative.not_native = "`setAttribute(\22src\22)` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKATTRIBUTESRCURL: ctjs.runtime_code = "`setAttribute(\22src\22)` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKATTRIBUTEDATAURL: ctnative.not_native = "`setAttribute(\22data\22)` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKATTRIBUTEDATAURL: ctjs.runtime_code = "`setAttribute(\22data\22)` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKATTRIBUTEHREFURL: ctnative.not_native = "`setAttribute(\22href\22)` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKATTRIBUTEHREFURL: ctjs.runtime_code = "`setAttribute(\22href\22)` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKATTRIBUTEACTIONURL: ctnative.not_native = "`setAttribute(\22action\22)` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKATTRIBUTEACTIONURL: ctjs.runtime_code = "`setAttribute(\22action\22)` set to the javascript: URL `javascript:x=1`, which runs code when followed
+// SINKSCRIPTCREATE: ctnative.not_native = "`createElement` makes a `script` element, whose code a native program cannot run
+// SINKSCRIPTCREATE: ctjs.runtime_code = "`createElement` makes a `script` element, whose code a native program cannot run
+// SINKSCRIPTCREATENS: ctnative.not_native = "`createElementNS` makes a `script` element, whose code a native program cannot run
+// SINKSCRIPTCREATENS: ctjs.runtime_code = "`createElementNS` makes a `script` element, whose code a native program cannot run
+// SINKSCRIPTINSERT: ctnative.not_native = "`appendChild` inserts a possibly-script node, whose code a native program cannot compile
+// SINKSCRIPTINSERT: ctjs.runtime_code = "`appendChild` inserts a possibly-script node, whose code a native program cannot compile
+// SINKSCRIPTBEFORE: ctnative.not_native = "`insertBefore` inserts a possibly-script node, whose code a native program cannot compile
+// SINKSCRIPTBEFORE: ctjs.runtime_code = "`insertBefore` inserts a possibly-script node, whose code a native program cannot compile
+// SINKSCRIPTREPLACE: ctnative.not_native = "`replaceChild` inserts a possibly-script node, whose code a native program cannot compile
+// SINKSCRIPTREPLACE: ctjs.runtime_code = "`replaceChild` inserts a possibly-script node, whose code a native program cannot compile
+// SINKSCRIPTAPPEND: ctnative.not_native = "`append` inserts a possibly-script node, whose code a native program cannot compile
+// SINKSCRIPTAPPEND: ctjs.runtime_code = "`append` inserts a possibly-script node, whose code a native program cannot compile
+// SINKSCRIPTTEXT: ctnative.not_native = "`text` writes a possibly-script element, whose new code a native program cannot compile
+// SINKSCRIPTTEXT: ctjs.runtime_code = "`text` writes a possibly-script element, whose new code a native program cannot compile
+// SINKSCRIPTSRC: ctnative.not_native = "`src` writes a possibly-script element, whose new code a native program cannot compile
+// SINKSCRIPTSRC: ctjs.runtime_code = "`src` writes a possibly-script element, whose new code a native program cannot compile
+// SINKSCRIPTTEXTCONTENT: ctnative.not_native = "`textContent` writes a possibly-script element, whose new code a native program cannot compile
+// SINKSCRIPTTEXTCONTENT: ctjs.runtime_code = "`textContent` writes a possibly-script element, whose new code a native program cannot compile
+// SINKSCRIPTSRCATTRIBUTE: ctnative.not_native = "`setAttribute(\22src\22)` writes a possibly-script element, whose new code a native program cannot compile
+// SINKSCRIPTSRCATTRIBUTE: ctjs.runtime_code = "`setAttribute(\22src\22)` writes a possibly-script element, whose new code a native program cannot compile
+// SINKSAFEIMG: module
+// SINKSAFEANCHORTEXT: module
+// SINKSAFEDIVTEXT: module
+// SINKSAFEAPPENDDIV: module
+// SINKSAFESRCDOC: module
+// SINKSAFESETHTML: module
+// SINKSAFEPARSEHTML: module
+
+//--- sink-srcdoc-property.js
+document.querySelector("iframe").srcdoc = "<script>x=1</script>";
+
+//--- sink-srcdoc-attribute.js
+document.querySelector("iframe").setAttribute("srcdoc", "<script>x=1</script>");
+
+//--- sink-srcdoc-attribute-ns.js
+document.querySelector("iframe").setAttributeNS(null,"srcdoc", "<script>x=1</script>");
+
+//--- sink-sethtml-script.js
+document.body.setHTMLUnsafe("<script>x=1</script>");
+
+//--- sink-sethtml-runscripts.js
+document.body.setHTMLUnsafe("<script>x=1</script>", {runScripts:true});
+
+//--- sink-parsehtml-script.js
+Document.parseHTMLUnsafe("<script>x=1</script>");
+
+//--- sink-fragment-script.js
+document.createRange().createContextualFragment("<script>x=1</script>");
+
+//--- sink-write-script.js
+document.write("<script>x=1</script>");
+
+//--- sink-writeln-script.js
+document.writeln("<script>x=1</script>");
+
+//--- sink-outer-handler.js
+document.body.outerHTML="<div onclick=go()></div>";
+
+//--- sink-adjacent-handler.js
+document.body.insertAdjacentHTML("beforeend","<img onerror=go()>");
+
+//--- sink-srcdoc-nested.js
+document.querySelector("iframe").srcdoc='<iframe srcdoc="&lt;script&gt;x=1&lt;/script&gt;"></iframe>';
+
+//--- sink-markup-frame.js
+document.body.innerHTML='<iframe srcdoc="&lt;script&gt;x=1&lt;/script&gt;"></iframe>';
+
+//--- sink-iframe-url.js
+document.querySelector("iframe").src="javascript:x=1";
+
+//--- sink-object-url.js
+document.querySelector("object").data="javascript:x=1";
+
+//--- sink-embed-url.js
+document.querySelector("embed").src="javascript:x=1";
+
+//--- sink-anchor-url.js
+document.querySelector("a").href="javascript:x=1";
+
+//--- sink-form-url.js
+document.querySelector("form").action="javascript:x=1";
+
+//--- sink-location-url.js
+location="javascript:x=1";
+
+//--- sink-location-href-url.js
+location.href="java\tscript:x=1";
+
+//--- sink-location-assign-url.js
+location.assign("javascript:x=1");
+
+//--- sink-location-replace-url.js
+location.replace("javascript:x=1");
+
+//--- sink-window-open-url.js
+window.open("javascript:x=1");
+
+//--- sink-global-open-url.js
+open("javascript:x=1");
+
+//--- sink-attribute-src-url.js
+document.querySelector("iframe").setAttribute("src","javascript:x=1");
+
+//--- sink-attribute-data-url.js
+document.querySelector("object").setAttribute("data","javascript:x=1");
+
+//--- sink-attribute-href-url.js
+document.querySelector("a").setAttribute("href","javascript:x=1");
+
+//--- sink-attribute-action-url.js
+document.querySelector("form").setAttribute("action","javascript:x=1");
+
+//--- sink-script-create.js
+document.createElement("script");
+
+//--- sink-script-create-ns.js
+document.createElementNS("http://www.w3.org/2000/svg","script");
+
+//--- sink-script-insert.js
+document.body.appendChild(document.querySelector("script"));
+
+//--- sink-script-before.js
+document.body.insertBefore(document.querySelector("script"),null);
+
+//--- sink-script-replace.js
+document.body.replaceChild(document.querySelector("script"),document.body.firstChild);
+
+//--- sink-script-append.js
+document.body.append(document.querySelector("script"));
+
+//--- sink-script-text.js
+document.querySelector("script").text="x=1";
+
+//--- sink-script-src.js
+document.querySelector("script").src="https://example.com/code.js";
+
+//--- sink-script-text-content.js
+document.querySelector("script").textContent="x=1";
+
+//--- sink-script-src-attribute.js
+document.querySelector("script").setAttribute("src","https://example.com/code.js");
+
+//--- sink-safe-img.js
+document.createElement("img").src="https://example.com/x.png";
+
+//--- sink-safe-anchor-text.js
+document.createElement("a").text="safe";
+
+//--- sink-safe-div-text.js
+document.createElement("div").textContent="safe";
+
+//--- sink-safe-append-div.js
+document.body.appendChild(document.createElement("div"));
+
+//--- sink-safe-srcdoc.js
+document.querySelector("iframe").srcdoc="<b>safe</b>";
+
+//--- sink-safe-sethtml.js
+document.body.setHTMLUnsafe("<b>safe</b>");
+
+//--- sink-safe-parsehtml.js
+Document.parseHTMLUnsafe("<b>safe</b>");
+
+//--- computed-document-method.js
+document[location.hash] = function () { return document.querySelector("script"); };
+document.createElement("img").src = "https://example.com/x.js";
+
+//--- reflected-document-method.js
+Object.defineProperty(Document.prototype, "createElement", {
+    value: function () { return document.querySelector("script"); }
+});
+document.createElement("img").src = "https://example.com/x.js";
+
+//--- object-define.js
+Object.defineProperty(Document.prototype, location.hash, {value:function(){}});
+(function () { const [cb] = [function () {}]; cb(); })();
+
+//--- reflect-define.js
+Reflect.defineProperty(Document.prototype, location.hash, {value:function(){}});
+(function () { const [cb] = [function () {}]; cb(); })();
+
+//--- set-prototype.js
+Object.setPrototypeOf(Document.prototype, {});
+(function () { const [cb] = [function () {}]; cb(); })();

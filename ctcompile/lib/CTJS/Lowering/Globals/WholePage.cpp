@@ -19,6 +19,7 @@
 #include "Effects.h"
 #include "RegisterFlow.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "ctcompile/CTJS/Lowering/NativeRealm.h"
 
 #include <ctbrowser/dom/tokenizer.hpp>
 
@@ -139,6 +140,107 @@ std::string handlerName(mlir::Value name, llvm::StringRef api,
     return {};
 }
 
+/// Whether a markup fragment can introduce a script, a browsing context or
+/// an executable URL. Attribute values have already had entities decoded.
+bool markupMayRunCode(llvm::StringRef text, unsigned depth = 0) {
+    if (depth == 16) { return true; }
+    ctbrowser::html::tokenizer tokenizer(text);
+    for (auto token = tokenizer.next(); token.kind != ctbrowser::html::token_kind::end_of_file;
+         token = tokenizer.next()) {
+        if (token.kind != ctbrowser::html::token_kind::start_tag) { continue; }
+        if (llvm::StringSwitch<bool>(token.name)
+                .Cases({"script", "iframe", "frame", "object", "embed"}, true)
+                .Default(false)) {
+            return true;
+        }
+        for (const auto & attr : token.attributes) {
+            if (llvm::StringRef(attr.name).starts_with_insensitive("on")) { return true; }
+            if (attr.name == "srcdoc" && markupMayRunCode(attr.value, depth + 1)) { return true; }
+            if (llvm::StringSwitch<bool>(attr.name)
+                    .Cases({"href", "src", "data", "action", "formaction", "xlink:href"}, true)
+                    .Default(false)) {
+                std::string url =
+                    llvm::StringRef(attr.value)
+                        .drop_while([](char c) { return static_cast<unsigned char>(c) <= 0x20; })
+                        .str();
+                std::erase_if(url, [](char c) { return c == '\t' || c == '\n' || c == '\r'; });
+                if (llvm::StringRef(url).starts_with_insensitive("javascript:")) { return true; }
+            }
+        }
+    }
+    return false;
+}
+
+/// Why markup `value` written through `api` may introduce executable content.
+std::string codeMarkup(mlir::Value value, llvm::StringRef api) {
+    const auto text = value ? constantString(value) : std::nullopt;
+    if (text && !markupMayRunCode(*text)) { return {}; }
+    return "`" + api.str() + "` with " +
+           (text ? "executable markup" : "markup not known at build time") +
+           " may add a script or browsing context, whose code a native program cannot compile";
+}
+
+/// The tag of a node returned by an unchanged realm document method, or none.
+std::optional<llvm::StringRef> elementTag(mlir::Value value,
+                                          globals_detail::ClosureValues & closures) {
+    const mlir::Value origin = registerFlowOrigin(value);
+    if (auto call = origin ? origin.getDefiningOp<CallOp>() : CallOp{}) {
+        const mlir::Value callee = registerFlowOrigin(call.getCallee());
+        auto read = callee ? callee.getDefiningOp<GetPropertyOp>() : GetPropertyOp{};
+        const llvm::StringRef method = read ? constantKey(read.getKey()) : llvm::StringRef{};
+        auto module = call->getParentOfType<mlir::ModuleOp>();
+        const mlir::Value owner = read ? registerFlowOrigin(read.getObject()) : mlir::Value{};
+        auto document = owner ? owner.getDefiningOp<LoadGlobalOp>() : LoadGlobalOp{};
+        const auto writes = globals_detail::read_prototype_writes(module);
+        bool pristine = document && document.getName() == "document" &&
+                        realmBinding(module, "document") && writes.prototypes.empty() &&
+                        writes.any_key.empty() && !writes.written.contains(method);
+        // The shared census does not put computed foreign writes in any_key.
+        // Until it does, each such receiver must be proved unable to be document.
+        module.walk([&](SetPropertyOp write) {
+            if (constantString(write.getKey())) { return; }
+            const auto leaves = closures.leafValuesOf(write.getObject());
+            pristine &= leaves.unknown.empty() && !leaves.values.empty() &&
+                        llvm::all_of(leaves.values, [](mlir::Value leaf) {
+                            return mlir::isa_and_present<ConstantOp, CreateObjectOp, CreateArrayOp,
+                                                         CreateClosureOp>(leaf.getDefiningOp());
+                        });
+        });
+        if (!pristine) { return std::nullopt; }
+        const bool create = method == "createElement" || method == "createElementNS";
+        const bool query = method == "querySelector";
+        const std::size_t index = method == "createElementNS" ? 1 : 0;
+        if ((create || query) && index < call.getArgs().size()) {
+            if (const auto tag = constantString(call.getArgs()[index]); tag && !tag->empty()) {
+                const llvm::StringRef local =
+                    create && tag->contains(':') ? tag->split(':').second : *tag;
+                if (llvm::all_of(local, [](char c) { return llvm::isAlnum(c) || c == '-'; })) {
+                    return local;
+                }
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+/// Opaque sources stay possible; primitives and owned literals cannot be scripts.
+bool possiblyScript(mlir::Value value, globals_detail::ClosureValues & closures) {
+    if (const auto tag = elementTag(value, closures)) { return tag->equals_insensitive("script"); }
+    const auto leaves = closures.leafValuesOf(value);
+    return !leaves.unknown.empty() || leaves.values.empty() ||
+           llvm::any_of(leaves.values, [](mlir::Value leaf) {
+               return !mlir::isa_and_present<ConstantOp, CreateObjectOp, CreateArrayOp,
+                                             CreateClosureOp>(leaf.getDefiningOp());
+           });
+}
+
+std::string scriptWrite(mlir::Value object, llvm::StringRef key,
+                        globals_detail::ClosureValues & closures) {
+    if (!possiblyScript(object, closures)) { return {}; }
+    return "`" + key.str() +
+           "` writes a possibly-script element, whose new code a native program cannot compile";
+}
+
 /// Why markup `value` written through `api` may add a handler, or empty.
 std::string handlerMarkup(mlir::Value value, llvm::StringRef api) {
     if (const auto text = constantString(value)) {
@@ -200,9 +302,32 @@ std::string methodCall(llvm::StringRef method, CallOp call,
                "` can add a script element, whose code a native program "
                "cannot run";
     }
-    if (method == "insertAdjacentHTML" || method == "setHTMLUnsafe") {
-        const mlir::Value markup = arg(method == "insertAdjacentHTML" ? 1 : 0);
-        return markup ? handlerMarkup(markup, method) : std::string{};
+    if (method == "setHTMLUnsafe" || method == "parseHTMLUnsafe") {
+        return codeMarkup(arg(0), method);
+    }
+    if (method == "insertAdjacentHTML") {
+        const mlir::Value markup = arg(1);
+        if (!markup) { return {}; }
+        if (std::string why = handlerMarkup(markup, method); !why.empty()) { return why; }
+        return codeMarkup(markup, method);
+    }
+    if (method == "appendChild" || method == "insertBefore" || method == "replaceChild" ||
+        method == "append" || method == "prepend" || method == "before" || method == "after" ||
+        method == "replaceWith" || method == "replaceChildren" ||
+        method == "insertAdjacentElement") {
+        const auto first = method == "insertAdjacentElement" ? 1u : 0u;
+        const auto count = method == "appendChild" || method == "insertBefore" ||
+                                   method == "replaceChild" || method == "insertAdjacentElement"
+                               ? std::min<std::size_t>(args.size(), first + 1)
+                               : args.size();
+        for (std::size_t index = first; index < count; ++index) {
+            if (possiblyScript(args[index], closures)) {
+                return "`" + method.str() +
+                       "` inserts a possibly-script node, whose code a native program cannot "
+                       "compile";
+            }
+        }
+        return {};
     }
     if (method == "parseFromString") {
         const mlir::Value markup = arg(0);
@@ -214,15 +339,43 @@ std::string methodCall(llvm::StringRef method, CallOp call,
         const mlir::Value name = arg(namespaced ? 1 : 0);
         if (!name) { return {}; }
         if (std::string why = handlerName(name, method, closures); !why.empty()) { return why; }
-        // A link or form target set to a URL.
-        const auto text = constantString(name);
-        const bool target = text && llvm::StringSwitch<bool>(text->lower())
-                                        .Cases({"href", "action", "formaction", "xlink:href"}, true)
-                                        .Default(false);
         const mlir::Value value = arg(namespaced ? 2 : 1);
-        return method.starts_with("setAttribute") && target && value
-                   ? urlTarget(value, method.str() + "(\"" + text->str() + "\")")
-                   : std::string{};
+        if (!method.starts_with("setAttribute") || !value) { return {}; }
+        const auto check = [&](llvm::StringRef key) -> std::string {
+            const std::string api = method.str() + "(\"" + key.str() + "\")";
+            if (key.equals_insensitive("srcdoc")) { return codeMarkup(value, api); }
+            const bool target =
+                llvm::StringSwitch<bool>(key.lower())
+                    .Cases({"href", "src", "data", "action", "formaction", "xlink:href"}, true)
+                    .Default(false);
+            const auto tag = elementTag(call.getReceiver(), closures);
+            const bool image =
+                tag && tag->equals_insensitive("img") && key.equals_insensitive("src");
+            if (target && !image) {
+                if (std::string why = urlTarget(value, api); !why.empty()) { return why; }
+            }
+            return key.equals_insensitive("src") ? scriptWrite(call.getReceiver(), api, closures)
+                                                 : std::string{};
+        };
+        if (const auto text = constantString(name)) { return check(*text); }
+        const auto leaves = closures.leafValuesOf(name);
+        if (!leaves.unknown.empty() || leaves.values.empty()) {
+            return "`" + method.str() + "` has an unknown attribute name that may create code";
+        }
+        for (mlir::Value leaf : leaves.values) {
+            if (const auto text = constantString(leaf)) {
+                if (std::string why = check(*text); !why.empty()) { return why; }
+                continue;
+            }
+            const auto prefix = leftmostPart(leaf);
+            for (llvm::StringRef key :
+                 {"srcdoc", "href", "src", "data", "action", "formaction", "xlink:href"}) {
+                if (!prefix || key.take_front(prefix->size()).equals_insensitive(*prefix)) {
+                    if (std::string why = check(key); !why.empty()) { return why; }
+                }
+            }
+        }
+        return {};
     }
     // Navigating to a URL: `location.assign(u)`, `location.replace(u)` and
     // `window.open(u)`, when the receiver is that object.
@@ -232,7 +385,8 @@ std::string methodCall(llvm::StringRef method, CallOp call,
         auto read = receiver ? receiver.getDefiningOp<GetPropertyOp>() : GetPropertyOp{};
         const bool location = (global && global.getName() == "location") ||
                               (read && constantKey(read.getKey()) == "location");
-        const bool window = global && globals_detail::names_global_object(global.getName());
+        const bool window = (global && globals_detail::names_global_object(global.getName())) ||
+                            (!call.getReceiver() || isUndefinedConstant(call.getReceiver()));
         if ((method == "open" && window) || (method != "open" && location)) {
             return urlTarget(arg(0), method);
         }
@@ -246,8 +400,12 @@ bool createsCode(llvm::StringRef key) {
     return llvm::StringSwitch<bool>(key)
         .Cases({"setTimeout", "setInterval", "createElement", "createElementNS"}, true)
         .Cases({"write", "writeln", "createContextualFragment", "insertAdjacentHTML"}, true)
-        .Cases({"setHTMLUnsafe", "parseFromString", "setAttribute", "setAttributeNS"}, true)
+        .Cases({"setHTMLUnsafe", "parseHTMLUnsafe", "parseFromString", "setAttribute",
+                "setAttributeNS"},
+               true)
         .Cases({"createAttribute", "createAttributeNS", "assign", "replace", "open"}, true)
+        .Cases({"appendChild", "insertBefore", "replaceChild", "append", "prepend"}, true)
+        .Cases({"before", "after", "replaceWith", "replaceChildren", "insertAdjacentElement"}, true)
         .Default(false);
 }
 
@@ -556,7 +714,7 @@ llvm::SmallVector<RuntimeCodeSite> markRuntimeCode(mlir::ModuleOp module) {
             if (load.getTypeofLookup()) { return; }
             if (name == "eval" || name == "Function") {
                 found.push_back({op, "`" + name.str() + "` compiles a String as code at run time"});
-            } else if (name == "setTimeout" || name == "setInterval") {
+            } else if (name == "setTimeout" || name == "setInterval" || name == "open") {
                 if (std::string why = usedFunction(load.getResult(), name, closures, found);
                     !why.empty()) {
                     found.push_back({op, std::move(why)});
@@ -583,11 +741,30 @@ llvm::SmallVector<RuntimeCodeSite> markRuntimeCode(mlir::ModuleOp module) {
             if (key == "innerHTML" || key == "outerHTML") {
                 if (std::string why = handlerMarkup(write.getValue(), key); !why.empty()) {
                     found.push_back({op, std::move(why)});
+                } else if (std::string why = codeMarkup(write.getValue(), key); !why.empty()) {
+                    found.push_back({op, std::move(why)});
+                }
+            } else if (key == "srcdoc") {
+                if (std::string why = codeMarkup(write.getValue(), key); !why.empty()) {
+                    found.push_back({op, std::move(why)});
                 }
             } else if (llvm::StringSwitch<bool>(key)
-                           .Cases({"href", "action", "formAction", "location"}, true)
+                           .Cases({"href", "src", "data", "action", "formAction", "location"}, true)
                            .Default(false)) {
-                if (std::string why = urlTarget(write.getValue(), key); !why.empty()) {
+                const auto tag =
+                    key == "src" ? elementTag(write.getObject(), closures) : std::nullopt;
+                const bool image = tag && tag->equals_insensitive("img");
+                if (std::string why = image ? std::string{} : urlTarget(write.getValue(), key);
+                    !why.empty()) {
+                    found.push_back({op, std::move(why)});
+                } else if (key == "src") {
+                    if (std::string why = scriptWrite(write.getObject(), key, closures);
+                        !why.empty()) {
+                        found.push_back({op, std::move(why)});
+                    }
+                }
+            } else if (key == "text" || key == "textContent" || key == "innerText") {
+                if (std::string why = scriptWrite(write.getObject(), key, closures); !why.empty()) {
                     found.push_back({op, std::move(why)});
                 }
             }
