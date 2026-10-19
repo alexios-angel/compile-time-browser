@@ -517,7 +517,9 @@ private:
     // by a script is queued rather than performed under that script's feet.
     void load_one_page(std::string_view html, source_kind kind);
     void run_scripts();
-    void report_script_error(std::string_view error, std::string_view specifier);
+    void report_script_error(std::string_view error, std::string_view specifier,
+                             script::value thrown);
+    bool run_script_impl(std::string_view source, script::value * thrown);
 
     // The measure layout uses and the fonts the rasterizer draws with are the
     // same object: text lands where layout placed it only if one thing answers

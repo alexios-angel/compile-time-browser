@@ -144,6 +144,54 @@ const char * name_of(op kind) {
 } // namespace
 
 int main() {
+    // The AOT bridge has the same TDZ even for typeof and sloppy assignment.
+    for (int access = 0; access != 3; ++access) {
+        context cx;
+        ctbrowser::script::install_builtins(cx);
+        const auto first = ctbrowser::script::compiler::compile("throw 0; let pending = 1;");
+        check(!cx.run(first).ok, "the lexical initializer is not reached");
+        const auto probe = ctbrowser::script::compiler::compile("0;");
+        check(cx.run(probe).ok, "the next script clears the prior failure");
+        const auto * site =
+            reinterpret_cast<const ctbrowser::aot::ct_aot_site *>(&probe.functions[0]);
+        alignas(std::max_align_t) unsigned char storage[CT_AOT_FRAME_BYTES];
+        auto * frame =
+            ctbrowser::aot::ct_aot_enter(reinterpret_cast<ctbrowser::aot::ct_aot_ctx *>(&cx), site,
+                                         1u, value::undefined().bits(), storage);
+        check(frame != nullptr, "the TDZ probe frame enters");
+        if (frame == nullptr) { return 1; }
+        ctbrowser::aot::ct_aot_handler_push(frame, 11u, 0u);
+        std::uint64_t out = value::number(123).bits();
+        std::int32_t checked = 0;
+        if (access == 0) {
+            checked = ctbrowser::aot::ct_aot_global_get(frame, "pending", 7u, &out);
+            check(out == value::number(123).bits(), "a failed hard read preserves its out slot");
+        } else if (access == 1) {
+            (void)ctbrowser::aot::ct_aot_global_get_soft(frame, "pending", 7u);
+            checked = ctbrowser::aot::ct_aot_check(frame);
+        } else {
+            ctbrowser::aot::ct_aot_global_set(frame, "pending", 7u, value::number(9).bits());
+            checked = ctbrowser::aot::ct_aot_check(frame);
+        }
+        const auto status = static_cast<ctbrowser::aot::ct_aot_status>(checked);
+        check(status == ctbrowser::aot::ct_aot_status::caught,
+              "an AOT lexical access reaches its catch edge");
+        if (status == ctbrowser::aot::ct_aot_status::caught) {
+            std::uint64_t thrown = value::undefined().bits();
+            check(ctbrowser::aot::ct_aot_catch_land(frame, &thrown) == 11u,
+                  "the TDZ exception reaches the expected pad");
+            check(cx.to_string(cx.lookup_property(value::from_bits(thrown), "name")) ==
+                      "ReferenceError",
+                  "the TDZ exception is a ReferenceError");
+        } else if (status != ctbrowser::aot::ct_aot_status::unwound) {
+            ctbrowser::aot::ct_aot_handler_pop(frame);
+        }
+        if (status != ctbrowser::aot::ct_aot_status::unwound) {
+            ctbrowser::aot::ct_aot_leave(frame);
+        }
+        const auto still = ctbrowser::script::compiler::compile("typeof pending;");
+        check(!cx.run(still).ok, "an AOT assignment does not initialize the stranded binding");
+    }
     // Both Construct helpers must let a compiled handler catch a non-constructor
     // TypeError, including the global object's Proxy forwarding path.
     for (const bool spread : {false, true}) {

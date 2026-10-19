@@ -223,14 +223,17 @@ void compiler_impl::emit_global_write(std::string_view name, std::uint16_t src) 
         return;
     }
     emit_strict_assign_check(name);
-    proto().emit(instruction::with_bx(op::set_global, src, intern_name(std::string{name})));
+    const bool initialize = declaring_ && frames_.size() == 1 &&
+                            std::ranges::find(out_.lexical_names, name) != out_.lexical_names.end();
+    proto().emit(instruction::with_bx(initialize ? op::init_global : op::set_global, src,
+                                      intern_name(std::string{name})));
 }
 
 /// 6.2.5.6 PutValue step 3.a: in strict code, assigning to a name that
 /// resolves nowhere is a ReferenceError rather than a new global. Emitted only
 /// for an assignment (a declaration's first write sets declaring_) and only in
-/// strict code, as a call of strict_assign_check_name (op::set_global itself
-/// may not throw). The write that follows still runs when the check passes.
+/// strict code, as a call of strict_assign_check_name. The write that follows
+/// also checks a global lexical's initialization state, in either mode.
 void compiler_impl::emit_strict_assign_check(std::string_view name) {
     if (!fn().is_strict || declaring_) { return; }
     // Deliberately skipped at a module's top level (docs/script.md, strict

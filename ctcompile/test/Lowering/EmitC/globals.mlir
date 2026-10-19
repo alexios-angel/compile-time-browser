@@ -1,8 +1,8 @@
 // Lowering of global reads and writes, and the string escape that would be a
 // real bug if it were a hex one.
 //
-// The write cannot fail (no status, no exception edge, no safepoint), so it
-// is a single call. The read can: an unresolvable name throws ReferenceError
+// An assignment can fail on an uninitialized lexical binding, so its raw
+// store is followed by a status check. An unresolvable read throws ReferenceError
 // (ECMA-262 GetValue), so it is a status test with an out-slot. A `typeof` of
 // a source identifier uses ct_aot_global_get_soft, which yields undefined
 // instead. Both go through context::global_or_named, the code
@@ -40,6 +40,7 @@ ctjs.func @globals(%receiver: !ctjs.value, %new_target: !ctjs.value,
   // `globalThis["odFd"] = 1`. The importer carries whatever the source
   // said, so the backend cannot assume otherwise.
   ctjs.store_global "od\01Fd", %v
+  ctjs.store_global "initialized", %v {ctjs.initialize}
   ctjs.frame_exit %ctx
   ctjs.return %g
 }
@@ -65,6 +66,7 @@ ctjs.func @globals(%receiver: !ctjs.value, %new_target: !ctjs.value,
 // range and does not compile at all.
 // does not compile at all.
 // CHECK: ctbrowser::aot::ct_aot_global_set({{v[0-9]+}}, "od\001Fd", 5, {{v[0-9]+}});
+// CHECK-NEXT: {{v[0-9]+}} = ctbrowser::aot::ct_aot_check({{v[0-9]+}});
 
 // No raw string is used here, by design. `R"(Math)"` says nothing `"Math"`
 // does not, with five more characters, and a raw string cannot carry the 0x01
@@ -72,4 +74,6 @@ ctjs.func @globals(%receiver: !ctjs.value, %new_target: !ctjs.value,
 // The raw form is used only where escaping is the noisy spelling: a name
 // containing a quote or a backslash. Both paths are checked by static_asserts
 // beside c_string_literal.
+// CHECK: ctbrowser::aot::ct_aot_global_init({{v[0-9]+}}, "initialized", 11, {{v[0-9]+}});
+// CHECK-NOT: ct_aot_check
 // CHECK-NOT: R"(

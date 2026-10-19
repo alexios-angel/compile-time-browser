@@ -10,19 +10,22 @@
 
 namespace ctbrowser::shell {
 
-void browser::report_script_error(std::string_view error, std::string_view specifier) {
+void browser::report_script_error(std::string_view error, std::string_view specifier,
+                                  script::value thrown) {
+    const script::context::rooted keep_thrown{*script_, thrown};
     // JavaScript listeners cannot enter while the VM's failure flag is set.
     // The caller keeps the diagnostic alive across error-listener callbacks.
     (void)script_->take_error();
-    (void)bindings_->dispatch_error(error, specifier);
+    (void)bindings_->dispatch_error_value(error, thrown, specifier);
 }
 
 bool browser::run_page_script(std::string_view source, std::string_view specifier) {
     if (!script_) { return false; }
-    const bool ok = run_script(source);
+    script::value thrown = script::value::undefined();
+    const bool ok = run_script_impl(source, &thrown);
     if (!ok) {
         const std::string error = script_error_;
-        report_script_error(error, specifier);
+        report_script_error(error, specifier, thrown);
     }
     return ok;
 }
@@ -263,30 +266,20 @@ void browser::run_scripts() {
         running.push_back(script.element);
         bindings_->set_current_script(script.element);
         script::run_result result;
-        if (!nested) {
+        value thrown = value::undefined();
+        if (!running_program.ok) {
+            result.ok = false;
+            result.error = running_program.error;
+            if (result.error.starts_with("parse error:")) {
+                thrown = script_->make_error("SyntaxError", result.error);
+            }
+        } else if (!nested) {
             result = script_->run(running_program);
+            if (!result.ok) { thrown = script_->last_thrown(); }
         } else {
-            for (const std::string & name : running_program.hoisted_vars) {
-                script_->declare_global_var(name, false);
-            }
-            auto * entry = script_->allocate<script::closure_object>(&running_program.functions[0]);
-            entry->owner = &running_program;
-            bool threw = false;
-            value thrown = value::undefined();
-            (void)script_->call_fenced(value::object(entry), {}, script_->global_this(), threw,
-                                       thrown);
-            result.ok = !threw && !script_->failed();
-            if (!result.ok) {
-                const script::context::rooted keep_thrown{*script_, thrown};
-                result.error =
-                    script_->failed()
-                        ? script_->take_error()
-                        : "uncaught " +
-                              (thrown.is_object()
-                                   ? script_->to_string(script_->lookup_property(thrown, "message"))
-                                   : script_->to_string(thrown));
-            }
+            result = script_->run_script_fenced(running_program, thrown);
         }
+        const script::context::rooted keep_thrown{*script_, thrown};
         // A script that navigated took the page with it. Every later script
         // belongs to a document that is being replaced, so the parser stops,
         // and the replacement happens in load_document after this returns.
@@ -313,7 +306,7 @@ void browser::run_scripts() {
             // window.onerror reading document.currentScript sees the script
             // that failed, even one that failed to parse (WPT
             // Document.currentScript.html asserts this by id).
-            report_script_error(result.error, script.specifier);
+            report_script_error(result.error, script.specifier, thrown);
         }
         running.pop_back();
         bindings_->set_current_script(running.empty() ? node_id{} : running.back());

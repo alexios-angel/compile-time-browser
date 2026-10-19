@@ -48,9 +48,11 @@ public:
     /// An assignment to a global name: op::set_global, and the AOT helper
     /// ct_aot_global_set, which is this with `strict` false. One store, so the
     /// interpreter and compiled code cannot disagree about where a global's
-    /// value went (see the definition). A strict store to a read-only global
-    /// throws.
+    /// value went (see the definition). An uninitialized lexical throws in
+    /// either mode; a strict store to a read-only global throws too.
     void assign_global(realm_record & realm, const std::string & name, value v, bool strict);
+    /// InitializeBinding after a global lexical declaration's initializer completes.
+    void initialize_global(realm_record & realm, const std::string & name, value v);
     /// Defines a platform name (an interface object, a namespace, an alias of
     /// one): { writable, !enumerable, configurable } (realm_record::builtin).
     void define_builtin_global(std::string name, value v);
@@ -212,6 +214,9 @@ public:
     };
 
     run_result run(const program & prog);
+    /// Runs a nested classic script with its own exception boundary, including
+    /// declaration instantiation, without resetting the caller's live frames.
+    run_result run_script_fenced(const program & prog, value & thrown);
 
     void instantiate_module(const program & prog, module_record & into);
     /// The namespace object for a module, live and cached. See the definition.
