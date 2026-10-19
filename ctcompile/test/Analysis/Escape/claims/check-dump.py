@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compares the escape fixture's dump with its snapshot and tests the dump itself.
 
-usage: check-dump.py CHECKER DUMP EXPECTED_DIR
+usage: check-dump.py CHECKER DUMP EXPECTED_DIR RECORDING
 
 First the dump that CHECKER (tools/check/escape-oracle.py) wrote for the fixture
 must equal the concatenated EXPECTED_DIR/*.txt parts, ignoring blank and `#`
@@ -23,7 +23,9 @@ def rows(text):
     return [line + "\n" for line in text.splitlines() if line and not line.startswith("#")]
 
 
-checker, dump, expected = map(Path, sys.argv[1:])
+checker, dump, expected, source_recording = map(Path, sys.argv[1:])
+with source_recording.open() as source:
+    census = next(line.rstrip() for line in source if line.startswith("opcodes "))
 want, got = (
     rows("".join(p.read_text() for p in sorted(expected.glob("*.txt")))),
     rows(dump.read_text()),
@@ -35,8 +37,8 @@ if want != got:
 # A hand-written recording independent of the fixture: one observed literal, one
 # implicit Error (site 2, which has no claim), and two literals that never run.
 # Reordering its rows must not change the dump; losing any row must.
-recording = """ctbrowser-type-recording 2
-opcodes 95 writers 69
+recording = f"""ctbrowser-type-recording 2
+{census}
 defs recorded 0 dropped 0 orphan-frames 0
 escape budget unlimited pops 1 unwinds 0 checks 1 unframed 0 unresolved 0
 programs 1

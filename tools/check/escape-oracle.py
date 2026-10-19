@@ -58,17 +58,34 @@ A real analysis passes its claims in a file instead:
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
+
+# The recorder derives its opcode and writer counts from this same table.
+# Compare each recording against the source tree, not another hand-kept count.
+OPCODE_DEFINITIONS = (
+    Path(__file__).resolve().parents[2] / "ctbrowser/include/ctbrowser/script/bytecode_opcodes.def"
+)
+
+
+def opcode_census(path):
+    """Read the recorder's CT_OPCODE rows and their writes_a classification."""
+    text = re.sub(r"/\*.*?\*/|//[^\n]*", "", Path(path).read_text(), flags=re.DOTALL)
+    rows = re.findall(
+        r"^\s*CT_OPCODE\(\s*(\w+)\s*,\s*(\w+)\s*,\s*\w+\s*,\s*\w+\s*,\s*([01])\s*,",
+        text,
+        re.MULTILINE,
+    )
+    if not rows or len(rows) != len(re.findall(r"^\s*CT_OPCODE\(", text, re.MULTILINE)):
+        raise SystemExit(f"{path}: unsupported opcode definitions")
+    if any(kind != "reg" and writer == "1" for _, kind, writer in rows):
+        raise SystemExit(f"{path}: an opcode writer does not name a register")
+    return len(rows), sum(writer == "1" for _, _, writer in rows)
+
 
 # --- the vocabulary, which must match type_record.hpp ------------------------
-#
-# Duplicated on purpose and asserted on, not shared: a checker that reads its
-# definitions out of the thing it is checking cannot fail for the one reason
-# that matters.  The recording's header carries the opcode and writer counts so
-# a drift shows up as a mismatch rather than as a quietly different answer.
-OPCODES = 95
-WRITERS = 69
 
 KINDS = ["obj", "arr", "fn", "cell"]
 
@@ -182,7 +199,7 @@ def parse_pc(text: str) -> int:
     return PROLOGUE if text == "prologue" else int(text)
 
 
-def read_recording(path: str) -> Recording:
+def read_recording(path: str, definitions=OPCODE_DEFINITIONS) -> Recording:
     """Parse a version-2 type recording, checking that every count adds up."""
     rec = Recording()
     program = None
@@ -294,14 +311,13 @@ def read_recording(path: str) -> Recording:
                 function.sites[(site.pc, site.kind)] = site
             else:
                 raise SystemExit(f"{path}: unknown line `{tag}`")
-    # The header's opcode and writer counts must match OPCODES/WRITERS; a
-    # difference means the interpreter's tables changed and this file is stale.
     if not saw_escape_header:
         raise SystemExit(f"{path}: no `escape` header line - not a version-2 recording")
-    if rec.opcodes != OPCODES or rec.writers != WRITERS:
+    opcodes, writers = opcode_census(definitions)
+    if (rec.opcodes, rec.writers) != (opcodes, writers):
         raise SystemExit(
             f"{path}: header says opcodes {rec.opcodes} writers {rec.writers}; "
-            f"this checker knows {OPCODES}/{WRITERS} - re-derive both"
+            f"opcode definitions say {opcodes}/{writers}"
         )
     total_unresolved = 0
     for prog in rec.programs.values():
