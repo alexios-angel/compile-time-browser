@@ -455,19 +455,6 @@ std::string collect(plan & out, closedValueFlow & graph,
     return {};
 }
 
-/// Whether --ctjs-resolve-globals found that the program never binds global
-/// `name`: its ctjs.globals row has host_binding (no store, no write through
-/// the global object, no dynamic global write can reach it).
-bool realmBinding(mlir::ModuleOp module, llvm::StringRef name) {
-    auto rows = module->getAttrOfType<mlir::ArrayAttr>("ctjs.globals");
-    if (!rows) { return false; }
-    for (auto row : rows.getAsRange<mlir::DictionaryAttr>()) {
-        auto bound = row.getAs<mlir::StringAttr>("name");
-        if (bound && bound.getValue() == name) { return row.contains(ctjs::kGlobalsHostBinding); }
-    }
-    return false;
-}
-
 /// Why a Map method may not run the realm's own Map.prototype method, judged
 /// without asking what the rest of the module does, or none. It is the rule
 /// arrayIterationUnproved (Lowering/ForOf.cpp) uses for Array:
@@ -493,7 +480,7 @@ std::optional<std::string> mapRealmUnproved(mlir::ModuleOp module) {
     if (!module->hasAttr("ctjs.globals")) {
         return "no ctjs.globals table proves the realm's `Map`";
     }
-    if (!realmBinding(module, "Map")) { return "`Map` may be rebound"; }
+    if (!ctjs::realmBinding(module, "Map")) { return "`Map` may be rebound"; }
     if (auto reads = module->getAttrOfType<mlir::ArrayAttr>("ctjs.global_map_reads");
         reads && !reads.empty()) {
         return "a read off the global object may yield `Map`";
@@ -821,7 +808,7 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals,
             const llvm::StringRef name = load.getName();
             if (!proved || name == "Map" || (hostTyped && hostTyped(load)) ||
                 (!stored.contains(name) &&
-                 (realmBinding(module, name) || name.starts_with("__ctbrowser_")))) {
+                 (ctjs::realmBinding(module, name) || name.starts_with("__ctbrowser_")))) {
                 return;
             }
             if (globals && globals->proved()) {
