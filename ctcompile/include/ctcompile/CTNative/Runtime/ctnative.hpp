@@ -682,13 +682,7 @@ js_boolean_t visit_equality_operand(const T & value, F && visitor) {
         }
         std::terminate();
     } else if constexpr (primitive_union<T>) {
-        switch (value.tag) {
-        case union_kind::undefined: return visit_equality_operand(undefined_t{}, visitor);
-        case union_kind::null: return visit_equality_operand(js_null_t{}, visitor);
-        case union_kind::scalar: return visit_equality_operand(value.scalar, visitor);
-        case union_kind::string: return visit_equality_operand(value.text, visitor);
-        }
-        std::terminate();
+        return visit_carrier(value, std::ref(visitor), std::ref(visitor));
     } else {
         return visitor(nullable_scalar{value});
     }
