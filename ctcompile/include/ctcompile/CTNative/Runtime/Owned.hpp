@@ -80,19 +80,13 @@ template <class T> void own(replaceable<T> * field, T instance) {
 }
 
 /// `owner.field = null`. The instance stays alive until its owner is gone.
-template <class T> void disown(owned<T> * field) {
-    field->state = owned_state::null;
-}
-template <class T> void disown(replaceable<T> * field) {
+template <class Field> void disown(Field * field) {
     field->state = owned_state::null;
 }
 
 /// `owner.field` as a condition (ECMA-262 7.1.2 ToBoolean): true exactly when
 /// the field holds the instance, since undefined and null are false.
-template <class T> bool held(const owned<T> * field) {
-    return field->state == owned_state::instance;
-}
-template <class T> bool held(const replaceable<T> * field) {
+template <class Field> bool held(const Field * field) {
     return field->state == owned_state::instance;
 }
 

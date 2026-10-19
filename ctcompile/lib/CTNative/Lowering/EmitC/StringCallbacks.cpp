@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Emitter.h"
+#include "ctcompile/Support/CppLiterals.hpp"
 
 #include "llvm/ADT/SetVector.h"
 
@@ -40,16 +41,6 @@ void includeRegExpHeader(mlir::ModuleOp module) {
     ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(kRegExpHeader), mlir::UnitAttr{});
 }
 
-/// `text` as a C++ string literal. The pattern is ASCII (admission refuses
-/// any other), so only the quote and the backslash need escaping.
-std::string quoted(llvm::StringRef text) {
-    std::string out = "\"";
-    for (char ch : text) {
-        if (ch == '"' || ch == '\\') { out.push_back('\\'); }
-        out.push_back(ch);
-    }
-    return out + "\"";
-}
 /// `ctnative::RegExp("pattern", "flags")` for the literal a replace call
 /// `o` consumed, whose source its kPattern and kFlags keep.
 mlir::Value regExp(mlir::OpBuilder & b, mlir::Location where, mlir::Operation * o) {
@@ -57,10 +48,14 @@ mlir::Value regExp(mlir::OpBuilder & b, mlir::Location where, mlir::Operation * 
     const llvm::StringRef pattern = o->getAttrOfType<mlir::StringAttr>(kPattern).getValue();
     const llvm::StringRef flags = o->getAttrOfType<mlir::StringAttr>(kFlags).getValue();
     const auto text = ec::PointerType::get(ec::OpaqueType::get(context, "const char"));
-    return callValue(b, where, ec::OpaqueType::get(context, "ctnative::reg_exp"),
-                     "ctnative::RegExp",
-                     mlir::ValueRange{ec::LiteralOp::create(b, where, text, quoted(pattern)),
-                                      ec::LiteralOp::create(b, where, text, quoted(flags))});
+    return callValue(
+        b, where, ec::OpaqueType::get(context, "ctnative::reg_exp"), "ctnative::RegExp",
+        mlir::ValueRange{ec::LiteralOp::create(b, where, text,
+                                               cpp::c_string_literal(std::string_view(
+                                                   pattern.data(), pattern.size()))),
+                         ec::LiteralOp::create(
+                             b, where, text,
+                             cpp::c_string_literal(std::string_view(flags.data(), flags.size())))});
 }
 } // namespace
 

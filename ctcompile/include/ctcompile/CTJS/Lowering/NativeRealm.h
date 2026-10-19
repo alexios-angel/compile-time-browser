@@ -10,6 +10,8 @@
 
 #pragma once
 
+#include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "llvm/ADT/StringRef.h"
 
 namespace ctcompile::ctjs {
@@ -48,6 +50,22 @@ namespace ctcompile::ctjs {
 /// a read of that name is the realm's own binding. Code that relies on that
 /// matches this field, never the row's human-readable `reason`.
 inline constexpr llvm::StringLiteral kGlobalsHostBinding = "host_binding";
+
+/// Whether the first row naming `name` carries kGlobalsHostBinding. Missing
+/// tables and names are unproved, and later duplicate rows cannot override it.
+inline bool realmBinding(mlir::ArrayAttr rows, llvm::StringRef name) {
+    if (!rows) { return false; }
+    for (auto row : rows.getAsRange<mlir::DictionaryAttr>()) {
+        auto bound = row.getAs<mlir::StringAttr>("name");
+        if (bound && bound.getValue() == name) { return row.contains(kGlobalsHostBinding); }
+    }
+    return false;
+}
+
+/// Whether the module's ctjs.globals table proves `name` a realm binding.
+inline bool realmBinding(mlir::ModuleOp module, llvm::StringRef name) {
+    return realmBinding(module->getAttrOfType<mlir::ArrayAttr>("ctjs.globals"), name);
+}
 
 /// Set by --ctjs-resolve-globals on a read of a property of the global object
 /// (`window.jQuery`) whose name is absent by every rule of its fold except

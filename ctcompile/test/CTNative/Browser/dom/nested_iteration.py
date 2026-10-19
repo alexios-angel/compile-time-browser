@@ -219,12 +219,17 @@ def main(argv=None):
         raise RuntimeError("Bootstrap R.find source pin changed")
     compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
-    refusals = executions = 0
+
     # INTRINSICS[4:] are the VM's iterator-protocol helpers; a native lowering
-    # must not call any of them.
-    for kind in ("direct", "explicit", "default"):
+    # must not call any of them. Each kind x (owned, optimize) builds and runs
+    # its own binaries and writes only files named after itself, so they run
+    # side by side (dom.parallel).
+    def check_kind(row):
+        (kind,) = row
         ir, contract = dom.prepare(args, kind, source(kind), 2, entry_name="nestedElements")
         contract.update(current_document_parameter=0, initial_intrinsics=INTRINSICS)
+        cases = []
+        refusals = 0
         for owned, optimize, manifest in dom.variants(contract):
             name = f"nested-iteration-{kind}-{owned}-{optimize}"
             native = dom.lower(args, ir, manifest, name, optimize=optimize)
@@ -236,8 +241,7 @@ def main(argv=None):
             client = (
                 CURRENT_DOCUMENT_CHECKS + CHECKS + INPUT_CHECKS + (OWNED_CHECKS if owned else "")
             ).replace("@DEFAULT@", "true" if kind == "default" else "false")
-            dom.standalone(args, native, name, client, compilers, includes, libraries)
-            executions += 2 * len(compilers)
+            cases.append((name, native, client, manifest, optimize))
             controls = [("budget", manifest, 0)]
             for intrinsic in INTRINSICS[4:] + ["Array", "Element"]:
                 controls.append(
@@ -261,6 +265,18 @@ def main(argv=None):
                     success=False,
                 )
                 refusals += 1
+        return cases, refusals
+
+    kind_results = dom.parallel(check_kind, [(kind,) for kind in ("direct", "explicit", "default")])
+    all_cases = [case for cases, _ in kind_results for case in cases]
+    refusals = sum(count for _, count in kind_results)
+
+    def build(case):
+        name, native, client, _, _ = case
+        dom.standalone(args, native, name, client, compilers, includes, libraries)
+
+    dom.parallel(build, all_cases)
+    executions = 2 * len(compilers) * len(all_cases)
     ir, manifest = dom.prepare(
         args,
         "previous-nested-open",
@@ -324,7 +340,8 @@ def main(argv=None):
         "for (const node of R.find('*',group.closest('.missing'))) node.matches('*'); "
         "return 0; }\n"
     )
-    for name, text in bad_sources.items():
+    def refuse(item):
+        name, text = item
         if name == "escaping-inner-member":
             # A return out of both loops must close both iterators, which the
             # importer emits as one guard plus a suppression handler per
@@ -336,12 +353,13 @@ def main(argv=None):
             imported = dom.run([args.translate, "--ctbrowser-js-to-ctjs", str(js), "-o", str(raw)])
             if "is not compiled: more than one protected region" not in imported.stderr:
                 raise RuntimeError(f"{name}: the nested return was not refused at import")
-            refusals += 1
-            continue
+            return 1
         ir, manifest = dom.prepare(args, name, text, 2, entry_name="bad")
         manifest.update(current_document_parameter=0, initial_intrinsics=INTRINSICS)
         dom.refuse(args, ir, manifest, f"refused-{name}")
-        refusals += 2  # dom.refuse lowers with and without optimization.
+        return 2  # dom.refuse lowers with and without optimization.
+
+    refusals += sum(dom.parallel(refuse, bad_sources.items()))
     print(
         f"Nested element for-of: {executions} native executions, 2 previous-source lowering checks, "
         f"{refusals} refusals; DOM/Core/Style only"

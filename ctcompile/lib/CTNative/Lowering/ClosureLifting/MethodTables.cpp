@@ -84,16 +84,10 @@ void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) 
                 // The only concrete producer. Two calls create distinct
                 // instances; sharing a schema does not make them the same.
             } else if (auto arg = llvm::dyn_cast<mlir::BlockArgument>(value)) {
-                auto fn = llvm::dyn_cast<ctjs::FuncOp>(arg.getOwner()->getParentOp());
-                if (!closedValueFlow::closed(fn) || arg.getOwner() != &fn.getBody().front() ||
-                    arg.getArgNumber() < 3 || flow.callers[fn].empty()) {
+                if (!flow.closedParameter(arg)) {
                     reject("parameter requires a closed function with visible callers");
-                } else {
-                    for (ctjs::CallDirectOp call : flow.callers[fn]) {
-                        if (call->getNumOperands() != fn.getBody().front().getNumArguments()) {
-                            reject("parameter has a missing or surplus argument");
-                        }
-                    }
+                } else if (!flow.exactCallers(arg)) {
+                    reject("parameter has a missing or surplus argument");
                 }
             } else if (auto call = value.getDefiningOp<ctjs::CallDirectOp>()) {
                 auto fn = call.getTarget();

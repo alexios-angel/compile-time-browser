@@ -14,7 +14,7 @@ from pathlib import Path
 import re
 
 from CTNative.Exports.boundary import FUNCTION, NATIVE, REFUSAL
-from CTNative.harness import CLEANUP, FLAGS, find_compilers, run
+from CTNative.harness import CLEANUP, FLAGS, find_compilers, run, run_parallel
 
 # Node driver: runs the fixture in a fresh context and prints its global `a`.
 NODE = """const fs = require('fs'), vm = require('vm');
@@ -125,10 +125,15 @@ def main():
         parser.add_argument("--" + name, type=Path, required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
-    refusals = 0
     observations = SCALARS if args.scalars else OBSERVATIONS
-    checked = 0
-    for name, expected in observations.items():
+
+    def check(item):
+        """Run one fixture's observations and native/refusal checks.
+
+        Each fixture writes only files named after itself, so they run side by
+        side (run_parallel).
+        """
+        name, expected = item
         source = args.fixtures / f"{name}.js"
         throws = name == "arrow-constructor"
         node = run([args.node, "-e", NODE, str(source)], success=not throws)
@@ -144,12 +149,11 @@ def main():
                 f"{name}: interpreter observation changed\n{reference.stdout}{reference.stderr}"
             )
         if (args.scalars and name != "primitives") or name == "inherited-call":
-            checked += check_native(args, source, name, expected)
-            continue
+            return (check_native(args, source, name, expected), 0)
         # prototype-written lowers to native code; prototype-scalars.mlir checks
         # that, so there is no refusal to check here.
         if name == "prototype-written":
-            continue
+            return (0, 0)
         raw = args.work / f"{name}.raw.mlir"
         imported = run([args.translate, "--ctbrowser-js-to-ctjs", str(source), "-o", str(raw)])
         text = raw.read_text()
@@ -158,6 +162,7 @@ def main():
         functions = len(FUNCTION.findall(text))
         if name == "mutable-class-helper":
             check_mutable_helper(text)
+        refusals = 0
         for optimize in (False, True):
             result = run(
                 [
@@ -187,6 +192,11 @@ def main():
             ):
                 raise RuntimeError("the constructor proof lost its unconditional arrow refusal")
             refusals += 1
+        return (0, refusals)
+
+    results = run_parallel(observations.items(), check)
+    checked = sum(c for c, _ in results)
+    refusals = sum(r for _, r in results)
     print(
         f"constructor controls: {len(observations)} source observations, {checked} native executions, {refusals} refusals"
     )

@@ -34,10 +34,9 @@ llvm::StringRef bindingTimeName(BindingTime time);
 /// exact execution.
 class BindingTimeAnalysis {
 public:
-    explicit BindingTimeAnalysis(mlir::ModuleOp module);
-    /// Like the one-argument constructor, but with a caller-supplied step that
-    /// prepares the heap facts (the default uses NativeMap). That step must
-    /// rederive its facts from the IR, never trust input annotations.
+    /// Prepares heap facts with the caller's callback, then computes binding
+    /// times. The callback must rederive its facts from the IR, never trust
+    /// input annotations.
     BindingTimeAnalysis(mlir::ModuleOp module,
                         llvm::function_ref<void(mlir::ModuleOp)> prepareHeapFacts);
     ~BindingTimeAnalysis();

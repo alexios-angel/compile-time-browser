@@ -1,0 +1,2 @@
+# The host-contract unit checks normalize multi-arm exit tags as Numbers 1 and 2.
+# RUN: %build/ctcompile/test/ctcompile-test-host-contract

@@ -1,0 +1,14 @@
+# JSON.stringify must reject a call in another block before ordering its writes.
+# RUN: split-file %s %t
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/conditional.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s
+
+# CHECK: ctjs.func private @conditional$1
+# CHECK-SAME: ctnative.not_native = "JSON.stringify of an object literal: the call is not in the literal's own block"
+
+#--- conditional.js
+function conditional(c) {
+    const o = {x: 1};
+    if (c) return JSON.stringify(o);
+    return "";
+}
+var result = conditional(true);

@@ -50,6 +50,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/SymbolTable.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cmath>
@@ -110,10 +111,7 @@ bool couldBeBigInt(mlir::Type type) {
     if (llvm::isa<BoolType, NumType, StrType, StrViewType, BottomType>(type)) { return false; }
     if (auto opt = llvm::dyn_cast<OptType>(type)) { return couldBeBigInt(opt.getElementType()); }
     if (auto variant = llvm::dyn_cast<VariantType>(type)) {
-        for (mlir::Type alternative : variant.getAlternatives()) {
-            if (couldBeBigInt(alternative)) { return true; }
-        }
-        return false;
+        return llvm::any_of(variant.getAlternatives(), couldBeBigInt);
     }
     // Boxed, json and every container type. A container cannot be a BigInt, but
     // no rule in this file produces a container operand here, so no case is
@@ -154,10 +152,9 @@ bool isProvedNumeric(const TypeLattice * operand) {
 }
 
 bool noneAreBigInt(llvm::ArrayRef<const TypeLattice *> operands) {
-    for (const TypeLattice * operand : operands) {
-        if (couldBeBigInt(operand->getValue().getType())) { return false; }
-    }
-    return true;
+    return llvm::none_of(operands, [](const TypeLattice * operand) {
+        return couldBeBigInt(operand->getValue().getType());
+    });
 }
 
 /// The type of a literal. This is the only place an i32 comes from without a
@@ -184,10 +181,6 @@ mlir::Type typeOfConstant(mlir::MLIRContext * c, mlir::Attribute value) {
     return {};
 }
 
-mlir::Type typeOfConstant(ctjs::ConstantOp constant) {
-    return typeOfConstant(constant.getContext(), constant.getValue());
-}
-
 } // namespace
 
 /// The result type an operation has whatever its operands are, or a null Type
@@ -210,7 +203,9 @@ mlir::Type staticResultType(mlir::Operation * op) {
         tag && llvm::isa<ctjs::ConstantOp>(op)) {
         return ClassTagType::get(c, tag.getValue());
     }
-    if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(op)) { return typeOfConstant(constant); }
+    if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(op)) {
+        return typeOfConstant(c, constant.getValue());
+    }
 
     // Every comparison is a boolean, including the relational ones on BigInts:
     // `1n < 2` is a perfectly good comparison and its answer is still a bool.
@@ -758,32 +753,18 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         }
     }
 
-    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
-        read && domEntry_ && domEntry_->isSymbolDescription(read)) {
-        return answer(OptType::get(c, stringType(c)));
-    }
-
-    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
-        read && domEntry_ && !domEntry_->wellKnownSymbol(read).empty()) {
-        return answer(SymbolType::get(c));
-    }
-
-    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
-        read && domEntry_ &&
-        (domEntry_->isElementVectorIndex(read) || domEntry_->isDocumentElement(read))) {
-        return answer(DOMElementType::get(c));
-    }
-
-    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
-        read && domEntry_ &&
-        (domEntry_->isStringVectorIndex(read) || domEntry_->datasetValueElement(read))) {
-        return answer(stringType(c));
-    }
-
-    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
-        read && domEntry_ &&
-        (domEntry_->isStringVectorLength(read) || domEntry_->isElementVectorLength(read))) {
-        return answer(doubleType(c));
+    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op); read && domEntry_) {
+        if (domEntry_->isSymbolDescription(read)) { return answer(OptType::get(c, stringType(c))); }
+        if (!domEntry_->wellKnownSymbol(read).empty()) { return answer(SymbolType::get(c)); }
+        if (domEntry_->isElementVectorIndex(read) || domEntry_->isDocumentElement(read)) {
+            return answer(DOMElementType::get(c));
+        }
+        if (domEntry_->isStringVectorIndex(read) || domEntry_->datasetValueElement(read)) {
+            return answer(stringType(c));
+        }
+        if (domEntry_->isStringVectorLength(read) || domEntry_->isElementVectorLength(read)) {
+            return answer(doubleType(c));
+        }
     }
 
     if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(op);

@@ -29,7 +29,7 @@ namespace console_detail {
 inline void append(std::string & line, const js_string & value) {
     line += value.value();
 }
-template <class T> void append(std::string & line, js_basic_num<T> value) {
+inline void append(std::string & line, js_num value) {
     line += ctbrowser::number_to_string(static_cast<double>(value.value()));
 }
 template <class T>

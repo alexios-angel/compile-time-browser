@@ -108,22 +108,6 @@ constexpr TypeInference::BuiltinStatic builtinStatics[] = {
      Result::tableValues},
 };
 
-/// Whether --ctjs-resolve-globals found that this program never binds
-/// `name`, so a read of it is the realm's own value: its `ctjs.globals` row
-/// carries kGlobalsHostBinding, which it sets only when no store, no write
-/// through the global object and no dynamic global write can reach the name
-/// (ResolveGlobals.cpp, bound_closure and clause 5).
-bool realmBinding(mlir::Operation * op, llvm::StringRef name) {
-    auto module = op->getParentOfType<mlir::ModuleOp>();
-    auto rows = module ? module->getAttrOfType<mlir::ArrayAttr>("ctjs.globals") : nullptr;
-    if (!rows) { return false; }
-    for (auto row : rows.getAsRange<mlir::DictionaryAttr>()) {
-        auto bound = row.getAs<mlir::StringAttr>("name");
-        if (bound && bound.getValue() == name) { return row.contains(ctjs::kGlobalsHostBinding); }
-    }
-    return false;
-}
-
 } // namespace
 
 const TypeInference::BuiltinStatic * TypeInference::builtinStaticOf(mlir::Operation * op) {
@@ -135,7 +119,8 @@ const TypeInference::BuiltinStatic * TypeInference::builtinStaticOf(mlir::Operat
         for (const BuiltinStatic & row : builtinStatics) {
             if (row.member.empty() && callee.getName() == row.global && count >= row.required &&
                 count <= row.arity) {
-                return realmBinding(call, row.global) ? &row : nullptr;
+                auto module = call->getParentOfType<mlir::ModuleOp>();
+                return module && ctjs::realmBinding(module, row.global) ? &row : nullptr;
             }
         }
         return nullptr;
@@ -162,7 +147,8 @@ const TypeInference::BuiltinStatic * TypeInference::builtinStaticOf(mlir::Operat
     for (const BuiltinStatic & row : builtinStatics) {
         if (row.prototype == prototype && global.getName() == row.global && member == row.member &&
             count >= row.required && count <= row.arity) {
-            return realmBinding(call, row.global) ? &row : nullptr;
+            auto module = call->getParentOfType<mlir::ModuleOp>();
+            return module && ctjs::realmBinding(module, row.global) ? &row : nullptr;
         }
     }
     return nullptr;

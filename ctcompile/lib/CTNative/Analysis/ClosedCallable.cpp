@@ -246,11 +246,6 @@ bool usesEnvironment(ctjs::FuncOp function) {
     return found;
 }
 
-// Whether `made` creates the function at `index`; a negative index names none.
-static bool createsFunction(ctjs::CreateClosureOp made, unsigned index) {
-    return made.getFunction() >= 0 && static_cast<unsigned>(made.getFunction()) == index;
-}
-
 bool hasAlternateCalleeCalls(ctjs::FuncOp function, mlir::ModuleOp module) {
     const auto index = functionIndex(function);
     if (!index) { return false; }
@@ -262,7 +257,7 @@ bool hasAlternateCalleeCalls(ctjs::FuncOp function, mlir::ModuleOp module) {
     };
     bool found = false;
     module.walk([&](ctjs::CreateClosureOp made) {
-        if (found || !createsFunction(made, *index)) { return; }
+        if (found || ctjs::closureFunction(made) != index) { return; }
         found |= alternate(made.getResult());
         for (mlir::Operation * user : made.getResult().getUsers()) {
             auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(user);
@@ -321,7 +316,7 @@ std::string closedCallableProblem(ctjs::FuncOp function, mlir::ModuleOp module) 
     if (!index) { return {}; } // No closure index can name this symbol.
     std::string reason;
     module.walk([&](ctjs::CreateClosureOp made) {
-        if (!reason.empty() || !createsFunction(made, *index)) { return; }
+        if (!reason.empty() || ctjs::closureFunction(made) != index) { return; }
         for (mlir::OpOperand & use : made.getResult().getUses()) {
             if (llvm::isa<ctjs::RootOp>(use.getOwner()) || directCalleeUse(use, function)) {
                 continue;
