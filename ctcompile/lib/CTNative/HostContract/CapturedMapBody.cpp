@@ -138,8 +138,8 @@ std::optional<size_fact> Walk::sizeFacts(const CapturedMapState & state) {
     if (!owner.step()) { return std::nullopt; }
     if (state.currentSize) { return size_fact{*state.currentSize, state.currentSize}; }
     llvm::SmallVector<mlir::Value> distinct;
-    for (const auto & entry :
-         llvm::ArrayRef<entry_fact>(state.entries).take_front(kMaxPrimitiveMapSizeCandidates)) {
+    for (const auto & entry : llvm::ArrayRef<CapturedMapEntry>(state.entries)
+                                  .take_front(kMaxPrimitiveMapSizeCandidates)) {
         if (!owner.step()) { return std::nullopt; }
         if (!entry.present) { continue; }
         bool disjoint = true;

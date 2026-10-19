@@ -95,7 +95,6 @@ struct Walk {
     ctjs::FrameEnterOp frame;
     llvm::DenseSet<mlir::Operation *> frameUses;
     bool frameExited = false;
-    using entry_fact = CapturedMapEntry;
 
     Walk(analyzer & owner, ctjs::FuncOp function, bool prepared, bool primitiveContents,
          const HostMethodParameters & parameters, HostCapturedMap & result,
