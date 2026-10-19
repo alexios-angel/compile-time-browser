@@ -70,7 +70,7 @@ using text_body = std::function<value(context &, const string_object &, std::spa
 /// has to be: `''.concat({toString: String.prototype.toString})` would
 /// otherwise recurse.
 ///
-/// A String wrapper (`Object("ab")`, see detail::wrap_primitive) carries its
+/// A String wrapper (`Object("ab")`, see context::wrap_primitive) carries its
 /// [[StringData]] in the primitive slot; String.prototype itself has the empty
 /// String for one by 22.1.3. That is exactly the reasoning
 /// `detail::this_number_value` uses to make `Number.prototype.toString()`

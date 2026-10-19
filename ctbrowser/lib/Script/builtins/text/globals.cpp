@@ -394,7 +394,7 @@ struct cloner {
         // wrapper is the error a symbol is.
         if (const value * slot = primitive_slot(v)) {
             if (slot->is_kind(heap_kind::symbol)) { return fail("a Symbol object"); }
-            return remember(v, detail::box_primitive(c, *slot));
+            return remember(v, c.box_primitive(*slot));
         }
         if (const value * ms = source->find(date_value_key)) { // [[DateValue]]
             const value args[1] = {*ms};

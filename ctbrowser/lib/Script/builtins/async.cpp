@@ -888,8 +888,8 @@ void install_promise(context & cx) {
                     if (c.throw_pending()) { return value::undefined(); }
                 }
                 // 22.1.1.1 step 3: a call converts, `new` wraps - the same String
-                // exotic object `Object("ab")` builds, see detail::wrap_primitive.
-                return constructing ? detail::wrap_primitive(c, self, made) : made;
+                // exotic object `Object("ab")` builds, see context::wrap_primitive.
+                return constructing ? c.wrap_primitive(self, made) : made;
             });
         // detail::method, not `set`: ECMA-262 clause 17 makes built-in methods
         // non-enumerable ({writable: true, enumerable: false, configurable:

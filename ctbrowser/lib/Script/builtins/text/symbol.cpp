@@ -26,7 +26,7 @@ void install_symbol(context & cx) {
 
     object_object * symbol_proto = new_table(cx);
     // thisSymbolValue (20.4.3): the symbol, or a wrapper's (`Object(sym)`,
-    // detail::wrap_primitive); anything else is a TypeError.
+    // context::wrap_primitive); anything else is a TypeError.
     const auto this_symbol = [](context & c, const char * method) {
         value self = c.current_this();
         if (value * slot = primitive_slot(self); slot != nullptr) { self = *slot; }
@@ -170,7 +170,7 @@ void install_symbol(context & cx) {
     // BigInt converts a primitive; Object(bigint) creates its wrapper.
     object_object * bigint_proto = new_table(cx);
     // thisBigIntValue (21.2.3): the BigInt, or a wrapper's (`Object(1n)`,
-    // detail::wrap_primitive); anything else is a TypeError.
+    // context::wrap_primitive); anything else is a TypeError.
     const auto this_bigint = [](context & c, const char * method) {
         value self = c.current_this();
         if (value * slot = primitive_slot(self); slot != nullptr) { self = *slot; }

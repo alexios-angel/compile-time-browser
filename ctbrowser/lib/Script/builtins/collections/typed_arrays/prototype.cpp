@@ -136,7 +136,7 @@ value typed_array_set_method(context & c, std::span<value> a) {
         for (std::size_t i = 0; i < n; ++i) { typed_array_put(c, target, at + i, held[i]); }
         return value::undefined();
     }
-    const value src = detail::box_primitive(c, source);
+    const value src = c.box_primitive(source);
     if (src.is_nullish()) {
         c.throw_error("TypeError", "TypedArray.prototype.set: source is null or undefined");
         return value::undefined();

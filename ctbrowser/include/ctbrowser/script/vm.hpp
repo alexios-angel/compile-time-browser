@@ -42,8 +42,16 @@ public:
 
     [[nodiscard]] value make_array();
 
+    /// Turns the fresh object `self` into the wrapper of `primitive`: an ordinary
+    /// object on the prototype its kind names, with the primitive in the
+    /// private-keyed slot `primitive_slot_key` (value.hpp says why a private key is
+    /// an internal slot here). `typeof` says "object", `==` and arithmetic reach the
+    /// primitive through valueOf, and Number.prototype's, Boolean.prototype's and
+    /// String.prototype's own methods read the slot. A prototype `self` already has
+    /// (a subclass instance) is kept.
     [[nodiscard]] value wrap_primitive(value self, value primitive);
-    /// Boxes a primitive; objects and nullish values pass through unchanged.
+    /// ToObject of a primitive. An object passes through; null and undefined are
+    /// returned unchanged for the caller to refuse.
     [[nodiscard]] value box_primitive(value v);
 
     [[nodiscard]] value iter_result(value v, bool done);
