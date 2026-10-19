@@ -689,7 +689,10 @@ def build_native(ctx, name):
         cpp, binaries = ctx.artifacts[item]["cpp"], []
         for compiler in compilers:
             binary = cpp.with_suffix("." + Path(compiler).name)
-            code, output = ctx.run([compiler, *flags, cpp, "-o", binary, *link], name, item)
+            command = cpp_harness.native_link_command(
+                [compiler, *flags, cpp, "-o", binary, *link], ctx.build
+            )
+            code, output = ctx.run(command, name, item)
             if code:
                 ctx.add(name, item, "FAIL", f"{Path(compiler).name} rejects the C++", tail(output))
                 return
