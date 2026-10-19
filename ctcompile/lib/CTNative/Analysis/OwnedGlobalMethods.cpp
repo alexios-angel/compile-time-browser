@@ -120,33 +120,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             write->getParentOfType<ctjs::FuncOp>() != factory ||
             write.getObject() != table.getResult() ||
             edge.capturedMap.has_value() != capture.has_value() ||
-            (capture && (edge.capturedMap->intrinsic != capture->intrinsic ||
-                         edge.capturedMap->allocation != capture->allocation ||
-                         edge.capturedMap->cell != capture->cell ||
-                         edge.capturedMap->initialization != capture->initialization ||
-                         edge.capturedMap->closures != capture->closures ||
-                         edge.capturedMap->parameters != capture->parameters ||
-                         edge.capturedMap->upvalues != capture->upvalues ||
-                         edge.capturedMap->reads != capture->reads ||
-                         edge.capturedMap->calls != capture->calls ||
-                         edge.capturedMap->snapshotOperations != capture->snapshotOperations ||
-                         edge.capturedMap->scalarCallbacks != capture->scalarCallbacks ||
-                         edge.capturedMap->returnedLeaves != capture->returnedLeaves ||
-                         edge.capturedMap->returnedScalars != capture->returnedScalars ||
-                         edge.capturedMap->outerKeyParameters != capture->outerKeyParameters ||
-                         edge.capturedMap->outerKeyObjects != capture->outerKeyObjects ||
-                         edge.capturedMap->outerKeyInputs != capture->outerKeyInputs ||
-                         edge.capturedMap->childMaps != capture->childMaps ||
-                         edge.capturedMap->childMapContents != capture->childMapContents ||
-                         !(edge.capturedMap->childScalarContents == capture->childScalarContents) ||
-                         edge.capturedMap->childLeafContents != capture->childLeafContents ||
-                         edge.capturedMap->outerStringKeys != capture->outerStringKeys ||
-                         edge.capturedMap->childStringKeys != capture->childStringKeys ||
-                         edge.capturedMap->childEntries != capture->childEntries ||
-                         edge.capturedMap->returnedChildMaps != capture->returnedChildMaps ||
-                         edge.capturedMap->leafObjects != capture->leafObjects ||
-                         edge.capturedMap->leafWrites != capture->leafWrites ||
-                         edge.capturedMap->leafReads != capture->leafReads)) ||
+            (capture && static_cast<const HostCapturedMapFamily &>(*edge.capturedMap) !=
+                            static_cast<const HostCapturedMapFamily &>(*capture)) ||
             edge.call->getParentOfType<ctjs::FuncOp>() != entry) {
             reject("owned global method table has another environment or invocation context");
             return;
