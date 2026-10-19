@@ -51,6 +51,57 @@ def test_removed_opcode_rejects_recording():
             raise AssertionError("a recording from a different opcode census was accepted")
 
 
+def check_added_opcode(row):
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        definitions = root / "opcodes.def"
+        count, writers = oracle.opcode_census(DEFINITIONS)
+        definitions.write_text(DEFINITIONS.read_text() + "\n" + row + "\n")
+        assert oracle.opcode_census(definitions) == (count + 1, writers + 1)
+        path = root / "recording.txt"
+        recording(path, count, writers)
+        try:
+            oracle.read_recording(str(path), definitions)
+        except SystemExit as error:
+            assert "opcode definitions" in str(error)
+        else:
+            raise AssertionError("a newly added opcode did not invalidate the stale recording")
+
+
+def test_spaced_opcode_rejects_stale_recording():
+    check_added_opcode(
+        'CT_OPCODE (review_probe, reg, unused, unused, 1, 0, 0, 0, 0, 0, 1, "inline")'
+    )
+
+
+def test_multiline_opcode_rejects_stale_recording():
+    check_added_opcode(
+        'CT_OPCODE\n (review_probe,\n reg, unused, unused,\n 1, 0, 0, 0, 0, 0, 1, "inline")'
+    )
+
+
+def test_commented_opcode_does_not_count():
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "opcodes.def"
+        text = DEFINITIONS.read_text()
+        row = 'CT_OPCODE (review_probe, reg, unused, unused, 1, 0, 0, 0, 0, 0, 1, "inline")'
+        path.write_text(text + f"\n/* {row} */\n// {row}\n")
+        assert oracle.opcode_census(path) == oracle.opcode_census(DEFINITIONS)
+
+
+def test_macro_arguments_keep_nested_commas_and_strings():
+    check_added_opcode(
+        "CT_OPCODE /* separate tokens */ (review_probe, reg, nested(a, b), unused, "
+        '1, 0, 0, 0, 0, 0, 1, "comma, paren) and /* not a comment */")'
+    )
+
+
+def test_line_splice_before_macro_arguments():
+    check_added_opcode(
+        'CT_OPCODE\\\n (review_probe, reg, unused, unused, 1, 0, 0, 0, 0, 0, 1, "inline")'
+    )
+
+
 def test_writer_classification():
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "opcodes.def"

@@ -71,18 +71,45 @@ OPCODE_DEFINITIONS = (
 
 
 def opcode_census(path):
-    """Read the recorder's CT_OPCODE rows and their writes_a classification."""
-    text = re.sub(r"/\*.*?\*/|//[^\n]*", "", Path(path).read_text(), flags=re.DOTALL)
-    rows = re.findall(
-        r"^\s*CT_OPCODE\(\s*(\w+)\s*,\s*(\w+)\s*,\s*\w+\s*,\s*\w+\s*,\s*([01])\s*,",
-        text,
-        re.MULTILINE,
+    """Read CT_OPCODE invocations, splitting arguments at top-level commas."""
+    text = Path(path).read_text().replace("\\\n", "")
+    tokens = iter(
+        token
+        for token in re.findall(
+            r"""/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[A-Za-z_]\w*|[^\s]""",
+            text,
+            re.DOTALL,
+        )
+        if not token.startswith(("/*", "//"))
     )
-    if not rows or len(rows) != len(re.findall(r"^\s*CT_OPCODE\(", text, re.MULTILINE)):
-        raise SystemExit(f"{path}: unsupported opcode definitions")
-    if any(kind != "reg" and writer == "1" for _, kind, writer in rows):
-        raise SystemExit(f"{path}: an opcode writer does not name a register")
-    return len(rows), sum(writer == "1" for _, _, writer in rows)
+    count = writers = 0
+    for token in tokens:
+        if token != "CT_OPCODE":
+            continue
+        if next(tokens, None) != "(":
+            raise SystemExit(f"{path}: unsupported opcode definitions")
+        arguments = [[]]
+        depth = 0
+        for token in tokens:
+            if token == ")" and depth == 0:
+                break
+            if token == "," and depth == 0:
+                arguments.append([])
+                continue
+            depth += (token == "(") - (token == ")")
+            arguments[-1].append(token)
+        else:
+            raise SystemExit(f"{path}: unterminated opcode definition")
+        if len(arguments) < 5 or arguments[4] not in (["0"], ["1"]):
+            raise SystemExit(f"{path}: unsupported opcode definitions")
+        writer = arguments[4] == ["1"]
+        if writer and arguments[1] != ["reg"]:
+            raise SystemExit(f"{path}: an opcode writer does not name a register")
+        count += 1
+        writers += writer
+    if not count:
+        raise SystemExit(f"{path}: no opcode definitions")
+    return count, writers
 
 
 # --- the vocabulary, which must match type_record.hpp ------------------------
