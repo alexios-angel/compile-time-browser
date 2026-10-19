@@ -10,9 +10,8 @@ in order through lit_lines.run, every line under bash, as lit runs them.
 
 from pathlib import Path
 
-import pytest
-
 import lit_lines
+import pytest
 
 HERE = Path(__file__).resolve().parent
 MAINS = {}
@@ -36,6 +35,8 @@ CASES = {
         "split-file %s %t",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/source.js 2>/dev/null | ctjs-opt | FileCheck %s",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/refused.js 2>/dev/null | ctjs-opt | FileCheck %s --check-prefix=REFUSED",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/pending.js 2>/dev/null | ctjs-opt | FileCheck %s --check-prefix=PENDING",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/pending.js 2>/dev/null | ctjs-opt --ctjs-lower-to-emitc | mlir-translate --mlir-to-cpp --declare-variables-at-top | FileCheck %s --check-prefix=PENDINGCPP",
     ],
     "hoisted-vars": [
         "split-file %s %t",

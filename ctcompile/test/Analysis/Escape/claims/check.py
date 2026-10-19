@@ -401,7 +401,7 @@ def main(argv=None):
         check_pins(args.corpus)
         dumped = run(
             [sys.executable, str(HERE / "check-dump.py"), args.script, str(dump)]
-            + [str(HERE / "expected")]
+            + [str(HERE / "expected"), str(rec)]
         )
         print(dumped.stdout + dumped.stderr)
         if dumped.returncode != 0:

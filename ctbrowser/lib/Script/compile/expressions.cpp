@@ -732,7 +732,11 @@ void compiler_impl::emit_store(const reference & ref, std::uint16_t src) {
         return;
     }
     emit_ready_check(ref.ready_flag);
-    if (refuse_immutable_write(ref.readonly)) { return; }
+    if (refuse_immutable_write(ref.readonly, ref.what == reference::kind::global
+                                                 ? std::string_view{proto().names[ref.name]}
+                                                 : std::string_view{})) {
+        return;
+    }
     switch (ref.what) {
     case reference::kind::local: proto().emit(instruction{op::move, ref.reg, src}); break;
     case reference::kind::boxed_local: proto().emit(instruction{op::cell_set, ref.reg, src}); break;

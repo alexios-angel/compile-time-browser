@@ -626,7 +626,8 @@ public:
     [[nodiscard]] std::pair<std::size_t, std::size_t> binding_position(std::string_view name);
     /// Emits the TypeError when the binding refuses the write in this code;
     /// returns true when the write must not be emitted at all.
-    [[nodiscard]] bool refuse_immutable_write(immutability readonly);
+    [[nodiscard]] bool refuse_immutable_write(immutability readonly,
+                                              std::string_view global_name = {});
     /// `const`, `using` and `await using` declare immutable bindings.
     [[nodiscard]] static immutability declared_immutability(const vp::node & decl);
     /// A class's own name inside its body is a binding of its own, immutable

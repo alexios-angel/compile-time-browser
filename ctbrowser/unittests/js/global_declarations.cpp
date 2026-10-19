@@ -125,6 +125,59 @@ int main() {
           "a Script's function may return new.target");
     check(compiler::compile("return 1;").ok, "an embedder's program may return");
 
+    // ECMA-262 9.1.1.1: a declaration creates a binding before evaluation,
+    // but only reaching its InitializeBinding takes it out of the TDZ.
+    for (const std::string_view declaration :
+         {"let pending = 1;", "const pending = 1;", "class pending {}"}) {
+        const std::string stranded = "throw 0; " + std::string{declaration};
+        expect({stranded, "typeof pending;"}, "ReferenceError");
+        expect({stranded, "pending = 9;"}, "ReferenceError");
+        expect({stranded, "try { pending = 9; } catch (e) {}", "typeof pending;"},
+               "ReferenceError");
+        expect({"globalThis.pending = 42;", stranded, "typeof pending;"}, "ReferenceError");
+        expect({"globalThis.pending = 42;", stranded, "pending;"}, "ReferenceError");
+        expect({"globalThis.pending = 42;", stranded,
+                "if (globalThis.pending !== 42) { throw 'object property changed'; }"},
+               "ok");
+        for (const std::string_view next :
+             {"let pending;", "const pending = 2;", "class pending {}", "var pending;",
+              "function pending() {}"}) {
+            expect({stranded, next}, refused);
+        }
+    }
+    for (const std::string_view body : {"pending = 9;", "with ({}) { pending = 9; }",
+                                        "for (pending of [9]) {}", "[pending] = [9];"}) {
+        const std::string writer = "function writePending() { " + std::string{body} + " } ";
+        expect({writer + "throw 0; const pending = 1;", "writePending();"}, "ReferenceError");
+        expect({writer + "const pending = 1;", "writePending();"}, "TypeError");
+        expect({writer + "throw 0; const pending = 1;", "try { writePending(); } catch(e) {}",
+                "typeof pending;"},
+               "ReferenceError");
+    }
+    expect({"let pending = (function () { throw 0; })();", "typeof pending;"}, "ReferenceError");
+    expect({"const pending = (function () { throw 0; })();", "typeof pending;"}, "ReferenceError");
+    expect({"class pending { static { throw 0; } }", "typeof pending;"}, "ReferenceError");
+    expect({"class Ready { static self = Ready; } if (Ready.self !== Ready) { throw 0; }"}, "ok");
+    expect({"let ready; throw 0;", "if (typeof ready !== 'undefined' || ready !== undefined)"
+                                   " { throw 1; } ready = 2; if (ready !== 2) { throw 2; }"},
+           "ok");
+    expect({"let a = 1; const b = 2; class C {} throw 0;",
+            "if (a !== 1 || b !== 2 || typeof C !== 'function') { throw 1; }"},
+           "ok");
+    expect({"if (typeof neverDeclared !== 'undefined') { throw 0; }"}, "ok");
+    expect({"neverDeclared;"}, "ReferenceError");
+    expect({"let {first, pending = (function () { throw 0; })()} = {first: 3};",
+            "if (first !== 3) { throw 1; } typeof pending;"},
+           "ReferenceError");
+    expect({"let {first, second} = {first: 3, second: 4};",
+            "if (first !== 3 || second !== 4) { throw 1; }"},
+           "ok");
+    expect({"globalThis.pending = 42; let pending = 1;",
+            "if (globalThis.pending !== 42 || pending !== 1) { throw 1; }"
+            "globalThis.pending = 43; if (pending !== 1) { throw 2; }"
+            "delete globalThis.pending; if (pending !== 1) { throw 3; }"},
+           "ok");
+
     // ct_aot_global_set stores as op::set_global does (context::assign_global):
     // into a data property the global object owns, not over a read-only one,
     // and into the table otherwise.

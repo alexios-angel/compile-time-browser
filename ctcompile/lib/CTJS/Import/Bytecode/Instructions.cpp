@@ -227,10 +227,14 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
             set(in.a, load);
         }
         break;
+    case op::init_global:
     case op::set_global:
         if (const std::string * name = state.name_at(at, in.code, in.bx())) {
             auto store =
                 ctjs::StoreGlobalOp::create(into, where, into.getStringAttr(*name), reg(in.a));
+            if (in.code == op::init_global) {
+                store->setAttr("ctjs.initialize", into.getUnitAttr());
+            }
             if (!ctjs::engineHelperVMName(*name).empty()) {
                 store->setAttr(ctjs::kEngineReservedUse, into.getUnitAttr());
             }

@@ -267,6 +267,7 @@ static_assert(std::size(opcode_operands) == opcode_count,
         const instruction & in = proto.code[at];
         const bool through = in.a < holds[at].size() && holds[at][in.a];
         switch (in.code) {
+        case op::init_global:
         case op::set_global: {
             const std::string * name = name_at(in.bx());
             if (name == nullptr) {

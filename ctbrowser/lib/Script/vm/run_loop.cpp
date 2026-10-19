@@ -216,6 +216,13 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                 reg(in.a) = global_or_named(vm_proto->names[in.bx()], true);
                 break;
             }
+            const auto & lexical = vm_frame->realm->lexical;
+            if (const auto binding = lexical.find(vm_proto->names[in.bx()]);
+                binding != lexical.end() && !binding->second) [[unlikely]] {
+                reg(in.a) = global_or_named(vm_proto->names[in.bx()],
+                                           in.code == op::get_global_typeof);
+                break;
+            }
             const auto it = globals.find(vm_proto->names[in.bx()]);
             if (it != globals.end()) {
                 reg(in.a) = it->second;
@@ -229,6 +236,13 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         VM_CASE(set_global) do {
             assign_global(*vm_frame->realm, vm_proto->names[in.bx()], reg(in.a),
                           vm_proto->is_strict);
+            break;
+        }
+        while (0);
+        VM_NEXT;
+
+        VM_CASE(init_global) do {
+            initialize_global(*vm_frame->realm, vm_proto->names[in.bx()], reg(in.a));
             break;
         }
         while (0);

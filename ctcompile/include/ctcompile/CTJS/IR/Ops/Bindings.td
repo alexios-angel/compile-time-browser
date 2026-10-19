@@ -44,6 +44,10 @@ def CTJS_LoadGlobalOp : CTJS_RuntimeOp<"load_global", "ct_aot_global_get", CTJS_
 
 def CTJS_StoreGlobalOp : CTJS_RuntimeOp<"store_global", "ct_aot_global_set", CTJS_GenericEffects> {
   let summary = "Write a global binding by name";
+  let description = [{
+    The discardable ctjs.initialize unit attribute identifies InitializeBinding
+    of a global lexical declaration, not an ordinary assignment (PutValue).
+  }];
   // Escape effect: SINK(stored_global). VM_CASE(set_global) in
   // lib/Script/vm/run_loop.cpp writes globals_, the first root the collector
   // walks (each_root in vm.hpp, walked by vm/objects/gc.cpp).
