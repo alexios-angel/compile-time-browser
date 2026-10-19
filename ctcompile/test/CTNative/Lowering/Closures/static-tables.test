@@ -75,6 +75,17 @@
 # RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 # RUN:   | FileCheck %s --check-prefix=PASSED
 
+# An enumerated key retains embedded NUL bytes when converted to string_view.
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nul-keys.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/nul-keys.mlir
+# RUN: FileCheck %s --check-prefix=NULKEY --implicit-check-not=ctnative.not_native < %t/nul-keys.mlir
+# RUN: ctjs-opt %t/nul-keys.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/nul-keys.cpp
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/nul-keys.js | FileCheck %s --check-prefix=NULKEY-OUT
+# RUN: %native_reference %t/nul-keys.js | FileCheck %s --check-prefix=NULKEY-OUT
+# RUN: %gxx -O2 %t/nul-keys.cpp -o %t/nul-keys-gcc && %t/nul-keys-gcc | FileCheck %s --check-prefix=NULKEY-OUT
+# RUN: %clangxx -O2 %t/nul-keys.cpp -o %t/nul-keys-clang && %t/nul-keys-clang | FileCheck %s --check-prefix=NULKEY-OUT
+# NULKEY: ctnative::object_table<{{.*}}>::keys
+# NULKEY-OUT: r=411
+
 # TABLE: emitc.include <"ctcompile/CTNative/Runtime/StaticTable.hpp">
 # TABLE: emitc.global static @static_config : !emitc.opaque<"ctnative::static_table_ptr">
 # TABLE: literal "&static_config_table"
@@ -274,6 +285,19 @@ var r = (function () {
         out = out + k + "=" + v + ";";
     }
     return out;
+})();
+
+#--- nul-keys.js
+var r = (function () {
+    const types = {"a\0b": "x", c: "y"};
+    function make() {
+        return () => types;
+    }
+    const get = make();
+    let result = 0;
+    const keys = Object.keys(get());
+    keys.forEach(k => { result = result + k.length * 100 + (k === "a\0b" ? 10 : 1); });
+    return result;
 })();
 
 #--- entries-mixed.js

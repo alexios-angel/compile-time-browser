@@ -809,6 +809,13 @@ CASES = {
         '%node -e \'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);\' %t/dynamic.js | FileCheck %s --check-prefix=DYNAMICRUN',
         'ctjs-translate --ctbrowser-js-to-ctjs %t/guarded.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true    | FileCheck %s --check-prefix=GUARDED --implicit-check-not="holding an object literal"',
         "ctjs-translate --ctbrowser-js-to-ctjs %t/passed.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true    | FileCheck %s --check-prefix=PASSED",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/nul-keys.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/nul-keys.mlir",
+        "FileCheck %s --check-prefix=NULKEY --implicit-check-not=ctnative.not_native < %t/nul-keys.mlir",
+        "ctjs-opt %t/nul-keys.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/nul-keys.cpp",
+        '%node -e \'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);\' %t/nul-keys.js | FileCheck %s --check-prefix=NULKEY-OUT',
+        "%native_reference %t/nul-keys.js | FileCheck %s --check-prefix=NULKEY-OUT",
+        "%gxx -O2 %t/nul-keys.cpp -o %t/nul-keys-gcc && %t/nul-keys-gcc | FileCheck %s --check-prefix=NULKEY-OUT",
+        "%clangxx -O2 %t/nul-keys.cpp -o %t/nul-keys-clang && %t/nul-keys-clang | FileCheck %s --check-prefix=NULKEY-OUT",
         "r=5000",
     ],
     "Closures/table-parameters": [

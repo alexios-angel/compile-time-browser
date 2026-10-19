@@ -155,8 +155,9 @@ void lowering::censusStaticTables(llvm::ArrayRef<ctjs::FuncOp> accepted) {
         // property order: array indices ascending, then definition order.
         sortOwnKeyOrder(defined, [](const std::string & key) { return llvm::StringRef(key); });
         for (const std::string & key : defined) {
-            keys += (keys.empty() ? "" : ", ") +
-                    cpp::c_string_literal(std::string_view(key.data(), key.size()));
+            keys += keys.empty() ? "" : ", ";
+            keys += "std::string_view(" + cpp::c_string_literal(key) + ", " +
+                    std::to_string(key.size()) + ")";
             listed += (listed.empty() ? "" : ", ") + tableMember(key);
         }
         if (enumeratedTables.contains(name.getValue())) {
