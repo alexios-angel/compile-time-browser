@@ -286,17 +286,11 @@ bool analyzer::capturedMapParameters(
                         !dominance.dominates(actual, operation)) {
                         return false;
                     }
-                    // A provisional object-capable formal only. The completed
-                    // family must prove every input use is an outer Map key.
-                    const auto parameter = function.getBody().front().getArgument(
-                        formals + static_cast<unsigned>(tags.size()));
-                    if (!llvm::is_contained(objectKeys, parameter)) {
-                        objectKeys.push_back(parameter);
-                    }
-                    tags.push_back(categories);
-                    continue;
+                } else if (!checkLeaf(actual, operation, false)) {
+                    return false;
                 }
-                if (!checkLeaf(actual, operation, false)) { return false; }
+                // A provisional object-capable formal only. The completed
+                // family must prove every input use is an outer Map key.
                 const auto parameter = function.getBody().front().getArgument(
                     formals + static_cast<unsigned>(tags.size()));
                 if (!llvm::is_contained(objectKeys, parameter)) { objectKeys.push_back(parameter); }
