@@ -9,6 +9,8 @@
 
 #include "Proof.hpp"
 
+#include "llvm/ADT/StringExtras.h"
+
 namespace ctcompile::ctnative::dom_source_detail {
 namespace {
 /// Whether `op`'s enclosing operation orders it: an scf.if/while or ctjs.try
@@ -242,13 +244,10 @@ bool DOMSource::foldConstantReplacements(ctjs::FuncOp function) {
             continue;
         }
         auto pattern = expression.getValue();
-        const auto alphanumeric = [](char c) {
-            return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
-        };
         // ponytail: accepts only a five-character `[X-Y]` ASCII range with no
         // flags or `g`; broader patterns need a bounded RegExp evaluator.
         if (pattern.size() != 5 || pattern[0] != '[' || pattern[2] != '-' || pattern[4] != ']' ||
-            !alphanumeric(pattern[1]) || !alphanumeric(pattern[3]) || pattern[1] > pattern[3] ||
+            !llvm::isAlnum(pattern[1]) || !llvm::isAlnum(pattern[3]) || pattern[1] > pattern[3] ||
             (!flags.getValue().empty() && flags.getValue() != "g")) {
             continue;
         }
