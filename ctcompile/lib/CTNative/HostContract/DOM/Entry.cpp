@@ -73,9 +73,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         (!intrinsicEntry && !contract.intrinsicParameters.empty()) ||
         (intrinsicEntry &&
          (contract.currentDocumentParameter || !contract.datasetParameters.empty() ||
-          !llvm::is_contained(contract.initialIntrinsics, "Symbol") ||
-          llvm::any_of(contract.initialIntrinsics,
-                       [](const auto & name) { return name != "Symbol" && name != "String"; }))) ||
+          !host_detail::symbolStringIntrinsics(contract.initialIntrinsics))) ||
         !contract.roots.empty() || !contract.observations.empty() ||
         !contract.absentBindings.empty() || !contract.undefinedBindings.empty() ||
         contract.initialIntrinsics.size() > supportedIntrinsics.size() ||
