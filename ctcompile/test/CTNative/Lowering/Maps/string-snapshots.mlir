@@ -15,17 +15,21 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-add.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=ADD --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boolean-keys.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=SNAPSHOT
 
-// NATIVE: emitc.func @diagnostic_1({{.*}}!emitc.opaque<"ctnative::js_string">{{.*}}) -> !emitc.opaque<"ctnative::js_string">
+// NATIVE-LABEL: emitc.func @diagnostic_1(
+// NATIVE-SAME: !emitc.opaque<"ctnative::js_string">{{.*}}) -> !emitc.opaque<"ctnative::js_string">
 // NATIVE: call_opaque "ctnative::map_keys"
 // NATIVE: !emitc.opaque<"std::vector<std::string>">
 // NATIVE: call_opaque "ctnative::vec_at"
 // NATIVE: !emitc.opaque<"ctnative::nullable_string">
-// NATIVE: call_opaque "ctnative::string_text"
-// NATIVE: emitc.func @stringFlags_{{[0-9]+}}({{.*}}) -> !emitc.opaque<"ctnative::js_num">
+// NATIVE: call_opaque "ctnative::format"{{.*}}!emitc.opaque<"ctnative::nullable_string">
+// NATIVE-LABEL: emitc.func @stringFlags_
+// NATIVE-SAME: {{[0-9]+}}({{.*}}) -> !emitc.opaque<"ctnative::js_num">
 // NATIVE-DAG: call_opaque "ctnative::primitive_strict_equal"
 // NATIVE-DAG: call_opaque "ctnative::loose_equals"
 // NATIVE-DAG: cast {{.*}} : !emitc.opaque<"ctnative::nullable_string"> to i1
 // NATIVE-DAG: call_opaque "ctnative::string_typeof"
+// NATIVE-LABEL: emitc.func @decorated_
+// NATIVE: call_opaque "ctnative::string_text"
 // ASSIGNED: ctjs.func private @probe$1
 // ASSIGNED-SAME: ctnative.not_native = "standard Array binding is assigned in this program"
 // REPLACED: ctjs.func private @probe$1
