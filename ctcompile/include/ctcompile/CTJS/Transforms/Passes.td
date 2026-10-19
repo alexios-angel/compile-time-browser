@@ -174,6 +174,49 @@ def CTJSResolveGlobals : Pass<"ctjs-resolve-globals", "mlir::ModuleOp"> {
   ];
 }
 
+def CTJSFoldDynamicCode : Pass<"ctjs-fold-dynamic-code", "mlir::ModuleOp"> {
+  let summary = "Compile the constant strings of new Function, indirect eval and string timers ahead of time";
+  let description = [{
+    A `new Function('a', 'b', 'return a + b')`, a `Function(...)` call, an
+    indirect `eval('1 + 2')` and a `setTimeout('tick()', 100)` whose every
+    argument is a ctjs.constant string carry their program at build time.
+    This pass compiles that program with the script front end, imports it
+    into the module and splices the site: a construct or Function call
+    becomes a ctjs.create_closure of the anonymous function, an eval call
+    becomes a call of the compiled script's entry closure, and a string
+    timer argument becomes the entry closure itself (the host calls it as
+    the task, with no argument). A SyntaxError in the string becomes a
+    closure whose body throws it, called at the site for new Function and
+    eval, or handed to the timer, where the host reports it as the task's
+    own error. Nothing here is a build failure.
+
+    The pass runs before --ctjs-resolve-globals, whose clause 5 resolves no
+    global at all while a load of `Function` or `eval` remains: the program
+    such a load compiles can store any name. Splicing the constant cases
+    removes those loads; whatever is left (a non-constant string, a name
+    the program rebinds) stays for clause 5 to refuse.
+
+    Candidate splices are built in a private module. Global resolution on
+    another throwaway clone proves that no alias, call, parameter, computed
+    store or object mutator can rebind the builtins. Refused bodies and the
+    newly imported source participate in that proof. Only the candidate's
+    splices, never the resolver's speculative rewrites, reach the real module.
+
+    Eval and timer source that declares bindings is left unchanged because
+    its declaration instantiation belongs at execution time, not page startup.
+    Any snippet the bytecode importer cannot import completely is also left
+    for the native tier's ordinary refusal.
+  }];
+  let statistics = [
+    Statistic<"spliced", "spliced-sites",
+              "new Function, Function, eval and string-timer sites spliced">
+  ];
+  let options = [
+    Option<"report", "report", "bool", /*default=*/"false",
+           "Emit the spliced-site count as a remark (statistics are compiled out in a release build)">
+  ];
+}
+
 def CTJSTestClosureValues : Pass<"ctjs-test-closure-values", "mlir::ModuleOp"> {
   let summary = "Test only: write the closures each call through a value may enter";
   let description = [{

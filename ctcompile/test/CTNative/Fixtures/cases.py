@@ -19,6 +19,15 @@ HERE = Path(__file__).resolve().parent
 MAINS = {}
 
 CASES = {
+    "Closures/constant-code": [
+        "%compilation_unit --module %{obj}/constant_code.pipeline.emitc.mlir --js %S/constant-code.js --work %t --name constant_code --core-build %build",
+        "%compile_clean --module %{obj}/constant_code.pipeline.emitc.mlir --work %t --name constant_code",
+        "python3 %{monorepo}/tools/check/native-claims.py --translate ctjs-translate --opt ctjs-opt --corpus %S/constant-code.js --name constant_code --min-claimed 8 --no-default-optimizations",
+        "%compilation_unit --module %{obj}/constant_code.pipeline.deduced.emitc.mlir --js %S/constant-code.js --work %t --name constant_code_deduced --core-build %build",
+        "not %compilation_unit --module %{obj}/constant_code.pipeline.emitc.mlir --js %S/constant-code.js --work %t --name constant_code_mutated --mutate nested --mutate-as number --core-build %build 2>&1 | FileCheck %s --check-prefix=MUTATED",
+        "%native_reference %S/constant-code.js | FileCheck %s --check-prefix=VALUES",
+        '%node -e \'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); for (const key of Object.keys(scope).sort()) if (typeof scope[key] === "number") console.log(key + "=" + scope[key]);\' %S/constant-code.js | FileCheck %s --check-prefix=VALUES',
+    ],
     "ControlFlow/functions.emitc": [
         "ctjs-translate --mlir-to-cpp %s | FileCheck %s --implicit-check-not=ctbrowser",
         "%compilation_unit --module %s --js %S/functions.js --work %t --name fixture",
