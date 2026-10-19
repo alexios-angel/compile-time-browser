@@ -33,6 +33,7 @@
 
 #include <ctbrowser/core/algorithms.hpp>
 
+#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -54,7 +55,6 @@
 #ifdef CTNATIVE_DOM
 #include <algorithm>
 #include <array>
-#include <charconv>
 #include <expected>
 #include <limits>
 #include <stdexcept>
@@ -1320,17 +1320,28 @@ auto invoke_session(const std::shared_ptr<Table> & table, Args... args) {
     return (table.get()->*Member)(std::move(args)...);
 }
 
+/// Whether `key` is an array index (ECMA-262 6.1.7): the canonical decimal
+/// spelling of an integer in [0, 2^32 - 2]. "01", "-0", "1e3" and
+/// "4294967295" are ordinary string keys.
+inline std::optional<std::uint32_t> array_index_of(std::string_view key) {
+    if (key.empty() || key.size() > 10 || (key.size() > 1 && key.front() == '0')) {
+        return std::nullopt;
+    }
+    std::uint64_t value = 0;
+    const auto [end, error] = std::from_chars(key.data(), key.data() + key.size(), value);
+    if (error != std::errc{} || end != key.data() + key.size() || value > 4294967294u) {
+        return std::nullopt;
+    }
+    return static_cast<std::uint32_t>(value);
+}
+
 #ifdef CTNATIVE_DOM
 // --- the DOM entry -----------------------------------------------------------
 
 /// The array index `key` names, or UINT32_MAX for an ordinary key. ECMAScript
 /// orders array-index keys before ordinary keys.
 inline std::uint32_t json_property_index(std::string_view key) {
-    constexpr auto ordinary = std::numeric_limits<std::uint32_t>::max();
-    if (key.empty() || (key.size() > 1 && key.front() == '0')) { return ordinary; }
-    std::uint32_t value = ordinary;
-    const auto [end, error] = std::from_chars(key.data(), key.data() + key.size(), value);
-    return error == std::errc{} && end == key.data() + key.size() ? value : ordinary;
+    return array_index_of(key).value_or(std::numeric_limits<std::uint32_t>::max());
 }
 
 /// Defines or overwrites an own data property of a JSON object, keeping
