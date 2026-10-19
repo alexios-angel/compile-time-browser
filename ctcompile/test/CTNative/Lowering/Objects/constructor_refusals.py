@@ -66,7 +66,7 @@ def check_native(args, source, name, expected):
                 str(raw),
                 "--ctjs-resolve-globals",
                 "--ctjs-lift-to-scf",
-                f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()}",
+                f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()} observe-globals=true",
                 "-o",
                 str(native),
             ]
@@ -165,7 +165,7 @@ def main():
                     str(raw),
                     "--ctjs-resolve-globals",
                     "--ctjs-lift-to-scf",
-                    f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()}",
+                    f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()} observe-globals=true",
                 ]
             )
             text = result.stdout

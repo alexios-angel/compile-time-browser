@@ -139,6 +139,10 @@ struct lowering {
     llvm::DenseSet<mlir::Operation *> scalarStores;
     llvm::StringSet<> observations;
     bool explicitObservations = false;
+    /// The test-only observe-globals option: main prints the observed globals
+    /// before it returns. Without it a program prints only what the
+    /// JavaScript prints.
+    bool observeGlobals = false;
     /// Storage plan for one owning global, committed after whole-function
     /// admission while the source operations still exist. A plan only says how
     /// to emit the storage; it is not a reusable ownership proof.

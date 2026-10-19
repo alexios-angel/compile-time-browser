@@ -90,7 +90,7 @@ def main():
             str(raw),
             "--ctjs-resolve-globals",
             "--ctjs-lift-to-scf",
-            "--ctnative-lower-to-emitc=optimize=true",
+            "--ctnative-lower-to-emitc=optimize=true observe-globals=true",
             "-o",
             str(native),
         ]
@@ -136,7 +136,7 @@ def main():
                     str(raw),
                     "--ctjs-resolve-globals",
                     "--ctjs-lift-to-scf",
-                    f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()}",
+                    f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()} observe-globals=true",
                     "-o",
                     str(native),
                 ]
@@ -266,7 +266,7 @@ def main():
                     str(raw),
                     "--ctjs-resolve-globals",
                     "--ctjs-lift-to-scf",
-                    f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()}",
+                    f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()} observe-globals=true",
                 ]
             )
             if "ctnative.not_native" not in result.stdout or "emitc.func" in result.stdout:

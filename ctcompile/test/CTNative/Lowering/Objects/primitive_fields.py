@@ -142,7 +142,7 @@ def main():
                     str(raw),
                     "--ctjs-resolve-globals",
                     "--ctjs-lift-to-scf",
-                    f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()}",
+                    f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()} observe-globals=true",
                 ]
             ).stdout
             assert "ctnative.not_native" in text and "emitc.func @main" not in text, name

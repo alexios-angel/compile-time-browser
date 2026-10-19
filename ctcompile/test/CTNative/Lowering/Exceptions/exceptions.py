@@ -132,7 +132,9 @@ CPP_HELPER_CALLS = {
 }
 IMPORT_REFUSALS = ("catch_finally", "nested_catch")
 IMPORT_REASON = "more than one protected region in a function"
-NATIVE_PIPELINE = f"builtin.module(ctnative-lower-to-emitc{{optimize=false}},{CLEANUP})"
+NATIVE_PIPELINE = (
+    f"builtin.module(ctnative-lower-to-emitc{{optimize=false observe-globals=true}},{CLEANUP})"
+)
 DEFAULT_NATIVE_PIPELINE = NATIVE_PIPELINE.replace("{optimize=false}", "")
 
 
@@ -295,7 +297,7 @@ def budget_controls(args, prepared):
             [
                 args.opt,
                 str(prepared),
-                f"--ctnative-lower-to-emitc=optimize=false exception-max-steps={limit}",
+                f"--ctnative-lower-to-emitc=optimize=false exception-max-steps={limit} observe-globals=true",
                 "--mlir-print-debuginfo",
                 "-o",
                 str(output),

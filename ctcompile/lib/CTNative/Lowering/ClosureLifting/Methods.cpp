@@ -1138,6 +1138,25 @@ void closureLifter::methodCensus() {
         for (mlir::Value read : registry.readBack) {
             behind[read].assign(registry.instances.begin(), registry.instances.end());
         }
+        // So does `this` in a method that takes no parameter and captures
+        // nothing: the proof runs every method only on an instance of its class,
+        // which no other class extends, and such a method lifts with no call
+        // (liftsOnRegistryReceiver), so `this.m()` in it resolves as `a.m()`
+        // does on an instance read back from the Map.
+        for (ctjs::FuncOp method : registry.methods) {
+            if (method.getBody().empty() || method.getUpvalueCount() != 0) { continue; }
+            mlir::Block & entry = method.getBody().front();
+            if (llvm::any_of(
+                    entry.getArguments().drop_front(ctjs::implicit_arguments),
+                    [](mlir::BlockArgument parameter) { return !parameter.use_empty(); })) {
+                continue;
+            }
+            llvm::SmallVector<mlir::Value, 2> & named =
+                behind[entry.getArgument(ctjs::arg_receiver)];
+            for (mlir::Value instance : registry.instances) {
+                if (!llvm::is_contained(named, instance)) { named.push_back(instance); }
+            }
+        }
     }
     // An arrow's `this` names what its maker's receiver names when the arrow
     // runs only during its maker's calls, or holds a registry instance
@@ -1338,8 +1357,11 @@ std::optional<std::string> closureLifter::whyNotLiftableMethod(ctjs::CreateClosu
     const bool copiedAway =
         calls == callsOfTarget.end() && copiedAwayMethods.contains(target.getOperation());
     // Condition 3. A method whose calls all call copies carries no receiver
-    // any more; each copy that keeps one was asked when it was made.
-    if (!copiedAway) {
+    // any more; each copy that keeps one was asked when it was made. A
+    // registry class's copy of its parent's constructor hands `this` to the
+    // Map as the constructor does, and the registry proof
+    // (Analysis/Instances.h) checked every use of it instead.
+    if (!copiedAway && !isIdentityConstructorCopy(target)) {
         if (const std::optional<std::string> leak = whyThisLeaks(target)) { return leak; }
     }
     if (calls == callsOfTarget.end()) {

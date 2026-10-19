@@ -854,7 +854,10 @@ class registryProof {
                 return refuse("the prototype of `" + name + "` reaches " + named(use.getOwner()));
             }
             methods.push_back(target);
-            if (superConstructorKey(key)) { constructors.push_back(target); }
+            if (superConstructorKey(key)) {
+                constructors.push_back(target);
+                out.constructorCopies.push_back(target);
+            }
             classCaptures = classCaptures || llvm::is_contained(map.captors, method);
             methodNames.insert(key);
         }
@@ -1709,6 +1712,7 @@ std::vector<InstanceRegistry> markInstanceRegistries(mlir::ModuleOp module) {
         op->removeAttr(kNativeInstanceMethod);
         op->removeAttr(kNativeInstanceKeyClass);
         op->removeAttr(kNativeHeldThis);
+        op->removeAttr(kNativeInstanceCtorCopy);
     });
     std::vector<InstanceRegistry> proved;
     for (InstanceRegistry & registry : proveInstanceRegistries(module)) {
@@ -1723,6 +1727,10 @@ std::vector<InstanceRegistry> markInstanceRegistries(mlir::ModuleOp module) {
         for (ctjs::FuncOp method : registry.methods) {
             method->setAttr(kNativeInstanceMethod,
                             registry.constructor->getAttr(kNativeInstanceClass));
+        }
+        for (ctjs::FuncOp copy : registry.constructorCopies) {
+            copy->setAttr(kNativeInstanceCtorCopy,
+                          registry.constructor->getAttr(kNativeInstanceClass));
         }
         for (const auto & [yield, index] : registry.falsyYields) {
             mlir::OpBuilder at(yield);
@@ -1755,6 +1763,10 @@ std::vector<InstanceRegistry> markInstanceRegistries(mlir::ModuleOp module) {
 
 bool isIdentityClass(ctjs::FuncOp fn) {
     return fn && fn->hasAttr(kNativeInstanceClass);
+}
+
+bool isIdentityConstructorCopy(ctjs::FuncOp fn) {
+    return fn && fn->hasAttr(kNativeInstanceCtorCopy);
 }
 
 namespace {

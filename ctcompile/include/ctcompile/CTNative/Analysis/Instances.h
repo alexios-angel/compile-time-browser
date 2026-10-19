@@ -56,6 +56,10 @@ struct InstanceRegistry {
     llvm::DenseSet<mlir::Value> nonNull;
     /// The class's prototype methods.
     llvm::SmallVector<ctjs::FuncOp> methods;
+    /// The per-class copies of parent constructors the prototype holds under
+    /// `super:` keys (ClosureLifting/ClassInheritance.cpp): they run on the
+    /// new instance and hand `this` to the Map as the constructor does.
+    llvm::SmallVector<ctjs::FuncOp> constructorCopies;
     /// The `new` results of the class.
     llvm::SmallVector<mlir::Value> instances;
     /// The values read back from the Map that may hold an instance: `get`
@@ -161,5 +165,16 @@ void rewriteInstanceRegistries(mlir::ModuleOp module);
 /// Map owns: its JavaScript constructor becomes a factory returning
 /// `std::shared_ptr<C>` instead of initialising a frame-local struct.
 bool isIdentityClass(ctjs::FuncOp fn);
+
+/// The mark markInstanceRegistries puts on a proved registry class's copy of
+/// its parent's constructor (`super:<P>:constructor`,
+/// ClosureLifting/ClassInheritance.cpp): it runs on the new instance and
+/// hands `this` to the Map as the constructor does, and the registry proof
+/// checked every use of that `this` with the constructor's. The mark is
+/// needed because the `super:` store the proof read is gone by admission.
+inline constexpr llvm::StringLiteral kNativeInstanceCtorCopy = "ctnative.instance_ctor_copy";
+
+/// Whether `fn` carries kNativeInstanceCtorCopy.
+bool isIdentityConstructorCopy(ctjs::FuncOp fn);
 
 } // namespace ctcompile::ctnative

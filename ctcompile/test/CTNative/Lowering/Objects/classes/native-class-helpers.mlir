@@ -9,7 +9,7 @@
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/helper.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/helper.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/helper.mlir
 // RUN: FileCheck %s --implicit-check-not=ctnative.not_native --implicit-check-not=ctnative.class_reason < %t/helper.mlir
 // RUN: ctjs-opt %t/helper.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/helper.cpp
 // RUN: FileCheck %s --check-prefix=CPP < %t/helper.cpp
@@ -27,7 +27,7 @@
 // global binding that still holds the original function, so it is refused
 // for that binding, not for the class.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/show.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/show.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/show.mlir
 // RUN: FileCheck %s --check-prefix=SHOW --implicit-check-not=ctnative.not_native --implicit-check-not=ctnative.class_reason < %t/show.mlir
 // RUN: ctjs-opt %t/show.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/show.cpp
 // RUN: %gxx -O2 %t/show.cpp -o %t/show-gcc
@@ -37,7 +37,7 @@
 // RUN: %native_reference %t/show.js | FileCheck %s --check-prefix=SHOW-RUN
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/show.js | FileCheck %s --check-prefix=SHOW-RUN
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/global.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=GLOBAL --implicit-check-not=ctnative.class_reason
 //
 // What the specialisation refuses: a helper that stores the class or compares
@@ -45,17 +45,17 @@
 // none). A helper that reaches its captures through its own closure is
 // copied, and called through a closure of the copy with the same captures.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/stores.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=STORES
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compares.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=COMPARES
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/captures.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=CAPTURES --implicit-check-not=ctnative.class_reason
 // RUN: %native_reference %t/captures.js | FileCheck %s --check-prefix=CAPTURES-RUN
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/new-target.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=NEWTARGET
 //
 // Bootstrap's defineJQueryPlugin, in small: the helper registers the class's
@@ -68,10 +68,10 @@
 // jQueryInterface is removed as unreachable. The same program writing
 // `window.jQuery` keeps the branch and is refused as before.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/jquery-plugin.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=PLUGIN --implicit-check-not=ctnative.class_reason
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/jquery-plugin-written.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=PLUGIN-WRITTEN --implicit-check-not=ctnative.absent_globals
 
 // CHECK: emitc.class @A
