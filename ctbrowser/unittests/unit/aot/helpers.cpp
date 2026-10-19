@@ -192,6 +192,33 @@ int main() {
         const auto still = ctbrowser::script::compiler::compile("typeof pending;");
         check(!cx.run(still).ok, "an AOT assignment does not initialize the stranded binding");
     }
+    // An uncaught TDZ error is described through its prototype, which can run
+    // page code even though assignment itself calls no accessor.
+    {
+        context cx;
+        ctbrowser::script::install_builtins(cx);
+        const auto first = ctbrowser::script::compiler::compile("throw 0; let pending = 1;");
+        check(!cx.run(first).ok, "the reentrant store fixture strands its lexical");
+        const auto setup = ctbrowser::script::compiler::compile(
+            "var described = 0; Object.defineProperty(ReferenceError.prototype, 'name',"
+            "{get: function() { described++; return 'ReferenceError'; }});");
+        check(cx.run(setup).ok, "the error prototype has an observable getter");
+        const auto * site =
+            reinterpret_cast<const ctbrowser::aot::ct_aot_site *>(&setup.functions[0]);
+        alignas(std::max_align_t) unsigned char storage[CT_AOT_FRAME_BYTES];
+        auto * frame =
+            ctbrowser::aot::ct_aot_enter(reinterpret_cast<ctbrowser::aot::ct_aot_ctx *>(&cx), site,
+                                         1u, value::undefined().bits(), storage);
+        check(frame != nullptr, "the uncaught TDZ store frame enters");
+        if (frame == nullptr) { return 1; }
+        ctbrowser::aot::ct_aot_global_set(frame, "pending", 7u, value::number(9).bits());
+        check(static_cast<ctbrowser::aot::ct_aot_status>(ctbrowser::aot::ct_aot_check(frame)) ==
+                  ctbrowser::aot::ct_aot_status::failed,
+              "an uncaught TDZ store fails the turn");
+        check(cx.global("described").is_number() && cx.global("described").as_number() == 1,
+              "describing the TDZ failure reenters the getter exactly once");
+        ctbrowser::aot::ct_aot_leave(frame);
+    }
     // Both Construct helpers must let a compiled handler catch a non-constructor
     // TypeError, including the global object's Proxy forwarding path.
     for (const bool spread : {false, true}) {

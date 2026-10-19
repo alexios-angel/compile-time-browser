@@ -145,7 +145,7 @@ CT_OPCODE(/* name */ get_global_typeof, /* a_kind */ reg, /* b_kind */ nidx, /* 
 /* a is the SOURCE, not a destination - writes_a is false. Indexes `names`.
  * The write bypasses any accessor a binding layer mirrors globals through. */
 CT_OPCODE(/* name */ set_global, /* a_kind */ reg, /* b_kind */ nidx, /* c_kind */ bx_hi, /* writes_a */ 0,
-          /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1,
+          /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 1, /* impl */ "vm.hpp:context::assign_global")
 
 /* InitializeBinding is not an assignment and alone leaves a lexical's TDZ. */

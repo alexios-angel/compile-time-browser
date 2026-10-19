@@ -584,12 +584,13 @@ CT_AOT_COVERS(/* helper */ ct_aot_global_get_soft, /* opcode */ get_global_typeo
  * DELEGATES TO: context::assign_global(realm, name, v, strict=false), the
  *   store VM_CASE(set_global) runs: the table's binding, else a data property
  *   the global object's target owns (read-only refused silently), else a new
- *   table entry. No accessor is called, so may_reenter stays 0.
+ *   table entry. The assignment calls no accessor, but describing an uncaught
+ *   ReferenceError can call the error prototype's name or message getter.
  * FAILURE: ReferenceError for an uninitialized lexical, even in sloppy code.
  * The raw void ABI requires ct_aot_check before executing the next operation. */
 CT_AOT_HELPER(/* name */ ct_aot_global_set, /* ret */ void,
               /* params */ (struct ct_aot_frame *fr, const char *name, uint32_t name_len, uint64_t v),
-              /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1)
+              /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1)
 CT_AOT_COVERS(/* helper */ ct_aot_global_set, /* opcode */ set_global)
 
 /* InitializeBinding after evaluation of a global lexical declaration.
