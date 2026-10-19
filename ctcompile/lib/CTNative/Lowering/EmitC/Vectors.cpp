@@ -494,7 +494,16 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
         return true;
     }
     if (llvm::StringRef field = kind; field.consume_front("rect:")) {
-        swap(callValue(b, where, numeric, "ctnative::rect_" + field, o->getOperand(0)));
+        mlir::Value rectangle = o->getOperand(0);
+        if (!llvm::isa<ec::LValueType>(rectangle.getType())) {
+            auto local = ec::VariableOp::create(b, where, ec::LValueType::get(rectangle.getType()),
+                                                ec::OpaqueAttr::get(context, ""));
+            ec::AssignOp::create(b, where, local, rectangle);
+            rectangle = local;
+        }
+        auto member =
+            ec::MemberOp::create(b, where, ec::LValueType::get(numeric), field, rectangle);
+        swap(ec::LoadOp::create(b, where, numeric, member));
         return true;
     }
     if (kind == "document_element") {

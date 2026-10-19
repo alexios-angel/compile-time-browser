@@ -76,20 +76,6 @@ struct js_dom_rect {
     js_num height;
 };
 
-/// A rect's fields by name, for generated code: `r.left` is rect_left(r).
-inline js_num rect_left(const js_dom_rect & r) {
-    return r.left;
-}
-inline js_num rect_top(const js_dom_rect & r) {
-    return r.top;
-}
-inline js_num rect_width(const js_dom_rect & r) {
-    return r.width;
-}
-inline js_num rect_height(const js_dom_rect & r) {
-    return r.height;
-}
-
 /// Element.getBoundingClientRect (CSSOM View §7).
 inline js_dom_rect getBoundingClientRect(const js_element_t & element) {
     const ctbrowser::rect r =
