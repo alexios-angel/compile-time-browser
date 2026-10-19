@@ -105,10 +105,10 @@ function outer(a) {
 //
 // The compiled body's argument 0 comes from ct_aot_this - which is
 // effective_this, the enclosing method's object when the frame's closure is an
-// arrow - rather than from the entry ABI's `receiver`. For every ordinary
-// function the two are equal, so nothing else in this file can tell them apart.
-// Here they differ: `seen()` is called with no receiver at all, so the raw one
-// is undefined and the captured one is whatever `methodish` was called on.
+// arrow - rather than from the entry ABI's raw `receiver`. The ordinary parent
+// first binds nullish receivers to its global object and boxes primitives.
+// `seen()` is called with no receiver at all, so its raw one is undefined and
+// its captured binding is the parent's effective `this`.
 function methodish(ignored) {
     var seen = () => this;
     return seen();
@@ -792,6 +792,13 @@ function drive(which) {
     // the arrow call itself has no receiver at all.
     if (which === 11) {
         OUT = methodish.call("captured", 0);
+    }
+    if (which === 43) {
+        OUT = methodish(0) === globalThis;
+    }
+    if (which === 44) {
+        var boxed = Reflect.apply(methodish, 5, [0]);
+        OUT = [typeof boxed, boxed instanceof Number, boxed.valueOf()].join();
     }
     // The Number arm, and -0 is the case a naive negation gets right by accident
     // while `Object.is` can still tell: 1/-0 is -Infinity.

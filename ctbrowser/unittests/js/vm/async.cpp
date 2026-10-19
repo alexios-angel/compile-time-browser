@@ -173,6 +173,49 @@ void test_generator_return_runs_finally() {
 // driven by an `__awaiter` helper, so `yield` there is what `await` became.
 // That helper's shape is the last case below.
 void test_generators() {
+    expect_result(
+        "'use strict'; const C = (function* () {}).constructor;"
+        "const f = C('return this'), s = C('\"use strict\"; return this');"
+        "return [f().next().value === globalThis, s().next().value === undefined].join();",
+        "true,true");
+    expect_result("const C = (function* () {}).constructor;"
+                  "return C('return () => this')().next().value() === globalThis;",
+                  "true");
+    expect_result("function* g() { const first = this; yield () => this; return first === this; }"
+                  "const it = Reflect.apply(g, 5, []), read = it.next().value;"
+                  "return [typeof read(), read() instanceof Number, it.next().value].join();",
+                  "object,true,true");
+    expect_after_turn("'use strict'; var result = ''; const C = (async function () {}).constructor;"
+                      "const f = C('await 0; return this'),"
+                      "s = C('\"use strict\"; await 0; return this');"
+                      "Promise.all([f(), s()]).then(v => {"
+                      "result = [v[0] === globalThis, v[1] === undefined].join(); });",
+                      "true,true");
+    expect_after_turn("var result = ''; const C = (async function () {}).constructor;"
+                      "C('await 0; return () => this')().then(f => {"
+                      "result = f() === globalThis; });",
+                      "true");
+    expect_after_turn("var result = ''; async function f() {"
+                      "const first = this; await 0; return [typeof this, first === this].join(); }"
+                      "Reflect.apply(f, 5, []).then(v => { result = v; });",
+                      "object,true");
+    expect_after_turn(
+        "'use strict'; var result = ''; const C = (async function* () {}).constructor;"
+        "const f = C('yield this'), s = C('\"use strict\"; yield this');"
+        "Promise.all([f().next(), s().next()]).then(v => {"
+        "result = [v[0].value === globalThis, v[1].value === undefined].join(); });",
+        "true,true");
+    expect_after_turn(
+        "var result = ''; const C = (async function* () {}).constructor;"
+        "C('yield () => this')().next().then(r => { result = r.value() === globalThis; });",
+        "true");
+    expect_after_turn("var result = ''; async function* g() {"
+                      "const first = this; yield () => this; await 0; return first === this; }"
+                      "const it = Reflect.apply(g, 5, []); it.next().then(r => {"
+                      "const read = r.value; return it.next().then(last => {"
+                      "result = [typeof read(), read() instanceof Number, last.value].join(); });"
+                      "});",
+                      "object,true,true");
     // 27.3 / 27.4 / 27.7: the three function-kind intrinsics. A `function*`'s
     // [[Prototype]] is %GeneratorFunction.prototype%, whose `prototype` is
     // %GeneratorPrototype%; the function's own `prototype` inherits that and

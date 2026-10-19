@@ -229,6 +229,7 @@ value context::invoke(value callable, std::span<const value> args, value this_va
     entered.new_target = pending_new_target_;
     pending_new_target_ = value::undefined();
     frames_.push_back(entered);
+    frames_.back().receiver = bind_this(target, *entered.realm, this_value);
     const value out = run_loop(depth);
     current_this_ = saved;
     // Only shrink back if nothing below is still using the space; a nested

@@ -631,6 +631,51 @@ void test_this() {
     expect_result("function f() { return this === globalThis; } return f.call(null);", "true");
     expect_result("function f() { 'use strict'; return this === undefined; } return f();", "true");
     expect_result("const f = () => this === globalThis; return f();", "true");
+    expect_result("function f() { return () => this; } return f()() === globalThis;", "true");
+    expect_result("function f() { return () => this; } return [0].map(f)[0]() === globalThis;",
+                  "true");
+    expect_result("function f() { 'use strict'; return () => this; }"
+                  "return f()() === undefined;",
+                  "true");
+    expect_result("class C { f() { return this; } } const f = C.prototype.f;"
+                  "return f() === undefined && f.call(5) === 5;",
+                  "true");
+    expect_result("function f() { return this; } const n = Reflect.apply(f, 5, []);"
+                  "return [typeof n, n instanceof Number, n.valueOf()].join();",
+                  "object,true,5");
+    expect_result("Number.prototype.receiverKind = function() { return typeof this; };"
+                  "return (5).receiverKind();",
+                  "object");
+    expect_result("function f() { return [this, () => this, this]; }"
+                  "const r = Reflect.apply(f, 5, []);"
+                  "return r[0] === r[1]() && r[0] === r[2];",
+                  "true");
+    expect_result("function f() { return this; } const bound = f.bind(5);"
+                  "return bound() === bound();",
+                  "false");
+    expect_result("function f(read = () => this) { return read(); }"
+                  "return f() === globalThis && Reflect.apply(f, 5, []) instanceof Number;",
+                  "true");
+    expect_result("function f() { return this; }"
+                  "return [5, true, 's', 1n, Symbol('s')].every(v => {"
+                  "const r = Reflect.apply(f, v, []); return typeof r === 'object' &&"
+                  "r.valueOf() === v; });",
+                  "true");
+    expect_result("const f = (function() { 'use strict'; return () => this; }).call(5);"
+                  "return f.call(null) === 5 && f.bind(null)() === 5;",
+                  "true");
+    expect_result("function f() { return this; } const object = new Number(5);"
+                  "return Reflect.apply(f, object, []) === object && f.bind(object)() === object;",
+                  "true");
+    expect_result("function f() { return this; } const p = new Proxy(f, {"
+                  "apply(target, receiver) { return receiver; }});"
+                  "return [p() === undefined, p.call(null) === null, p.apply(5, []) === 5,"
+                  "p.bind(5)() === 5, Reflect.apply(p, undefined, []) === undefined].join();",
+                  "true,true,true,true,true");
+    expect_result("function f() { return this; } const p = new Proxy(f, {});"
+                  "return [typeof p.call(5), p.call(5) instanceof Number,"
+                  "p.bind(5)() === p.bind(5)()].join();",
+                  "object,true,false");
 }
 
 // `new Function(body)` compiles at run time. It works because a closure
@@ -639,6 +684,20 @@ void test_this() {
 // another, and the context owns every program it compiles, so they outlive
 // the closures that point into them.
 void test_new_function() {
+    expect_result("return new Function('return this')() === globalThis;", "true");
+    expect_result("return Function('return this')() === globalThis;", "true");
+    expect_result("'use strict'; return new Function('return this')() === globalThis;", "true");
+    expect_result("const f = Function('return this'); return [f.call(null) === globalThis,"
+                  "f.call(undefined) === globalThis, typeof f.call(5),"
+                  "f.call(5) instanceof Number, f.call(5).valueOf()].join();",
+                  "true,true,object,true,5");
+    expect_result("const f = Function('\"use strict\"; return this');"
+                  "return [f() === undefined, f.call(null) === null,"
+                  "f.call(undefined) === undefined, f.call(5) === 5].join();",
+                  "true,true,true,true");
+    expect_result("return Function('return () => this')()() === globalThis;", "true");
+    expect_result("return Function('\"use strict\"; return () => this')()() === undefined;",
+                  "true");
     expect_result("return typeof new Function();", "function");
     expect_result("return new Function('return 41 + 1;')();", "42");
     expect_result("return new Function('a', 'return a * 2;')(21);", "42");

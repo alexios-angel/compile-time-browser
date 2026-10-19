@@ -525,6 +525,16 @@ int main() {
          "the EFFECTIVE receiver against the entry's raw one - `seen()` is called with no "
          "receiver, so the raw one is undefined",
          "captured"},
+        {43u,
+         "bare arrow this",
+         {{"methodish", 0u, &ctc_methodish}, {"", 0u, &ctc_fn}},
+         "a sloppy parent must bind its global receiver before its arrow captures it",
+         "true"},
+        {44u,
+         "boxed arrow this",
+         {{"methodish", 0u, &ctc_methodish}, {"", 0u, &ctc_fn}},
+         "Reflect.apply must box the sloppy parent's primitive before arrow capture",
+         "object,true,5"},
         // A closure built by compiled code and called from compiled code,
         // which no single-entry case can test. ct_aot_make_closure's row in
         // aot_helpers.def says this does not work; that note predates
