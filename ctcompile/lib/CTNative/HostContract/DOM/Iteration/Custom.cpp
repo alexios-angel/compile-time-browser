@@ -1410,7 +1410,6 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             ctjs::NumberAttr::get(candidate.getContext(),
                                   std::bit_cast<uint64_t>(static_cast<double>(index))));
         helper.closure.getResult().replaceAllUsesWith(tag);
-        helperIndices[tag] = static_cast<unsigned>(index);
         tagCallables[tag] = {static_cast<unsigned>(index)};
         tags.push_back(tag);
     }
