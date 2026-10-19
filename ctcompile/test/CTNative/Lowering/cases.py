@@ -1826,6 +1826,9 @@ CASES = {
         "ctjs-translate --ctbrowser-js-to-ctjs %t/prototype-write.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=REFUSED",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/accessor.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=REFUSED",
     ],
+    "Objects/for-of-shared-callee": [
+        'ctjs-opt %s --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --implicit-check-not=ctnative.not_native --implicit-check-not=__ctbrowser_iter --implicit-check-not=ctjs.func',
+    ],
     "Objects/for-of": [
         "split-file %s %t",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/emit.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EMIT --implicit-check-not=ctnative.not_native",

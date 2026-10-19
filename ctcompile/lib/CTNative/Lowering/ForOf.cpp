@@ -27,6 +27,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SetVector.h"
 
 #include <optional>
 #include <string>
@@ -189,12 +190,12 @@ std::optional<std::string> foldDestructuring(ctjs::CallOp open) {
         read->setAttr(kDestructureArray, at.getUnitAttr());
         step.getResult().replaceAllUsesWith(read.getResult());
     }
-    llvm::SmallVector<mlir::Operation *> gone;
+    llvm::SetVector<mlir::Operation *> gone;
     for (ctjs::CallOp call : llvm::concat<ctjs::CallOp>(steps, closes)) {
-        gone.push_back(call.getCallee().getDefiningOp());
+        gone.insert(call.getCallee().getDefiningOp());
         call.erase();
     }
-    gone.push_back(open.getCallee().getDefiningOp());
+    gone.insert(open.getCallee().getDefiningOp());
     open.erase();
     for (mlir::Operation * helper : gone) {
         if (helper && helper->use_empty()) { helper->erase(); }
