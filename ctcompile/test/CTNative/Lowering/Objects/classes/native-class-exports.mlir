@@ -24,13 +24,13 @@
 // so no read of the global is left. The program stays refused for what is
 // not class work: the factory reaches the header as an argument, and the
 // object it returns leaves its frame.
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/umd.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/umd.js --whole-page 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=UMD --implicit-check-not=ctnative.class_reason --implicit-check-not='ctjs.load_global "lib"'
 //
 // What the proof refuses (ctnative.static_reason keeps the rewrite's reason
 // when the class census refuses the class for the store first).
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/early.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/early.js --whole-page 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=EARLY
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/passed.js 2>/dev/null \
