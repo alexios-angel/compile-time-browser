@@ -22,6 +22,14 @@
 // RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --mlir-print-debuginfo --whole-page \
 // RUN:     2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:     > %t/$name.mlir; done
+// RUN: for name in url-tab url-lf url-cr url-location url-assign url-attribute url-attribute-ns; do \
+// RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --whole-page 2>/dev/null \
+// RUN:     | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:     | FileCheck %s --check-prefix=NORMALIZED; done
+// RUN: for name in url-https url-space url-percent; do \
+// RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --whole-page 2>/dev/null \
+// RUN:     | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:     | FileCheck %s --check-prefix=CLEAN --implicit-check-not=ctjs.runtime_code; done
 // RUN: FileCheck %s --check-prefix=SCRIPT < %t/script.mlir
 // RUN: FileCheck %s --check-prefix=TIMER < %t/timer.mlir
 // RUN: FileCheck %s --check-prefix=URL < %t/url.mlir
@@ -57,6 +65,12 @@
 // NAME: ctnative.not_native = "`setAttribute` with a name not known at build time may add an on* event handler, whose code a native program cannot compile
 // NAMEON: ctnative.not_native = "`setAttribute` with the name `On` adds an on* event handler, whose code a native program cannot compile
 
+// Every URL setter uses the URL parser's scheme normalization, not a raw
+// prefix check. An internal space and percent-encoded TAB are not removed.
+// NORMALIZED: ctnative.not_native = "`{{.*}}` set to the javascript: URL
+// NORMALIZED: ctjs.runtime_code = "`{{.*}}` set to the javascript: URL
+// CLEAN: module
+
 // Without --whole-page, the String timer marks nothing.
 
 //--- script.js
@@ -70,6 +84,36 @@ later("x = 1");
 //--- url.js
 function link(a) { a.href = "javascript:go()"; }
 link(document.createElement("a"));
+
+//--- url-tab.js
+document.body.href = "java\tscript:go()";
+
+//--- url-lf.js
+document.body.href = "java\nscript:go()";
+
+//--- url-cr.js
+document.body.href = "java\rscript:go()";
+
+//--- url-location.js
+location = "  JaVa\tScRiPt:go()";
+
+//--- url-assign.js
+location.assign("java\nscript:go()");
+
+//--- url-attribute.js
+document.body.setAttribute("href", "java\rscript:go()");
+
+//--- url-attribute-ns.js
+document.body.setAttributeNS(null, "href", "java\tscript:go()");
+
+//--- url-https.js
+document.body.href = "https://exa\tmple.com/";
+
+//--- url-space.js
+document.body.href = "java script:go()";
+
+//--- url-percent.js
+document.body.href = "java%09script:go()";
 
 //--- markup.js
 function show(el) { el.innerHTML = '<img src="x" onerror="go()">'; }

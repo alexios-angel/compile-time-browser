@@ -193,6 +193,8 @@ CASES = {
     "Transforms/runtime-code": [
         "split-file %s %t",
         "for name in script timer url markup handler safe name-o name-oncap name-onconst name-param name-mixed; do    ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --mlir-print-debuginfo --whole-page      2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc      > %t/$name.mlir; done",
+        "for name in url-tab url-lf url-cr url-location url-assign url-attribute url-attribute-ns; do    ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --whole-page 2>/dev/null      | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc      | FileCheck %s --check-prefix=NORMALIZED; done",
+        "for name in url-https url-space url-percent; do    ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --whole-page 2>/dev/null      | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc      | FileCheck %s --check-prefix=CLEAN --implicit-check-not=ctjs.runtime_code; done",
         "FileCheck %s --check-prefix=SCRIPT < %t/script.mlir",
         "FileCheck %s --check-prefix=TIMER < %t/timer.mlir",
         "FileCheck %s --check-prefix=URL < %t/url.mlir",

@@ -48,7 +48,7 @@ bool startsWithLower(llvm::StringRef text, llvm::StringRef prefix) {
 
 /// Why setting a URL through `api` to `value` may run code, or empty: a
 /// constant `javascript:` URL (the URL parser strips leading C0 controls and
-/// spaces before it reads the scheme), or a URL not known at build time.
+/// spaces, then TAB/LF/CR anywhere), or a URL not known at build time.
 std::string urlTarget(mlir::Value value, llvm::StringRef api) {
     const auto text = constantString(value);
     if (!text) {
@@ -56,8 +56,9 @@ std::string urlTarget(mlir::Value value, llvm::StringRef api) {
                "` set to a URL not known at build time, which may be a "
                "javascript: URL";
     }
-    const llvm::StringRef url =
-        text->drop_while([](char c) { return static_cast<unsigned char>(c) <= 0x20; });
+    std::string url =
+        text->drop_while([](char c) { return static_cast<unsigned char>(c) <= 0x20; }).str();
+    std::erase_if(url, [](char c) { return c == '\t' || c == '\n' || c == '\r'; });
     return startsWithLower(url, "javascript:")
                ? "`" + api.str() + "` set to the javascript: URL `" + text->str() +
                      "`, which runs code when followed"
