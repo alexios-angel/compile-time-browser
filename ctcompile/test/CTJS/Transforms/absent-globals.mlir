@@ -36,6 +36,12 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/probe.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=OPEN
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/probe.js --whole-page --whole-page-named=PROPS 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/probe.js --whole-page --whole-page-named=other 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=PROBE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-declarations.js --whole-page --whole-page-named=PROPS 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT
 
 // PROBE: {name = "PROPS", reason = "absent: never stored and not provided by the native realm; 1 typeof read(s) folded to undefined", resolved = "none", stores = 0 : i32}
 // PROBE-NOT: ctjs.load_global "PROPS"

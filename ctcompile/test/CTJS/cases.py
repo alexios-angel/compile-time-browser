@@ -77,6 +77,9 @@ CASES = {
         "ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-call.js --whole-page 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-twice.js --whole-page 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/probe.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=OPEN",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/probe.js --whole-page --whole-page-named=PROPS 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/probe.js --whole-page --whole-page-named=other 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=PROBE",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-declarations.js --whole-page --whole-page-named=PROPS 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT",
     ],
     "Transforms/array-iteration": [
         "ctjs-translate --ctbrowser-js-to-ctjs %s    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf    | FileCheck %s",

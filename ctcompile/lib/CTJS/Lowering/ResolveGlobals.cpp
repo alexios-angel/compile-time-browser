@@ -1664,6 +1664,8 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         // Only a whole page folds (WholePage.h): on a module that is only part
         // of one, a later script can bind the name this one never stores.
         const bool whole_page = wholePage(module);
+        const llvm::StringSet<> named =
+            whole_page ? pageNamedElements(module) : llvm::StringSet<>{};
         llvm::DenseMap<mlir::StringAttr, std::size_t> folded;
         global_prefix prefix(module, world);
         if (dynamic && world.top) { prefix.enter(world.top); }
@@ -1681,7 +1683,7 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
             for (auto & [name, facts] : world.bindings) {
                 if (!whole_page || !facts.stores.empty() || world.refused.contains(name) ||
                     declared.contains(name) || (!dynamic && bound_through.contains(name)) ||
-                    nativeRealmProvides(name.getValue())) {
+                    nativeRealmProvides(name.getValue()) || named.contains(name.getValue())) {
                     continue;
                 }
                 llvm::erase_if(facts.loads, [&](LoadGlobalOp load) {
@@ -1728,8 +1730,6 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         // page does name an element by is kept.
         llvm::MapVector<mlir::StringAttr, std::size_t> folded_through;
         bool walked = whole_page && !world.opaque_skip;
-        const llvm::StringSet<> named =
-            whole_page ? pageNamedElements(module) : llvm::StringSet<>{};
         module.walk([&](mlir::Operation * op) {
             op->removeAttr(kAbsentGlobalProperty);
             auto load = mlir::dyn_cast<LoadGlobalOp>(op);
