@@ -657,6 +657,20 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                                  secondLeaf ? secondLeaf.getResult() : mlir::Value{},
                                  selectorMethod ? selectorMethod.getResult() : mlir::Value{},
                                  selectorLeaf ? selectorLeaf.getResult() : mlir::Value{}});
+            const auto recordUse = [&](mlir::Value expected, mlir::Operation * consumer,
+                                       unsigned index) {
+                if (expected && consumer && index < consumer->getNumOperands() &&
+                    consumer->getOperand(index) == expected) {
+                    suffixUses.insert(&consumer->getOpOperand(index));
+                }
+            };
+            recordUse(method.getResult(), protectedLeaf, 0);
+            recordUse(readMethod ? readMethod.getResult() : mlir::Value{}, readCall, 0);
+            recordUse(readCall ? readCall.getResult() : mlir::Value{}, protectedLeaf, 3);
+            recordUse(trailingMethod ? trailingMethod.getResult() : mlir::Value{}, trailingCall, 0);
+            recordUse(trailingCall ? trailingCall.getResult() : mlir::Value{}, secondLeaf, 3);
+            recordUse(secondMethod ? secondMethod.getResult() : mlir::Value{}, secondLeaf, 0);
+            recordUse(selectorMethod ? selectorMethod.getResult() : mlir::Value{}, selectorLeaf, 0);
             for (mlir::Value value : suffixValues) {
                 if (!value) { continue; }
                 for (mlir::OpOperand & use : value.getUses()) {
@@ -666,23 +680,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                         continue;
                     }
                     if (use.getOwner() == result) { continue; }
-                    if ((value == method.getResult() && use.getOwner() == protectedLeaf &&
-                         use.getOperandNumber() == 0) ||
-                        (readMethod && value == readMethod.getResult() &&
-                         use.getOwner() == readCall && use.getOperandNumber() == 0) ||
-                        (readCall && value == readCall.getResult() &&
-                         use.getOwner() == protectedLeaf && use.getOperandNumber() == 3) ||
-                        (trailingMethod && value == trailingMethod.getResult() &&
-                         use.getOwner() == trailingCall && use.getOperandNumber() == 0) ||
-                        (secondLeaf && trailingCall && value == trailingCall.getResult() &&
-                         use.getOwner() == secondLeaf && use.getOperandNumber() == 3) ||
-                        (secondMethod && value == secondMethod.getResult() &&
-                         use.getOwner() == secondLeaf && use.getOperandNumber() == 0) ||
-                        (selectorMethod && value == selectorMethod.getResult() &&
-                         use.getOwner() == selectorLeaf && use.getOperandNumber() == 0) ||
-                        suffixUses.contains(&use)) {
-                        continue;
-                    }
+                    if (suffixUses.contains(&use)) { continue; }
                     if (discardedResult && value == discardedResult.getResult() &&
                         use.getOperandNumber() == 0 && discardedFields.contains(use.getOwner())) {
                         continue;

@@ -22,7 +22,6 @@
 #include "ctnative.hpp"
 
 #include <algorithm>
-#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -36,21 +35,6 @@
 #include <vector>
 
 namespace ctnative {
-
-/// Whether `key` is an array index (ECMA-262 6.1.7): the canonical decimal
-/// spelling of an integer in [0, 2^32 - 2]. "01", "-0", "1e3" and
-/// "4294967295" are ordinary string keys.
-inline std::optional<std::uint32_t> array_index_of(std::string_view key) {
-    if (key.empty() || key.size() > 10 || (key.size() > 1 && key.front() == '0')) {
-        return std::nullopt;
-    }
-    std::uint64_t value = 0;
-    const auto [end, error] = std::from_chars(key.data(), key.data() + key.size(), value);
-    if (error != std::errc{} || end != key.data() + key.size() || value > 4294967294u) {
-        return std::nullopt;
-    }
-    return static_cast<std::uint32_t>(value);
-}
 
 /// An ordinary object whose own properties are all writable, enumerable data
 /// properties with values of type V, keyed by string.

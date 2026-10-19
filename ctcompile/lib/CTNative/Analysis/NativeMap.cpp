@@ -39,9 +39,7 @@ llvm::StringRef nativeMapAction(mlir::Operation * op) {
 }
 
 bool nativeMapKeyAction(llvm::StringRef action) {
-    static const llvm::StringSet<> actions{"set", "get", "has", "delete"};
-    // Every accepted name is at most six characters; check length before hashing.
-    return action.size() <= 6 && actions.contains(action);
+    return action == "set" || action == "get" || action == "has" || action == "delete";
 }
 
 int64_t nativeMapGroup(mlir::Value value) {
@@ -455,19 +453,6 @@ std::string collect(plan & out, closedValueFlow & graph,
     return {};
 }
 
-/// Whether --ctjs-resolve-globals found that the program never binds global
-/// `name`: its ctjs.globals row has host_binding (no store, no write through
-/// the global object, no dynamic global write can reach it).
-bool realmBinding(mlir::ModuleOp module, llvm::StringRef name) {
-    auto rows = module->getAttrOfType<mlir::ArrayAttr>("ctjs.globals");
-    if (!rows) { return false; }
-    for (auto row : rows.getAsRange<mlir::DictionaryAttr>()) {
-        auto bound = row.getAs<mlir::StringAttr>("name");
-        if (bound && bound.getValue() == name) { return row.contains(ctjs::kGlobalsHostBinding); }
-    }
-    return false;
-}
-
 /// Why a Map method may not run the realm's own Map.prototype method, judged
 /// without asking what the rest of the module does, or none. It is the rule
 /// arrayIterationUnproved (Lowering/ForOf.cpp) uses for Array:
@@ -493,7 +478,7 @@ std::optional<std::string> mapRealmUnproved(mlir::ModuleOp module) {
     if (!module->hasAttr("ctjs.globals")) {
         return "no ctjs.globals table proves the realm's `Map`";
     }
-    if (!realmBinding(module, "Map")) { return "`Map` may be rebound"; }
+    if (!ctjs::realmBinding(module, "Map")) { return "`Map` may be rebound"; }
     if (auto reads = module->getAttrOfType<mlir::ArrayAttr>("ctjs.global_map_reads");
         reads && !reads.empty()) {
         return "a read off the global object may yield `Map`";
@@ -805,6 +790,17 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals,
     }
     map_detail::snapshotCopies copies;
     std::string copied = map_detail::collectSnapshotCopies(module, calls, copies);
+    const auto provedOwnedLoad = [&](ctjs::LoadGlobalOp load) {
+        if (globals && globals->proved()) {
+            if (globals->lookup(load) || globals->objectGlobal(load) ||
+                globals->mutableScalarRead(load)) {
+                return true;
+            }
+            const auto * scalar = globals->scalarRead(load);
+            if (scalar && !mapScalarTag(scalar->alternatives).empty()) { return true; }
+        }
+        return false;
+    };
     // A read of a global the program itself binds keeps the whole-module
     // walk's condition below: OwnedGlobalRoots must prove the value it reads
     // (a scalar global written twice is refused there). A realm binding
@@ -821,17 +817,10 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals,
             const llvm::StringRef name = load.getName();
             if (!proved || name == "Map" || (hostTyped && hostTyped(load)) ||
                 (!stored.contains(name) &&
-                 (realmBinding(module, name) || name.starts_with("__ctbrowser_")))) {
+                 (ctjs::realmBinding(module, name) || name.starts_with("__ctbrowser_")))) {
                 return;
             }
-            if (globals && globals->proved()) {
-                if (globals->lookup(load) || globals->objectGlobal(load) ||
-                    globals->mutableScalarRead(load)) {
-                    return;
-                }
-                const auto * scalar = globals->scalarRead(load);
-                if (scalar && !mapScalarTag(scalar->alternatives).empty()) { return; }
-            }
+            if (provedOwnedLoad(load)) { return; }
             proved = calleeSlotOnly(load);
         });
         return proved;
@@ -873,13 +862,7 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals,
                 // Allowed only when OwnedGlobalRoots proved this load reads an
                 // owned global root or a global holding a proved Number or
                 // Boolean. Names and native attributes never authorize a read.
-                if (globals && globals->proved()) {
-                    if (globals->lookup(load)) { return; }
-                    if (globals->objectGlobal(load)) { return; }
-                    if (globals->mutableScalarRead(load)) { return; }
-                    const auto * scalar = globals->scalarRead(load);
-                    if (scalar && !mapScalarTag(scalar->alternatives).empty()) { return; }
-                }
+                if (provedOwnedLoad(load)) { return; }
                 if (!calleeSlotOnly(load)) {
                     reason = "standard Map identity is unproved with other host/global value reads";
                 }

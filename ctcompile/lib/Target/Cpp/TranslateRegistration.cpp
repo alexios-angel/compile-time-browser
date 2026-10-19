@@ -23,6 +23,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "ctcompile/CTJS/Lowering/WholePage.h"
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"
 #include "ctcompile/Target/Cpp/CppEmitter.h"
 
@@ -52,7 +53,11 @@ void registerToCppTranslation() {
     // a driver that builds and simply does not have the flag.
     static mlir::TranslateFromMLIRRegistration reg(
         "mlir-to-cpp", "translate from mlir to cpp",
-        [](mlir::Operation * op, mlir::raw_ostream & output) {
+        [](mlir::Operation * op, mlir::raw_ostream & output) -> mlir::LogicalResult {
+            if (auto refusals = op->getAttrOfType<mlir::ArrayAttr>(ctjs::kUnboundedPageNaming);
+                op->hasAttr(ctjs::kPageNamingAssumedAbsent) && refusals && !refusals.empty()) {
+                return op->emitError("complete native output refused: ") << refusals;
+            }
             return translateToCpp(op, output,
                                   /*declareVariablesAtTop=*/declareVariablesAtTop,
                                   /*fileId=*/fileId);

@@ -113,10 +113,6 @@ inline constexpr StrEncoding kDefaultStringEncoding = StrEncoding::UTF8;
 /// ctcompile/docs/native-divergences.md records when that was not so.
 mlir::Type meet(mlir::Type a, mlir::Type b);
 
-/// `meet` folded over a range. An empty range is `!ctnative.bottom`, which is
-/// the identity, so this and the two-argument form cannot disagree.
-mlir::Type meet(mlir::MLIRContext * context, ::llvm::ArrayRef<mlir::Type> types);
-
 /// The string type an unproved JavaScript string gets. One caller-visible
 /// spelling of `kDefaultStringEncoding`, so no caller has to name the encoding.
 StrType defaultStringType(mlir::MLIRContext * context);

@@ -10,6 +10,8 @@
 
 #include "Attempt.h"
 
+#include "../../../HostContract/DOM/Snapshot/Bounds.h"
+
 #include <algorithm>
 
 namespace ctcompile::ctnative::lowering_detail {
@@ -113,9 +115,7 @@ bool recovery::normalizeIndexSwitches(mlir::Operation * guarded) {
             yield->erase();
             switcher->getBlock()->getOperations().splice(switcher->getIterator(),
                                                          block.getOperations());
-            for (auto [result, value] : llvm::zip(switcher.getResults(), values)) {
-                result.replaceAllUsesWith(value);
-            }
+            switcher.getResults().replaceAllUsesWith(values);
             switcher.erase();
             continue;
         }
@@ -141,9 +141,7 @@ bool recovery::normalizeIndexSwitches(mlir::Operation * guarded) {
                 builder.setInsertionPointToEnd(&branch.getElseRegion().front());
             }
         }
-        for (auto [result, value] : llvm::zip(switcher.getResults(), first.getResults())) {
-            result.replaceAllUsesWith(value);
-        }
+        switcher.getResults().replaceAllUsesWith(first.getResults());
         switcher.erase();
     }
     return true;
@@ -183,7 +181,7 @@ bool recovery::trimUnusedIfResults(mlir::Operation * guarded) {
                 }
             }
             llvm::BitVector unused(count);
-            llvm::SmallVector<mlir::Type> types;
+            llvm::SmallVector<unsigned> kept;
             for (auto [index, result] : llvm::enumerate(branch.getResults())) {
                 if (result.use_empty()) {
                     unused.set(static_cast<unsigned>(index));
@@ -206,31 +204,14 @@ bool recovery::trimUnusedIfResults(mlir::Operation * guarded) {
                     unused.set(static_cast<unsigned>(index));
                     continue;
                 }
-                types.push_back(result.getType());
+                kept.push_back(static_cast<unsigned>(index));
             }
             if (unused.none()) { continue; }
             if (!spend(uint64_t(3) + count * uint64_t(2))) { return false; }
-            mlir::OpBuilder builder(branch);
-            mlir::OperationState state(branch.getLoc(), mlir::scf::IfOp::getOperationName());
-            state.addOperands(branch.getCondition());
-            state.addTypes(types);
-            state.addAttributes(branch->getAttrs());
-            state.addRegion();
-            state.addRegion();
-            auto replacement = llvm::cast<mlir::scf::IfOp>(builder.create(state));
-            for (auto [source, destination] :
-                 llvm::zip(branch->getRegions(), replacement->getRegions())) {
-                source.front().getTerminator()->eraseOperands(unused);
-                destination.takeBody(source);
+            for (mlir::Region & region : branch->getRegions()) {
+                region.front().getTerminator()->eraseOperands(unused);
             }
-            unsigned next = 0;
-            for (auto [index, result] : llvm::enumerate(branch.getResults())) {
-                if (!unused.test(static_cast<unsigned>(index))) {
-                    result.replaceAllUsesWith(replacement.getResult(next++));
-                }
-            }
-            branch.erase();
-            branch = replacement;
+            branch = llvm::cast<mlir::scf::IfOp>(keepResults(branch, kept));
             changed = true;
         }
     }

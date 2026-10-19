@@ -789,9 +789,10 @@ CT_OPCODE(/* name */ type_of, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ u
 
 /* Classic script entry receives the realm's stable global_this value; module
  * entry receives undefined. Arrows retain their lexical receiver through
- * effective_this. Bare calls have no sloppy-mode substitution: a frame
- * entered with no receiver observes raw undefined. The mutable globalThis
- * binding is not consulted when selecting any frame's receiver. */
+ * effective_this. Ordinary sloppy functions bind nullish receivers to their
+ * realm's global_this and box primitives once on activation entry; strict
+ * functions preserve the receiver. This instruction only reads that binding.
+ * The mutable globalThis binding is not consulted. */
 CT_OPCODE(/* name */ load_this, /* a_kind */ reg, /* b_kind */ unused, /* c_kind */ unused, /* writes_a */ 1,
           /* allocates */ 0, /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0,
           /* may_suspend */ 0, /* resumable */ 1, /* impl */ "vm.hpp:context::effective_this")

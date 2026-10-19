@@ -310,11 +310,12 @@ CT_AOT_COVERS(/* helper */ ct_aot_throw, /* opcode */ throw_value)
  * restate it. frame_receiver is GC root 6, so no new root.
  * DELEGATES TO: context::effective_this(const call_frame &) -
  *   context::current_this, via VM_CASE(load_this).
- * FAILURE: None. There is NO sloppy-mode globalThis substitution: a frame
- *   entered with no receiver hands back raw undefined (op::call sets
- *   receiver = undefined), so a bare call sees undefined. Classic script
- *   entry receives the realm's stable global_this value; module entry receives
- *   undefined. Neither path looks up the writable globalThis binding. */
+ * FAILURE: None. Reads the binding established on activation entry: ordinary
+ *   sloppy functions use their realm's global_this for nullish receivers and
+ *   box primitives once; strict functions preserve the receiver and arrows
+ *   use their lexical binding. Classic script entry receives the realm's
+ *   stable global_this; module entry receives undefined. This reader neither
+ *   allocates nor looks up the writable globalThis binding. */
 CT_AOT_HELPER(/* name */ ct_aot_this, /* ret */ uint64_t, /* params */ (struct ct_aot_frame *fr),
               /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
 CT_AOT_COVERS(/* helper */ ct_aot_this, /* opcode */ load_this)

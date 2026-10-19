@@ -4,7 +4,9 @@ target_sources(ctcompile-ctjs-lowering PRIVATE
   RegisterFlow.cpp
   Effects.cpp
   NativeRealm.cpp
+  WholePage.cpp
   ClosureValues.h
   Effects.h
   RegisterFlow.h
 )
+target_link_libraries(ctcompile-ctjs-lowering PRIVATE ctbrowser::dom)

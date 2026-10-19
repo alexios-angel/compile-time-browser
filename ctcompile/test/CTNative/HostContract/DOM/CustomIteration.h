@@ -3399,7 +3399,9 @@ module {
                     return;
                 }
                 observed = true;
-                check(evidence->styleParameter == proof.parameters()[secondRoot ? 1 : 0] &&
+                check(evidence->styleParameters.size() == 1 &&
+                          evidence->styleParameters.front() ==
+                              proof.parameters()[secondRoot ? 1 : 0] &&
                           evidence->explicitReceiver == prototype,
                       "saved selector evidence names its original parameter and call receiver");
             });
@@ -3468,7 +3470,7 @@ module {
                     return;
                 }
                 ++observed;
-                check(!evidence->styleParameter && evidence->styleParameters.size() == 2 &&
+                check(evidence->styleParameters.size() == 2 &&
                           llvm::is_contained(evidence->styleParameters, proof.parameters()[0]) &&
                           llvm::is_contained(evidence->styleParameters, proof.parameters()[1]),
                       "mixed selectors retain both distinct original Style parameters");

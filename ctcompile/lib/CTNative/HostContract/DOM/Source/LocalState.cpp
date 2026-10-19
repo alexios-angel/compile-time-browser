@@ -52,20 +52,26 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
     // use, including writes; `collect` below still has to prove
     // initialization in that block.
     mlir::Block * scope = initiallyBoolean ? &block : nullptr;
+    const auto ifChain = [&](mlir::Operation *& position, mlir::Block * destination,
+                             llvm::StringRef refusal, auto callback) {
+        unsigned nesting = 0;
+        while (position->getBlock() != destination) {
+            if (!step()) { return false; }
+            auto branch = llvm::dyn_cast_or_null<mlir::scf::IfOp>(position->getParentOp());
+            if (!branch || ++nesting == 64) { return refuse(refusal); }
+            callback(branch);
+            position = branch;
+        }
+        return true;
+    };
     for (mlir::OpOperand & use : cell.getResult().getUses()) {
         if (!step()) { return false; }
         auto * user = use.getOwner();
         auto * position = user;
         llvm::DenseSet<mlir::Block *> ancestors{position->getBlock()};
-        unsigned nesting = 0;
-        while (position->getBlock() != &block) {
-            if (!step()) { return false; }
-            auto branch = llvm::dyn_cast_or_null<mlir::scf::IfOp>(position->getParentOp());
-            if (!branch || ++nesting == 64) {
-                return refuse("DOM Boolean state requires bounded local conditional uses");
-            }
-            position = branch;
-            ancestors.insert(position->getBlock());
+        if (!ifChain(position, &block, "DOM Boolean state requires bounded local conditional uses",
+                     [&](mlir::scf::IfOp branch) { ancestors.insert(branch->getBlock()); })) {
+            return false;
         }
         if (!cell->isBeforeInBlock(position)) {
             return refuse("DOM Boolean state requires ordered local uses");
@@ -96,16 +102,13 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
                 return refuse("DOM Boolean state has an unproved use after expansion");
             }
             bool reachedScope = position->getBlock() == scope;
-            unsigned nesting = 0;
-            while (position->getBlock() != &block) {
-                if (!step()) { return false; }
-                auto branch = llvm::dyn_cast_or_null<mlir::scf::IfOp>(position->getParentOp());
-                if (!branch || ++nesting == 64) {
-                    return refuse("DOM Boolean state requires bounded local conditional uses");
-                }
-                if (!reachedScope) { stateBranches.insert(branch); }
-                position = branch;
-                reachedScope |= position->getBlock() == scope;
+            if (!ifChain(position, &block,
+                         "DOM Boolean state requires bounded local conditional uses",
+                         [&](mlir::scf::IfOp branch) {
+                             if (!reachedScope) { stateBranches.insert(branch); }
+                             reachedScope |= branch->getBlock() == scope;
+                         })) {
+                return false;
             }
             if (!reachedScope) { return refuse("DOM Boolean state escaped its selected scope"); }
         }
@@ -185,14 +188,9 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
             if (!step()) { return false; }
             auto * user = use.getOwner();
             auto * position = user;
-            unsigned nesting = 0;
-            while (position->getBlock() != &body) {
-                if (!step()) { return false; }
-                auto branch = llvm::dyn_cast_or_null<mlir::scf::IfOp>(position->getParentOp());
-                if (!branch || ++nesting == 64) {
-                    return refuse("DOM Boolean borrower has an unproved conditional use");
-                }
-                position = branch;
+            if (!ifChain(position, &body, "DOM Boolean borrower has an unproved conditional use",
+                         [](mlir::scf::IfOp) {})) {
+                return false;
             }
             if ((llvm::isa<ctjs::CellGetOp, ctjs::CellSetOp>(user) &&
                  use.getOperandNumber() == 0) ||

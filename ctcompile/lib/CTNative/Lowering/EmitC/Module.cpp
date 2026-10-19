@@ -80,6 +80,12 @@ void lowering::finish() {
             const family & f = families[index];
             auto cls = ec::ClassOp::create(b, module.getLoc(), f.name);
             cls->setAttr("ctnative.provenance", b.getStringAttr(provenanceOf(f)));
+            // A registry class whose borrowed instance a callback holds by
+            // its owner (ownerOf).
+            if (sharedFromThis.contains(f.name)) {
+                cls->setAttr("ctnative.bases",
+                             b.getStrArrayAttr({"std::enable_shared_from_this<" + f.name + ">"}));
+            }
             if (f.varies.any()) {
                 llvm::SmallVector<mlir::Attribute> parameters;
                 for (unsigned i = 0; i < f.fields.size(); ++i) {

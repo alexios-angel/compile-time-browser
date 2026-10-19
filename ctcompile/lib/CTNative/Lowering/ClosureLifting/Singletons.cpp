@@ -55,11 +55,6 @@
 namespace ctcompile::ctnative::lowering_detail {
 namespace {
 
-/// The number of JavaScript parameters `target`'s entry block takes.
-size_t parametersOf(ctjs::FuncOp target) {
-    return target.getBody().front().getNumArguments() - ctjs::implicit_arguments;
-}
-
 /// The operation in `block` that contains `op`, or null.
 mlir::Operation * enclosingIn(mlir::Operation * op, mlir::Block * block) {
     while (op && op->getBlock() != block) { op = op->getParentOp(); }
@@ -296,9 +291,8 @@ bool closureLifter::bindSingletonMethods(liftReport & out) {
             }
         }
         if (calls == 0) { return false; }
-        const llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> noFields;
-        if (const auto early = llvm::find_if(
-                reads, [&](ctjs::CellGetOp read) { return !runsAfter(read, write, noFields); });
+        if (const auto early =
+                llvm::find_if(reads, [&](ctjs::CellGetOp read) { return !runsAfter(read, write); });
             early != reads.end()) {
             return refuse("and a read in " + in(*early) +
                           " can run before the function is written");
@@ -312,8 +306,9 @@ bool closureLifter::bindSingletonMethods(liftReport & out) {
                 if (!call) { continue; }
                 mlir::OpBuilder at(call);
                 const mlir::Value undefined = undefinedAt(at, call.getLoc());
-                auto direct = directCall(at, call.getLoc(), target, call.getReceiver(), undefined,
-                                         undefined, {}, call.getArgs(), parametersOf(target));
+                auto direct =
+                    directCall(at, call.getLoc(), target, call.getReceiver(), undefined, undefined,
+                               {}, call.getArgs(), ctjs::parameterCount(target.getBody().front()));
                 call.getResult().replaceAllUsesWith(direct.getResult());
                 call.erase();
                 ++out.calls;
@@ -498,7 +493,7 @@ bool closureLifter::bindSingletonMethods(liftReport & out) {
                         usable = false;
                         break;
                     }
-                    if (call.getArgs().size() > parametersOf(target)) {
+                    if (call.getArgs().size() > ctjs::parameterCount(target.getBody().front())) {
                         refuse("a call passes `" + key + "` more arguments than it takes" + where);
                         usable = false;
                         break;
@@ -549,8 +544,9 @@ bool closureLifter::bindSingletonMethods(liftReport & out) {
         for (methodCall & m : calls) {
             mlir::OpBuilder at(m.call);
             const mlir::Value undefined = undefinedAt(at, m.call.getLoc());
-            auto direct = directCall(at, m.call.getLoc(), m.target, undefined, undefined, undefined,
-                                     {}, m.call.getArgs(), parametersOf(m.target));
+            auto direct =
+                directCall(at, m.call.getLoc(), m.target, undefined, undefined, undefined, {},
+                           m.call.getArgs(), ctjs::parameterCount(m.target.getBody().front()));
             m.call.getResult().replaceAllUsesWith(direct.getResult());
             m.call.erase();
             ++out.calls;
@@ -595,7 +591,6 @@ void closureLifter::markStaticClassReads() {
     });
     if (bySymbol.empty()) { return; }
     indexStarters();
-    const llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> noFields;
     for (auto & [symbol, cells] : bySymbol) {
         // One owning box, as for a method table.
         ctjs::CreateCellOp owner;
@@ -658,8 +653,8 @@ void closureLifter::markStaticClassReads() {
         if (!usable) { continue; }
         // A read that could run before the last write could find
         // `undefined`, or a class whose prototype is not built yet.
-        if (const auto early = llvm::find_if(
-                reads, [&](ctjs::CellGetOp read) { return !runsAfter(read, last, noFields); });
+        if (const auto early =
+                llvm::find_if(reads, [&](ctjs::CellGetOp read) { return !runsAfter(read, last); });
             early != reads.end()) {
             refuse("a read in " + where(early->getOperation()) +
                    " can run before the class is written");

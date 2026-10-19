@@ -19,7 +19,11 @@
 //     that reaches `on` through `this`, unknown.js passes a handler read off
 //     an object, inherited.js reads a key the literal does not own, which an
 //     inherited getter answers, and escape.js stores the literal where any
-//     script can call its methods.
+//     script can call its methods;
+//   - static.js passes a class's static method, which the class reassigns
+//     first. A static read stays unknown: a static method's `__home` property
+//     holds its class, so any code holding the method can reach the class and
+//     rewrite its statics.
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/handlers.js --mlir-print-debuginfo 2>/dev/null \
@@ -44,6 +48,9 @@
 // RUN: sed 's|// escape: ||' %t/methods.js > %t/escape.js
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/escape.js --mlir-print-debuginfo 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=ESCAPE
+// RUN: sed 's|// static: ||' %t/methods.js > %t/static.js
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/static.js --mlir-print-debuginfo 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=STATIC
 
 // D calls S, and the custom-event arrow that wraps a handler.
 // CHECK-LABEL: ctjs.func @D$3(
@@ -80,6 +87,9 @@
 
 // ESCAPE-LABEL: ctjs.func @fn$2(
 // ESCAPE: ctjs.call {{.*}} {ctjs.test_closures_unknown = "the object literal holding `on` is used by ctjs.set_property at {{.*}}escape.js:11"}
+
+// STATIC-LABEL: ctjs.func @fn$2(
+// STATIC: ctjs.call {{.*}} {ctjs.test_closures_unknown = "the result of ctjs.get_property at {{.*}}static.js:12"}
 
 //--- handlers.js
 (function () {
@@ -131,4 +141,5 @@
   // unknown: P.on(document, { onKey(event) { return 3; } }.onKey);
   // inherited: Object.defineProperty(Object.prototype, "spy", { get() { return this.on(document, function missed(event) { return 4; }); } }); P.spy;
   // escape: window.EventHandler = P;
+  // static: class Keys { static onKey(event) { return 3; } } Keys.onKey = function missed(event) { return 4; }; P.on(document, Keys.onKey);
 })();

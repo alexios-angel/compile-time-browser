@@ -138,6 +138,7 @@
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTJS/Import/EngineGlobals.h"
 #include "ctcompile/CTJS/Lowering/NativeRealm.h"
+#include "ctcompile/CTJS/Lowering/WholePage.h"
 #include "ctcompile/CTJS/Transforms/Passes.h"
 
 #include "mlir/IR/Builders.h"
@@ -301,9 +302,11 @@ template <class Op> Op originOp(mlir::Value value) {
 /// binding names a function when all of those values are one closure, apart
 /// from an undefined initial (a call before the declaration runs throws). An
 /// object literal is frozen when it is only built by its own define_own
-/// stores, read with a key, and held by bindings whose every read is also only
-/// read with a key: nothing can replace a method then, and the object reaches
-/// no code that could.
+/// stores, read with a key it owns, and held by bindings whose every read is
+/// also only read with a key it owns: nothing can replace a method then, and
+/// the object reaches no code that could. A key it does not own is looked up
+/// on its prototype, where an inherited getter would get the literal as `this`
+/// and could replace a method before the call the walk follows.
 ///
 /// Used only where the walk follows a watched value into a call, so it widens
 /// nothing else: callers this names do not get their receivers watched.
@@ -460,10 +463,17 @@ struct binding_names {
         return {};
     }
 
+    /// Whether `use` reads one of the keys `own` lists off the value it uses.
+    static bool ownRead(mlir::OpOperand * use, const llvm::StringSet<> & own) {
+        auto read = mlir::dyn_cast<GetPropertyOp>(use->getOwner());
+        return read && use->getOperandNumber() == 0 && own.contains(constantKey(read.getKey()));
+    }
+
     /// Whether `use` passes `object` as the receiver of a call of one of its
-    /// own methods, read off that same value, whose body only reads
-    /// properties of `this`: such a call cannot replace a method either.
-    bool receiverOfOwnMethod(mlir::OpOperand * use, CreateObjectOp object) {
+    /// own methods, read off that same value, whose body only reads keys
+    /// `object` owns off `this`: such a call cannot replace a method either.
+    bool receiverOfOwnMethod(mlir::OpOperand * use, CreateObjectOp object,
+                             const llvm::StringSet<> & own) {
         auto call = mlir::dyn_cast<CallOp>(use->getOwner());
         if (!call || use->getOperandNumber() != 1) { return false; }
         auto read = originOp<GetPropertyOp>(call.getCallee());
@@ -474,21 +484,18 @@ struct binding_names {
         FuncOp method = fieldMethod(object, constantKey(read.getKey()));
         if (!method || !implicitEntry(method)) { return false; }
         auto uses = registerFlowUses(method.getBody().front().getArgument(0));
-        return uses && llvm::all_of(*uses, [](mlir::OpOperand * self) {
-                   return (mlir::isa<GetPropertyOp>(self->getOwner()) &&
-                           self->getOperandNumber() == 0) ||
-                          mlir::isa<RootOp>(self->getOwner());
+        return uses && llvm::all_of(*uses, [&](mlir::OpOperand * self) {
+                   return ownRead(self, own) || mlir::isa<RootOp>(self->getOwner());
                });
     }
 
     /// Whether every use of `value`, a read of a binding holding `object`,
-    /// reads a property of it with any key or calls one of its methods.
-    bool onlyRead(mlir::Value value, CreateObjectOp object) {
+    /// reads a key it owns or calls one of its methods.
+    bool onlyRead(mlir::Value value, CreateObjectOp object, const llvm::StringSet<> & own) {
         auto uses = registerFlowUses(value);
         return uses && llvm::all_of(*uses, [&](mlir::OpOperand * use) {
-                   return (mlir::isa<GetPropertyOp>(use->getOwner()) &&
-                           use->getOperandNumber() == 0) ||
-                          mlir::isa<RootOp>(use->getOwner()) || receiverOfOwnMethod(use, object);
+                   return ownRead(use, own) || mlir::isa<RootOp>(use->getOwner()) ||
+                          receiverOfOwnMethod(use, object, own);
                });
     }
 
@@ -498,19 +505,27 @@ struct binding_names {
             return found->second;
         }
         bool answer = true;
-        llvm::StringSet<> keys;
         auto uses = registerFlowUses(object.getResult());
         if (!uses) { answer = false; }
-        for (mlir::OpOperand * use : uses ? *uses : llvm::SmallVector<mlir::OpOperand *>{}) {
-            mlir::Operation * user = use->getOwner();
-            if (mlir::isa<GetPropertyOp, RootOp>(user) && use->getOperandNumber() == 0) {
-                continue;
+        const llvm::SmallVector<mlir::OpOperand *> none;
+        const auto defines = [](mlir::OpOperand * use) {
+            auto set = mlir::dyn_cast<SetPropertyOp>(use->getOwner());
+            return set && use->getOperandNumber() == 0 && set->hasAttr(defineOwnMarker);
+        };
+        // The keys it owns: each define_own store's constant key, once.
+        llvm::StringSet<> keys;
+        for (mlir::OpOperand * use : uses ? *uses : none) {
+            if (defines(use)) {
+                const llvm::StringRef key = constantKey(propertyKey(use->getOwner()));
+                answer &= !key.empty() && key != "__proto__" && keys.insert(key).second;
             }
-            if (receiverOfOwnMethod(use, object)) { continue; }
-            if (auto set = mlir::dyn_cast<SetPropertyOp>(user);
-                set && use->getOperandNumber() == 0 && set->hasAttr(defineOwnMarker)) {
-                const llvm::StringRef key = constantKey(set.getKey());
-                if (!key.empty() && key != "__proto__" && keys.insert(key).second) { continue; }
+        }
+        for (mlir::OpOperand * use : uses && answer ? *uses : none) {
+            mlir::Operation * user = use->getOwner();
+            if (ownRead(use, keys) || defines(use) ||
+                (mlir::isa<RootOp>(user) && use->getOperandNumber() == 0) ||
+                receiverOfOwnMethod(use, object, keys)) {
+                continue;
             }
             CreateCellOp cell = mlir::dyn_cast<CreateCellOp>(user);
             if (auto write = mlir::dyn_cast<CellSetOp>(user);
@@ -520,7 +535,8 @@ struct binding_names {
             llvm::SmallVector<mlir::Value> writes;
             const auto reads = cell ? access(cell, writes) : std::nullopt;
             if (reads && heldValue(cell) == object.getResult() &&
-                llvm::all_of(*reads, [&](mlir::Value read) { return onlyRead(read, object); })) {
+                llvm::all_of(*reads,
+                             [&](mlir::Value read) { return onlyRead(read, object, keys); })) {
                 continue;
             }
             answer = false;
@@ -1644,9 +1660,15 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         // before anything could bind a global (global_prefix): a UMD wrapper's
         // `typeof define` at the top of its body. Its row says which rule
         // folded it.
+        //
+        // Only a whole page folds (WholePage.h): on a module that is only part
+        // of one, a later script can bind the name this one never stores.
+        const bool whole_page = wholePage(module);
+        const auto named = pageNamedElements(module);
+        module.walk([&](LoadGlobalOp load) { load->removeAttr(kAbsentGlobalTypeof); });
         llvm::DenseMap<mlir::StringAttr, std::size_t> folded;
         global_prefix prefix(module, world);
-        if (dynamic && world.top) { prefix.enter(world.top); }
+        if ((dynamic || !named.vmComplete) && world.top) { prefix.enter(world.top); }
         // A name the script declares with `var` is a binding of the realm even
         // when nothing in this program stores it: the declaration keeps a
         // value an earlier script gave the name. The importer lists those
@@ -1659,14 +1681,19 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         }
         {
             for (auto & [name, facts] : world.bindings) {
-                if (!facts.stores.empty() || world.refused.contains(name) ||
+                if (!whole_page || !facts.stores.empty() || world.refused.contains(name) ||
                     declared.contains(name) || (!dynamic && bound_through.contains(name)) ||
-                    nativeRealmProvides(name.getValue())) {
+                    nativeRealmProvides(name.getValue()) || named.contains(name.getValue())) {
                     continue;
                 }
                 llvm::erase_if(facts.loads, [&](LoadGlobalOp load) {
                     if (!load.getTypeofLookup() ||
                         (dynamic && !prefix.reads.contains(load.getOperation()))) {
+                        return false;
+                    }
+                    if (!named.complete ||
+                        (!named.vmComplete && !prefix.reads.contains(load.getOperation()))) {
+                        load->setAttr(kAbsentGlobalTypeof, builder.getUnitAttr());
                         return false;
                     }
                     mlir::OpBuilder at(load);
@@ -1701,8 +1728,13 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         // or a refused body that may store any global stops it first, and a
         // name written through the global object would then look unbound.
         // A mark already on the input is no verdict of this run.
+        //
+        // The fold takes the page to have no element of that id or name
+        // (HTML's named access on the Window object): only a whole page, whose
+        // driver recorded the page's elements, supports that, and a name the
+        // page does name an element by is kept.
         llvm::MapVector<mlir::StringAttr, std::size_t> folded_through;
-        bool walked = !world.opaque_skip;
+        bool walked = whole_page && !world.opaque_skip;
         module.walk([&](mlir::Operation * op) {
             op->removeAttr(kAbsentGlobalProperty);
             auto load = mlir::dyn_cast<LoadGlobalOp>(op);
@@ -1719,15 +1751,16 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
             module.walk([&](GetPropertyOp get) {
                 auto holder = get.getObject().getDefiningOp<LoadGlobalOp>();
                 const llvm::StringRef key = constantKey(get.getKey());
-                if (!holder || !names_global_object(holder.getName()) ||
-                    bound(holder.getNameAttr()) || key.empty() || inheritedFromObject(key) ||
-                    nativeRealmProvides(key) || bound(mlir::StringAttr::get(context, key))) {
+                if (!whole_page || !holder || !names_global_object(holder.getName()) ||
+                    bound(holder.getNameAttr()) || key.empty() || named.contains(key) ||
+                    inheritedFromObject(key) || nativeRealmProvides(key) ||
+                    bound(mlir::StringAttr::get(context, key))) {
                     return;
                 }
                 reads.push_back(get);
             });
             for (GetPropertyOp get : reads) {
-                if (dynamic) {
+                if (dynamic || !named.complete || !named.vmComplete) {
                     get->setAttr(kAbsentGlobalProperty, builder.getUnitAttr());
                     continue;
                 }

@@ -165,12 +165,6 @@ public:
                             bool followProviderDiagnostics = false,
                             bool followProviderCallbacks = false,
                             bool followProviderObjects = false);
-    HostEntryPrefixAnalysis(mlir::ModuleOp module, const HostContract & contract, unsigned maxSteps,
-                            HostPrefixFollow follow)
-        : HostEntryPrefixAnalysis(module, contract, maxSteps, follow.publication,
-                                  follow.providerReads, follow.providerMutations,
-                                  follow.providerDiagnostics, follow.providerCallbacks,
-                                  follow.providerObjects) {}
 
     [[nodiscard]] bool valid() const { return refusal.empty(); }
     [[nodiscard]] llvm::StringRef reason() const { return refusal; }

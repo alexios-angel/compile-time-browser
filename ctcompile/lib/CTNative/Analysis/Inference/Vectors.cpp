@@ -25,6 +25,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <optional>
 #include <string>
 
@@ -32,25 +33,10 @@ namespace ctcompile::ctnative {
 
 namespace {
 
-/// The text of a string constant, or empty when `value` is not one. Unlike
-/// constantKey, this tells the empty string from a non-constant.
-std::optional<llvm::StringRef> stringConstantText(mlir::Value value) {
-    auto text = ctjs::constantAttr<ctjs::StringAttr>(value);
-    if (!text) { return std::nullopt; }
-    return text.getValue();
-}
-
-/// Whether `op` builds the regular expression `/\s+/` (no flags): a call of
-/// the importer's literal factory with exactly those two constant strings.
-bool isWhitespaceRegExp(mlir::Operation * op) {
-    auto call = llvm::dyn_cast_or_null<ctjs::CallOp>(op);
-    if (!call || ctjs::calleeGlobalName(call) != "__ctbrowser_regexp" ||
-        call.getArgs().size() != 2) {
-        return false;
-    }
-    const auto pattern = stringConstantText(call.getArgs()[0]);
-    const auto flags = stringConstantText(call.getArgs()[1]);
-    return pattern && *pattern == "\\s+" && flags && flags->empty();
+/// Whether `separator` is the regular expression literal `/\s+/` (no flags).
+bool isWhitespaceRegExp(mlir::Value separator) {
+    auto literal = TypeInference::regExpLiteral(separator);
+    return literal && literal->first == "\\s+" && literal->second.empty();
 }
 
 /// Whether `call` is `receiver.key(...)` with exactly that read as its callee
@@ -75,8 +61,7 @@ TypeInference::VectorCall TypeInference::vectorCallOf(mlir::Operation * op) {
     if (arity == 0 && isMethodCall(call, "sort")) { return VectorCall::sort; }
     if (arity == 1 && isMethodCall(call, "includes")) { return VectorCall::includes; }
     if (arity == 1 && isMethodCall(call, "split")) {
-        mlir::Operation * separator = call.getArgs()[0].getDefiningOp();
-        if (isWhitespaceRegExp(separator)) { return VectorCall::splitSpace; }
+        if (isWhitespaceRegExp(call.getArgs()[0])) { return VectorCall::splitSpace; }
         // Any other RegExp separator is not a String; admission refuses the
         // RegExp itself by name.
         return VectorCall::split;
@@ -542,15 +527,12 @@ bool TypeInference::isBoundedIndexRead(mlir::Operation * op) {
     // is always an integer at least 0.
     if (constantIndex(loop.getInits()[index]) < 0) { return false; }
     auto step = loop.getYieldOp().getOperand(index).getDefiningOp();
-    const auto addsOne = [&](mlir::Value lhs, mlir::Value rhs) {
-        return lhs == counter && constantIndex(rhs) == 1;
+    const auto addsOne = [&](auto add) {
+        return add.getKind() == ctjs::BinaryKind::Add && add.getLhs() == counter &&
+               constantIndex(add.getRhs()) == 1;
     };
-    if (auto add = llvm::dyn_cast_or_null<ctjs::BinaryStaticOp>(step)) {
-        return add.getKind() == ctjs::BinaryKind::Add && addsOne(add.getLhs(), add.getRhs());
-    }
-    if (auto add = llvm::dyn_cast_or_null<ctjs::BinaryOp>(step)) {
-        return add.getKind() == ctjs::BinaryKind::Add && addsOne(add.getLhs(), add.getRhs());
-    }
+    if (auto add = llvm::dyn_cast_or_null<ctjs::BinaryStaticOp>(step)) { return addsOne(add); }
+    if (auto add = llvm::dyn_cast_or_null<ctjs::BinaryOp>(step)) { return addsOne(add); }
     return false;
 }
 
@@ -612,14 +594,13 @@ llvm::StringRef TypeInference::firstPropertyRead(mlir::Value value) {
         ctjs::FuncOp callee = call ? call.getTarget() : ctjs::FuncOp{};
         if (!callee || callee.getBody().empty()) { return {}; }
         // Into the callee, at the first argument position that passes it.
-        const mlir::Value passed = value;
-        value = {};
-        for (unsigned i = 3; i < call->getNumOperands(); ++i) {
-            if (call->getOperand(i) == passed) {
-                value = callee.getBody().front().getArgument(i);
-                break;
-            }
-        }
+        auto operands = call->getOperands().drop_front(ctjs::implicit_arguments);
+        auto found = llvm::find(operands, value);
+        value = found == operands.end()
+                    ? mlir::Value{}
+                    : callee.getBody().front().getArgument(
+                          ctjs::implicit_arguments +
+                          static_cast<unsigned>(std::distance(operands.begin(), found)));
     }
     return {};
 }

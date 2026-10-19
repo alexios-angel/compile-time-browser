@@ -29,7 +29,7 @@
 
 #include "llvm/ADT/MapVector.h"
 
-#include <string>
+#include <utility>
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -170,12 +170,7 @@ bool copyPerArgumentType(mlir::ModuleOp module,
         return lattice ? lattice->getValue().getType() : mlir::Type{};
     };
 
-    unsigned nextIndex = 0;
-    module.walk([&](ctjs::FuncOp fn) {
-        if (const std::optional<unsigned> index = ctjs::functionIndex(fn)) {
-            nextIndex = std::max(nextIndex, *index + 1);
-        }
-    });
+    unsigned nextIndex = ctjs::nextFunctionIndex(module);
     auto earlier = module->getAttrOfType<mlir::DictionaryAttr>(kNativeCopies);
     llvm::SmallVector<mlir::NamedAttribute> copies;
     if (earlier) { copies.append(earlier.begin(), earlier.end()); }
@@ -195,19 +190,21 @@ bool copyPerArgumentType(mlir::ModuleOp module,
         // Each group also keeps, per such argument, the meet of the types its
         // calls pass: the type the parameter has in the group's function.
         struct group {
-            std::string key;
+            llvm::SmallVector<std::pair<carrier, llvm::StringRef>> key;
             llvm::SmallVector<ctjs::CallDirectOp> calls;
             llvm::SmallVector<mlir::Type> types;
         };
         llvm::SmallVector<group> byType;
         bool merged = false;
         for (ctjs::CallDirectOp call : callers[fn.getOperation()]) {
-            std::string key;
+            llvm::SmallVector<std::pair<carrier, llvm::StringRef>> key;
             llvm::SmallVector<mlir::Type> types;
             for (unsigned i : mixed) {
                 const mlir::Type passed = typeOf(call->getOperand(i));
                 merged |= !passed || needsUnion(passed);
-                key.push_back(static_cast<char>(carrierOf(passed)));
+                const carrier held = carrierOf(passed);
+                key.emplace_back(held, held == carrier::instance ? instanceClassName(passed)
+                                                                 : llvm::StringRef{});
                 types.push_back(passed);
             }
             auto row = llvm::find_if(byType, [&](const group & g) { return g.key == key; });

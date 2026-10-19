@@ -13,21 +13,49 @@
 #
 # RUN: split-file %s %t
 # RUN: %node %t/expected.cjs %t/plugin.js
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/plugin.js -o %t/input.mlir
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/plugin.js --whole-page -o %t/input.mlir
 # RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{observe-globals=true},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
 # RUN: FileCheck %s --check-prefix=REMOVED --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/runtime.mlir
 # RUN: %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/plugin.js --work %t --name unreachable_gcc --core-build %build
 # RUN: %compilation_unit --cxx %dom_clang --module %t/runtime.mlir --js %t/plugin.js --work %t --name unreachable_clang --core-build %build
 # RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/plugin.js --work %t --name unreachable_mutation --mutate registered 2>&1 | FileCheck %s --check-prefix=MUTATION
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/kept.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true | FileCheck %s --check-prefix=KEPT --implicit-check-not=unreachable_refusals
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/plugin.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false observe-globals=true" | FileCheck %s --check-prefix=UNOPTIMIZED --implicit-check-not=unreachable_refusals
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/plugin.js --whole-page | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false observe-globals=true" | FileCheck %s --check-prefix=UNOPTIMIZED --implicit-check-not=unreachable_refusals
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/unbounded-plugin.js --whole-page | ctjs-opt --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{observe-globals=true},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/unbounded.mlir
+# RUN: FileCheck %s --check-prefix=UNBOUNDED --implicit-check-not=ctnative.not_native < %t/unbounded.mlir
+# RUN: not ctjs-translate --mlir-to-cpp %t/unbounded.mlir 2>&1 | FileCheck %s --check-prefix=OUTPUT
 
 # REMOVED: ctnative.unreachable_refusals = [{function = "fn$3", reason = "removed: unreachable (no function that can run creates or calls it; it was refused: uses `this`)"}, {function = "fn$4", reason = "removed: unreachable (no function that can run creates or calls it; it was refused: uses `this` - a closure used as a value: {{.*}})"}]
 # MUTATION: global 'registered' differs
 # KEPT: ctjs.func @fn$2({{.*}}ctnative.not_native = "uses `this`
 # UNOPTIMIZED: ctjs.func @fn$3({{.*}}ctnative.not_native =
+# UNBOUNDED: ctjs.naming_assumed_absent
+# UNBOUNDED-SAME: ctjs.unbounded_page_naming
+# OUTPUT: complete native output refused:
+# OUTPUT-SAME: DOM naming mutation is unbounded:
 
 #--- plugin.js
+var registered = 0;
+function getjQuery() {
+    return globalThis.jQuery && !document.body.hasAttribute("data-bs-no-jquery")
+        ? globalThis.jQuery
+        : null;
+}
+function definePlugin(name) {
+    var $ = getjQuery();
+    if ($) {
+        $.fn["collapse"] = function () {
+            return this.each(function () {
+                return this;
+            });
+        };
+        registered = registered + 1;
+    }
+    return registered;
+}
+var plugins = definePlugin("collapse") + definePlugin("modal");
+
+#--- unbounded-plugin.js
 var registered = 0;
 function getjQuery() {
     return globalThis.jQuery && !document.body.hasAttribute("data-bs-no-jquery")

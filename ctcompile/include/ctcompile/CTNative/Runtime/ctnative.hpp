@@ -33,6 +33,8 @@
 
 #include <ctbrowser/core/algorithms.hpp>
 
+#include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -52,9 +54,7 @@
 #include <vector>
 
 #ifdef CTNATIVE_DOM
-#include <algorithm>
 #include <array>
-#include <charconv>
 #include <expected>
 #include <limits>
 #include <stdexcept>
@@ -682,13 +682,7 @@ js_boolean_t visit_equality_operand(const T & value, F && visitor) {
         }
         std::terminate();
     } else if constexpr (primitive_union<T>) {
-        switch (value.tag) {
-        case union_kind::undefined: return visit_equality_operand(undefined_t{}, visitor);
-        case union_kind::null: return visit_equality_operand(js_null_t{}, visitor);
-        case union_kind::scalar: return visit_equality_operand(value.scalar, visitor);
-        case union_kind::string: return visit_equality_operand(value.text, visitor);
-        }
-        std::terminate();
+        return visit_carrier(value, std::ref(visitor), std::ref(visitor));
     } else {
         return visitor(nullable_scalar{value});
     }
@@ -992,10 +986,8 @@ template <class K, class V> struct ordered_map_storage {
     using key_type = K;
     std::vector<std::pair<K, V>> entries;
     auto find(const K & key) {
-        for (auto it = entries.begin(); it != entries.end(); ++it) {
-            if (map_key_equal(it->first, key)) { return it; }
-        }
-        return entries.end();
+        return std::ranges::find_if(
+            entries, [&](const auto & entry) { return map_key_equal(entry.first, key); });
     }
     auto end() { return entries.end(); }
     void insert_or_assign(const K & key, const V & value) {
@@ -1221,37 +1213,23 @@ template <class T> T map_payload_as(const boolean_or_string & value) {
 /// payload; the compiler picks T only from a proof of that exact payload, and
 /// the call terminates otherwise. Returns by value so an owned string survives
 /// overwrite, deletion and the Map's lifetime.
-template <class T, class K, class V> T map_get_present_as(map_storage<K, V> * map, const K & key) {
+template <class T, class Map, class K> T map_get_present_as(const Map & map, const K & key) {
     return map_payload_as<T>(present_entry(map, key));
-}
-template <class T, class K, class V>
-T map_get_present_as(const std::shared_ptr<map_storage<K, V>> & map, const K & key) {
-    return map_get_present_as<T>(map.get(), key);
 }
 /// Like map_get_present_as for nullable payloads: the compiler supplies T only
 /// from a separate proof about this payload; the storage schema alone never
 /// selects a narrower alternative.
-template <class T, class K, class V>
-T map_get_present_nullable_as(map_storage<K, V> * map, const K & key) {
+template <class T, class Map, class K>
+T map_get_present_nullable_as(const Map & map, const K & key) {
     return map_nullable_payload_as<T>(present_entry(map, key));
 }
-template <class T, class K, class V>
-T map_get_present_nullable_as(const std::shared_ptr<map_storage<K, V>> & map, const K & key) {
-    return map_get_present_nullable_as<T>(map.get(), key);
-}
 
-template <class K>
-std::shared_ptr<identity_object> map_get_present_identity(map_storage<K, object_value> * map,
-                                                          const K & key) {
+template <class Map, class K>
+std::shared_ptr<identity_object> map_get_present_identity(const Map & map, const K & key) {
     const object_value & payload = present_entry(map, key);
     // Both presence and the object result type were independently proved.
     if (!payload.object) { std::terminate(); }
     return payload.object;
-}
-template <class K>
-std::shared_ptr<identity_object> map_get_present_identity(
-    const std::shared_ptr<map_storage<K, object_value>> & map, const K & key) {
-    return map_get_present_identity(map.get(), key);
 }
 
 // --- Map snapshots -----------------------------------------------------------
@@ -1331,17 +1309,28 @@ auto invoke_session(const std::shared_ptr<Table> & table, Args... args) {
     return (table.get()->*Member)(std::move(args)...);
 }
 
+/// Whether `key` is an array index (ECMA-262 6.1.7): the canonical decimal
+/// spelling of an integer in [0, 2^32 - 2]. "01", "-0", "1e3" and
+/// "4294967295" are ordinary string keys.
+inline std::optional<std::uint32_t> array_index_of(std::string_view key) {
+    if (key.empty() || key.size() > 10 || (key.size() > 1 && key.front() == '0')) {
+        return std::nullopt;
+    }
+    std::uint64_t value = 0;
+    const auto [end, error] = std::from_chars(key.data(), key.data() + key.size(), value);
+    if (error != std::errc{} || end != key.data() + key.size() || value > 4294967294u) {
+        return std::nullopt;
+    }
+    return static_cast<std::uint32_t>(value);
+}
+
 #ifdef CTNATIVE_DOM
 // --- the DOM entry -----------------------------------------------------------
 
 /// The array index `key` names, or UINT32_MAX for an ordinary key. ECMAScript
 /// orders array-index keys before ordinary keys.
 inline std::uint32_t json_property_index(std::string_view key) {
-    constexpr auto ordinary = std::numeric_limits<std::uint32_t>::max();
-    if (key.empty() || (key.size() > 1 && key.front() == '0')) { return ordinary; }
-    std::uint32_t value = ordinary;
-    const auto [end, error] = std::from_chars(key.data(), key.data() + key.size(), value);
-    return error == std::errc{} && end == key.data() + key.size() ? value : ordinary;
+    return array_index_of(key).value_or(std::numeric_limits<std::uint32_t>::max());
 }
 
 /// Defines or overwrites an own data property of a JSON object, keeping

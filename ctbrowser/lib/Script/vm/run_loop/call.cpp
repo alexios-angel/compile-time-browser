@@ -182,6 +182,7 @@ void context::execute_call(instruction in, call_frame * vm_frame, const function
             entered.new_target = pending_new_target_;
             pending_new_target_ = value::undefined();
             frames_.push_back(entered);
+            frames_.back().receiver = bind_this(target, *entered.realm, receiver);
             break;
         }
     } while (0);

@@ -9,6 +9,10 @@
 #   optional -DSTRING_ENTRIES=name[,name] for functions the embedder calls
 #   optional -DALLOW_REFUSED=TRUE to write the module even when a function is refused
 #
+# Each program this builds is its page's only script (compilation-unit.py runs
+# it alone, and a page program is the library and its probe), so the import is
+# marked --whole-page (ctcompile/CTJS/Lowering/WholePage.h).
+#
 # The module is written with debug info, so every op keeps its JavaScript
 # line:col, which is what the CTCOMPILE_PIN type assertions (see
 # PrintDeduced.cpp) report. Without it, re-parsing the file gives every op its
@@ -80,7 +84,7 @@ if(PARTIAL_EVALUATE)
   set(_partial_pass "ctnative-partial-evaluate{report=true}, ")
 endif()
 execute_process(
-  COMMAND "${TRANSLATE}" --ctbrowser-js-to-ctjs "${SOURCE}" --mlir-print-debuginfo
+  COMMAND "${TRANSLATE}" --ctbrowser-js-to-ctjs "${SOURCE}" --mlir-print-debuginfo --whole-page
   # Everything after the lowering runs inside emitc.func only. A refused
   # function is still a ctjs.func full of ctjs operations, and the canonicalizer
   # folding an scf.if it left there into an arith.select of ctjs.constants
@@ -91,7 +95,7 @@ execute_process(
   # prune for the variables nothing reads (the emitted file must compile
   # cleanly under -Wall -Wextra -Werror), and a canonicalize for what the
   # prune left dead.
-  COMMAND "${OPT}" "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ${_precompute_pass}${_specialize_pass}${_supercompile_pass}${_partial_pass}${_prune_pass}${_native_lower}, ${_deforest_pass}emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))"
+  COMMAND "${OPT}" "--pass-pipeline=builtin.module(ctjs-fold-dynamic-code, ctjs-resolve-globals, ctjs-lift-to-scf, ${_precompute_pass}${_specialize_pass}${_supercompile_pass}${_partial_pass}${_prune_pass}${_native_lower}, ${_deforest_pass}emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))"
           --mlir-print-debuginfo --mlir-print-op-on-diagnostic=false
   OUTPUT_VARIABLE module
   ERROR_VARIABLE complaints

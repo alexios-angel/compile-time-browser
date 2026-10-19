@@ -152,8 +152,7 @@ bool classInitialization::publicationSuffix(ctjs::CallOp publication,
             auto value = write.getValue().getDefiningOp<ctjs::ConstantOp>();
             if (write.getObject() == self && ctjs::ordinaryKey(write.getKey()) &&
                 (numbers.contains(write.getValue()) ||
-                 (value && llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::BooleanAttr,
-                                     ctjs::NumberAttr, ctjs::StringAttr>(value.getValue())))) {
+                 (value && ctjs::isPrimitiveAttr(value.getValue())))) {
                 continue;
             }
         }

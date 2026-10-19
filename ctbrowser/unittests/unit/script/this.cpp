@@ -148,8 +148,9 @@ extern "C" std::int32_t sample_script_receiver(ctbrowser::aot::ct_aot_ctx * ctx,
     if (frame == nullptr) {
         return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::failed);
     }
-    ctbrowser::aot::ct_aot_global_set(frame, "observedReceiver", 16u,
-                                      ctbrowser::aot::ct_aot_this(frame));
+    const std::uint64_t bound = ctbrowser::aot::ct_aot_this(frame);
+    check(ctbrowser::aot::ct_aot_this(frame) == bound, "compiled this reads preserve identity");
+    ctbrowser::aot::ct_aot_global_set(frame, "observedReceiver", 16u, bound);
     ctbrowser::aot::ct_aot_global_set(frame, "observedArgument", 16u, receiver);
     *out = value::undefined().bits();
     ctbrowser::aot::ct_aot_leave(frame);
@@ -224,6 +225,22 @@ void test_call_paths(bool compiled) {
         const program call = compiler::compile(source);
         check(cx.run(call).ok && cx.global("observedReceiver").strict_equals(expected), source);
     }
+    check(cx.run(compiler::compile("Reflect.apply(ordinary, 5, []);")).ok,
+          "an ordinary call accepts a primitive receiver");
+    const value boxed = cx.global("observedReceiver");
+    check(boxed.is_object(), "an ordinary activation boxes its primitive receiver");
+    cx.define_global("boxedReceiver", boxed);
+    const program wrapper = compiler::compile(
+        "var result = boxedReceiver instanceof Number && boxedReceiver.valueOf() === 5;");
+    check(cx.run(wrapper).ok && cx.to_string(cx.global("result")) == "true",
+          "the receiver is a Number wrapper carrying the primitive value");
+    if (compiled) {
+        check(cx.global("observedArgument").strict_equals(value::number(5)),
+              "the compiled entry ABI still receives the raw thisArg");
+    }
+    check(cx.run(compiler::compile("Reflect.apply(strictReceiver, 5, []);")).ok &&
+              cx.global("observedReceiver").strict_equals(value::number(5)),
+          "a strict activation preserves a primitive receiver");
     auto & other = cx.create_realm();
     other.global_this = cx.make_global_object(other);
     other.globals[std::string{"globalThis"}] = other.global_this;
@@ -234,14 +251,16 @@ void test_call_paths(bool compiled) {
         foreign = cx.global("ordinary");
     }
     cx.define_global("foreign", foreign);
-    const program foreign_call = compiler::compile("foreign();");
-    check(cx.run(foreign_call).ok, "a foreign function is called from the main realm");
-    {
+    for (const char * source :
+         {"foreign();", "foreign.call(null);", "foreign.apply(undefined, []);",
+          "foreign.bind(null)();", "Reflect.apply(foreign, undefined, []);"}) {
+        const program foreign_call = compiler::compile(source);
+        check(cx.run(foreign_call).ok, "a foreign function is called from the main realm");
         const context::realm_scope in_other{cx, other};
         check(cx.global("observedReceiver").strict_equals(other.global_this),
               "an ordinary call uses its callee's realm, not its caller's");
     }
-    check(compiled_entries == (compiled ? 7u : 0u), "every intended compiled call was exercised");
+    check(compiled_entries == (compiled ? 13u : 0u), "every intended compiled call was exercised");
 }
 
 } // namespace

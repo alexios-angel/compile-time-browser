@@ -38,6 +38,13 @@
 # RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js 2>/dev/null \
 # RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 # RUN:   | FileCheck %s --check-prefix=KEPT; done
+#
+# In selfcall.js a named function expression also calls itself by its name,
+# through its own closure, with a number. That call is in no list, so the test
+# and the spread stay.
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/selfcall.js 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+# RUN:   | FileCheck %s --check-prefix=SELF
 
 # NATIVE: emitc.func @main
 # NATIVE: emitc.func @merge_{{[0-9]+}}
@@ -50,6 +57,8 @@
 # KEPT-DAG: ctnative.object_reason = "it is passed to a parameter that reaches it through something other than a constant key
 # KEPT-DAG: ctjs.unary typeof
 # KEPT-DAG: ctjs.copy_props
+# SELF-DAG: ctjs.unary typeof
+# SELF-DAG: ctjs.copy_props
 
 #--- one.js
 function merge(config) {
@@ -101,3 +110,13 @@ function make() {
     return merged.a + merged.b;
 }
 var r = make();
+
+#--- selfcall.js
+var r = (function () {
+    const walk = function w(config, depth) {
+        const merged = { a: 1, ...(typeof config === "object" ? config : {}) };
+        if (depth > 0) { return w(5, depth - 1) * 10 + merged.a; }
+        return merged.a;
+    };
+    return walk({ a: 2 }, 1);
+})();

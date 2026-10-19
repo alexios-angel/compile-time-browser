@@ -25,6 +25,7 @@
 !/.clang-format-ignore
 !/.gitmodules
 !/.jsbeautifyrc
+!/.pre-commit-config.yaml
 !/CHANGELOG.md
 !/LICENSE
 !/NOTICE

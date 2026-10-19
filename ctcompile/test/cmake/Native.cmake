@@ -177,6 +177,8 @@ endfunction()
 ctcompile_native_fixture(numeric ControlFlow/globals.js)
 # Eight functions: recursion, loops, a boolean predicate.
 ctcompile_native_fixture(functions ControlFlow/functions.js)
+# Constant code-creation strings, imported ahead of global resolution.
+ctcompile_native_fixture(constant_code Closures/constant-code.js)
 # Object literals with closed shapes, lowered to stack structs.
 ctcompile_native_fixture(structs Objects/struct.js)
 # Object spread of literals whose keys are known, written out key by key.

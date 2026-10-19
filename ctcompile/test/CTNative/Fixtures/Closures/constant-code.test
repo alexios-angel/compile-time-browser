@@ -1,0 +1,20 @@
+# Constant source uses the ordinary native pipeline, with no VM in the output.
+# The generated functions see their own parameters and the global environment,
+# not a caller's local bindings. Extra eval arguments still run for effects.
+# RUN: %compilation_unit --module %{obj}/constant_code.pipeline.emitc.mlir --js %S/constant-code.js --work %t --name constant_code --core-build %build
+# RUN: %compile_clean --module %{obj}/constant_code.pipeline.emitc.mlir --work %t --name constant_code
+# RUN: python3 %{monorepo}/tools/check/native-claims.py --translate ctjs-translate --opt ctjs-opt --corpus %S/constant-code.js --name constant_code --min-claimed 8 --no-default-optimizations
+# RUN: %compilation_unit --module %{obj}/constant_code.pipeline.deduced.emitc.mlir --js %S/constant-code.js --work %t --name constant_code_deduced --core-build %build
+# RUN: not %compilation_unit --module %{obj}/constant_code.pipeline.emitc.mlir --js %S/constant-code.js --work %t --name constant_code_mutated --mutate nested --mutate-as number --core-build %build 2>&1 | FileCheck %s --check-prefix=MUTATED
+# MUTATED: global 'nested' differs
+# RUN: %native_reference %S/constant-code.js | FileCheck %s --check-prefix=VALUES
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); for (const key of Object.keys(scope).sort()) if (typeof scope[key] === "number") console.log(key + "=" + scope[key]);' %S/constant-code.js | FileCheck %s --check-prefix=VALUES
+# VALUES: added=42
+# VALUES-NEXT: called=7
+# VALUES-NEXT: completion=42
+# VALUES-NEXT: globalValue=100
+# VALUES-NEXT: indirect=42
+# VALUES-NEXT: isolated=100
+# VALUES-NEXT: nested=9
+# VALUES-NEXT: runtime=102
+# VALUES-NEXT: sideEffects=1

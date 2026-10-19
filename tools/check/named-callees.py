@@ -46,7 +46,9 @@ ap.add_argument("--require-entry-callee", action="append", default=[])
 ap.add_argument("--expect-unreachable", action="append", default=[])
 a = ap.parse_args()
 
-ctjs = run([a.translate, "--ctbrowser-js-to-ctjs", a.corpus, "--mlir-print-debuginfo"])
+ctjs = run(
+    [a.translate, "--ctbrowser-js-to-ctjs", a.corpus, "--mlir-print-debuginfo", "--whole-page"]
+)
 named = run([a.opt, "--ctjs-resolve-globals"], ctjs).decode("utf-8", "replace")
 sites = CALLEE.findall(named)
 callees = sorted(set(sites))

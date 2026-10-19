@@ -104,19 +104,16 @@ OwnedMethodTableSlots::OwnedMethodTableSlots(mlir::ModuleOp module, unsigned max
         return;
     }
     for (auto [index, slot] : llvm::enumerate(checked)) {
-        stores[slot.initialization] = static_cast<unsigned>(index);
-        for (ctjs::GetPropertyOp read : slot.reads) { loads[read] = static_cast<unsigned>(index); }
+        indices[slot.initialization] = static_cast<unsigned>(index);
+        for (ctjs::GetPropertyOp read : slot.reads) {
+            indices[read] = static_cast<unsigned>(index);
+        }
     }
 }
 
-const OwnedMethodTableSlot * OwnedMethodTableSlots::lookup(ctjs::SetPropertyOp store) const {
-    const auto found = stores.find(store);
-    return found == stores.end() ? nullptr : &checked[found->second];
-}
-
-const OwnedMethodTableSlot * OwnedMethodTableSlots::lookup(ctjs::GetPropertyOp read) const {
-    const auto found = loads.find(read);
-    return found == loads.end() ? nullptr : &checked[found->second];
+const OwnedMethodTableSlot * OwnedMethodTableSlots::lookup(mlir::Operation * operation) const {
+    const auto found = indices.find(operation);
+    return found == indices.end() ? nullptr : &checked[found->second];
 }
 
 } // namespace ctcompile::ctnative

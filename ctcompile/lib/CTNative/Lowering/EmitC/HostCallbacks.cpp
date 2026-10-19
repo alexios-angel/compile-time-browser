@@ -50,8 +50,16 @@ bool replaceHostCallback(lowering & lower, mlir::Operation * o) {
     if (!captures.empty()) {
         llvm::SmallVector<mlir::Value> captured{bound};
         // A shared cell is bound as its handle (rule 2b in ClosureLifter.h).
+        // A registry instance a method borrows (`C *`) is bound as its owner,
+        // so the table keeps the instance alive with the callback
+        // (ClosureLifting/ArrowThis.cpp passesLexicalThis).
         for (mlir::Value capture : captures) {
-            captured.push_back(loadedHandle(b, where, capture));
+            mlir::Value value = loadedHandle(b, where, capture);
+            if (llvm::isa<ec::PointerType>(value.getType()) &&
+                carrierOf(lower.typeOf(capture)) == carrier::instance) {
+                value = lower.ownerOf(b, where, value, lower.typeOf(capture));
+            }
+            captured.push_back(value);
         }
         bound = callValue(b, where, any, "std::bind_front", captured);
     }

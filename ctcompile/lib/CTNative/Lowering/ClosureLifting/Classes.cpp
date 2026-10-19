@@ -50,16 +50,12 @@
 #include "llvm/ADT/SetVector.h"
 
 namespace ctcompile::ctnative::lowering_detail {
-namespace {
 
-/// The callee of `call` when it is the class helper intrinsic `name`.
 bool callsIntrinsic(ctjs::CallOp call, llvm::StringRef name) {
     auto load = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
     return load && load.getName() == name;
 }
 
-/// The constructor closure a binding read names when every store into the
-/// binding stores that one closure, or null.
 ctjs::CreateClosureOp boundConstructor(mlir::Value read) {
     auto get = read.getDefiningOp<ctjs::CellGetOp>();
     auto cell = get ? get.getCell().getDefiningOp<ctjs::CreateCellOp>() : ctjs::CreateCellOp{};
@@ -74,8 +70,6 @@ ctjs::CreateClosureOp boundConstructor(mlir::Value read) {
     }
     return held;
 }
-
-} // namespace
 
 /// Whether `op` is the `__home` edge of a member closure.
 bool closureLifter::isHomeEdge(mlir::Operation * op) {
@@ -175,15 +169,8 @@ void closureLifter::classCensus() {
                        (why ? why.getValue() : llvm::StringRef("its chain was not flattened")));
                 continue;
             }
-            if (auto store = llvm::dyn_cast<ctjs::CellSetOp>(user);
-                store && use.getOperandNumber() == 1) {
-                cls.bindings.push_back(store);
-                continue;
-            }
-            // `new K(...)`, a static member read (`K.NAME`), a call through
-            // the class: uses the census leaves to the rules that resolve
-            // them, which refuse what they cannot name.
-            cls.uses.push_back(&use);
+            // Bindings, `new K(...)`, static reads and calls are left to the
+            // rules that resolve them, which refuse what they cannot name.
         }
         if (!cls.prototype) {
             refuse("its prototype was not found");
@@ -317,22 +304,6 @@ std::string closureLifter::classNameOf(ctjs::FuncOp target) {
     for (const char c : name) { spelled += cpp::is_identifier_char(c) ? c : '_'; }
     return spelled.empty() || (spelled.front() >= '0' && spelled.front() <= '9') ? "K" + spelled
                                                                                  : spelled;
-}
-
-/// The nearest definition of prototype method `name` for an instance of
-/// `cls`: its own, else its parent's, and so on. Null when no class in the
-/// chain defines it.
-ctjs::CreateClosureOp closureLifter::classMethod(const jsClass & cls, llvm::StringRef name) {
-    for (const jsClass * at = &cls; at;) {
-        if (auto found = at->methods.find(name); found != at->methods.end()) {
-            return found->second;
-        }
-        if (!at->parent) { break; }
-        ctjs::CreateClosureOp parentConstructor = at->parent;
-        const auto parent = jsClasses.find(parentConstructor.getOperation());
-        at = parent == jsClasses.end() ? nullptr : &parent->second;
-    }
-    return {};
 }
 
 } // namespace ctcompile::ctnative::lowering_detail

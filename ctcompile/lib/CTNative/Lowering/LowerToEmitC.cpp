@@ -38,6 +38,7 @@
 #include "ForOf.h"
 #include "Refinements.h"
 #include "ctcompile/CTJS/Lowering/NativeRealm.h"
+#include "ctcompile/CTJS/Lowering/WholePage.h"
 #include "ctcompile/CTJS/Transforms/Passes.h"
 #include "ctcompile/CTNative/Analysis/Instances.h"
 #include "ctcompile/CTNative/Analysis/StaticTables.h"
@@ -69,8 +70,23 @@ using namespace lowering_detail;
 /// it) keeps its reads. The folded names go on the module as
 /// ctnative.absent_globals. As in --ctjs-resolve-globals' own fold, the page
 /// is taken to have no element of that id or name, which named access on the
-/// Window object (HTML 7.3.3) would return.
+/// Window object (HTML 7.3.3) would return. Only a module that is its whole
+/// page (WholePage.h) folds: another script could bind the name.
 void foldAbsentGlobalReads(mlir::ModuleOp module) {
+    if (!ctjs::wholePage(module)) { return; }
+    const auto named = ctjs::pageNamedElements(module);
+    module.walk([&](ctjs::LoadGlobalOp load) {
+        if (!load->hasAttr(ctjs::kAbsentGlobalTypeof) || !load.getTypeofLookup() ||
+            named.contains(load.getName())) {
+            return;
+        }
+        mlir::OpBuilder at(load);
+        if (!named.complete) { module->setAttr(ctjs::kPageNamingAssumedAbsent, at.getUnitAttr()); }
+        auto undefined = ctjs::ConstantOp::create(at, load.getLoc(), load.getType(),
+                                                  ctjs::UndefinedAttr::get(module.getContext()));
+        load.getResult().replaceAllUsesWith(undefined.getResult());
+        load.erase();
+    });
     llvm::SmallVector<ctjs::GetPropertyOp> marked;
     module.walk([&](ctjs::GetPropertyOp get) {
         if (get->hasAttr(ctjs::kAbsentGlobalProperty)) { marked.push_back(get); }
@@ -95,10 +111,12 @@ void foldAbsentGlobalReads(mlir::ModuleOp module) {
         get->removeAttr(ctjs::kAbsentGlobalProperty);
         const llvm::StringRef key = ctjs::constantKey(get.getKey());
         auto holder = get.getObject().getDefiningOp<ctjs::LoadGlobalOp>();
-        if (!holder || key.empty() || spelled.contains(key) || ctjs::nativeRealmProvides(key)) {
+        if (!holder || key.empty() || named.contains(key) || spelled.contains(key) ||
+            ctjs::nativeRealmProvides(key)) {
             continue;
         }
         mlir::OpBuilder at(get);
+        if (!named.complete) { module->setAttr(ctjs::kPageNamingAssumedAbsent, at.getUnitAttr()); }
         auto undefined = ctjs::ConstantOp::create(at, get.getLoc(), get.getType(),
                                                   ctjs::UndefinedAttr::get(module.getContext()));
         get.getResult().replaceAllUsesWith(undefined.getResult());
@@ -422,6 +440,9 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             domEntry = std::make_unique<DOMEntryAnalysis>(module, *hostContract, hostMaxSteps);
         }
 
+        // Code the module may create at run time is refused where it sits
+        // (WholePage.h); marked before any step copies or moves the operation.
+        ctjs::markRuntimeCode(module);
         // Before the default optimizations, so that precomputation drops the
         // branches the folded reads guard, and before the closure lift, so that
         // the helpers the class statics rewrite copies have lost them too.

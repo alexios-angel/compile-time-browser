@@ -20,6 +20,36 @@
 
 namespace ctbrowser::script {
 
+/// Installs the primitive slot and intrinsic prototype on a fresh wrapper.
+/// An existing prototype belongs to a subclass and is kept.
+value context::wrap_primitive(value self, value primitive) {
+    auto * obj = static_cast<object_object *>(self.as_heap());
+    if (!obj->prototype.is_object()) {
+        const proto_kind kind = primitive.is_number()                  ? proto_kind::number
+                                : primitive.is_boolean()               ? proto_kind::boolean
+                                : primitive.is_string()                ? proto_kind::string
+                                : primitive.is_kind(heap_kind::symbol) ? proto_kind::symbol
+                                                                       : proto_kind::bigint;
+        if (object_object * table = prototype(kind)) { obj->prototype = value::object(table); }
+    }
+    obj->define(primitive_slot_key, primitive, attr_none);
+    return self;
+}
+
+value context::box_primitive(value v) {
+    if (v.is_object_like() || v.is_nullish()) { return v; }
+    const rooted keep{*this, v};
+    return wrap_primitive(make_object(), v);
+}
+
+/// OrdinaryCallBindThis (10.2.1.2), before parameters or arrow captures run.
+value context::bind_this(const function_proto & proto, realm_record & realm, value receiver) {
+    if (proto.is_strict || proto.is_arrow) { return receiver; }
+    if (receiver.is_nullish()) { return realm.global_this; }
+    const realm_scope in_callee{*this, realm};
+    return box_primitive(receiver);
+}
+
 /// ToBoolean (7.1.2).
 bool context::truthy(value v) {
     if (v.is_boolean()) { return v.as_boolean(); }

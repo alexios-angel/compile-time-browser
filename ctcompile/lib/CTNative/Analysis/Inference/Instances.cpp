@@ -890,7 +890,7 @@ class registryProof {
         for (const mlir::Value carrier : carriers) {
             const bool self = selves.contains(carrier);
             for (mlir::OpOperand & use : carrier.getUses()) {
-                if (self && instanceUse(use)) { continue; }
+                if (self && (instanceUse(use) || heldByArrows(use))) { continue; }
                 if (llvm::is_contained(map.sets, use.getOwner()) && use.getOperandNumber() == 3) {
                     continue;
                 }
@@ -912,7 +912,7 @@ class registryProof {
             }
             for (mlir::OpOperand & use : self.getUses()) {
                 if (inNulling(use.getOwner())) { continue; }
-                if (!instanceUse(use)) {
+                if (!instanceUse(use) && !heldByArrows(use)) {
                     return refuse("`this` in the method `" + jsName(method) + "` of `" + name +
                                   "` reaches " + named(use.getOwner()));
                 }
@@ -927,6 +927,44 @@ class registryProof {
                 }
             }
         }
+        return true;
+    }
+
+    /// Whether `use` of an instance's `this` boxes it in the cell
+    /// captureLexicalThis makes for an arrow (ClosureLifting/ArrowThis.cpp),
+    /// and every arrow capturing that cell only reads fields and calls
+    /// methods through it, or boxes it again for an arrow of its own that
+    /// does. Such an arrow may outlive the call that made it, and then holds
+    /// the instance through its capture, the registry's std::shared_ptr. It
+    /// writes no field, which collectFields would not see, and hands `this`
+    /// to no call, which follow() would have to check.
+    bool heldByArrows(mlir::OpOperand & use, unsigned depth = 0) {
+        auto cell = llvm::dyn_cast<ctjs::CreateCellOp>(use.getOwner());
+        if (!cell || !cell->hasAttr(kNativeLexicalThis) || depth > 8) { return false; }
+        for (mlir::OpOperand & capture : cell.getResult().getUses()) {
+            auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(capture.getOwner());
+            ctjs::FuncOp arrow = made ? functions.targetOf(made) : ctjs::FuncOp{};
+            auto slot = arrow ? arrow->getAttrOfType<mlir::IntegerAttr>(kNativeLexicalThis)
+                              : mlir::IntegerAttr{};
+            if (!slot || capture.getOperandNumber() !=
+                             made.getUpvalues().getBeginOperandIndex() + slot.getInt()) {
+                return false;
+            }
+            const mlir::Value callee = arrow.getBody().front().getArgument(ctjs::arg_callee);
+            bool reads = true;
+            arrow.walk([&](ctjs::LoadUpvalueOp read) {
+                if (!reads || read.getClosure() != callee || read.getIndex() != slot.getInt()) {
+                    return;
+                }
+                // instanceUse admits a store only through a receiver, which
+                // this read is not.
+                for (mlir::OpOperand & inner : read.getResult().getUses()) {
+                    reads = reads && (instanceUse(inner) || heldByArrows(inner, depth + 1));
+                }
+            });
+            if (!reads) { return false; }
+        }
+        out.heldThis.push_back(cell);
         return true;
     }
 
@@ -1673,6 +1711,7 @@ std::vector<InstanceRegistry> markInstanceRegistries(mlir::ModuleOp module) {
         op->removeAttr(kNativeInstanceTest);
         op->removeAttr(kNativeInstanceMethod);
         op->removeAttr(kNativeInstanceKeyClass);
+        op->removeAttr(kNativeHeldThis);
         op->removeAttr(kNativeInstanceCtorCopy);
     });
     std::vector<InstanceRegistry> proved;
@@ -1703,8 +1742,14 @@ std::vector<InstanceRegistry> markInstanceRegistries(mlir::ModuleOp module) {
         for (mlir::Operation * test : registry.exactTests) {
             test->setAttr(kNativeInstanceTest, mlir::UnitAttr::get(module.getContext()));
         }
+        for (mlir::Operation * cell : registry.heldThis) {
+            cell->setAttr(kNativeHeldThis, mlir::UnitAttr::get(module.getContext()));
+        }
         proved.push_back(std::move(registry));
     }
+    // Keep the exact class origins for its methods before widening generic
+    // Map reads to every class sharing the registry.
+    for (InstanceRegistry & registry : proved) { registry.classInstances = registry.instances; }
     // A value read back from a family's Map may be an instance of any of its
     // classes.
     for (InstanceRegistry & registry : proved) {

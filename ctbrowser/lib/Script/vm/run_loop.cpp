@@ -703,14 +703,6 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
 
         VM_CASE(load_this) do {
             reg(in.a) = effective_this((*vm_frame));
-            // 10.2.1.2 OrdinaryCallBindThis step 5.a: a sloppy function called
-            // with no receiver (`f()`, or a native calling back with undefined)
-            // sees the global object; strict code and an arrow see what they
-            // were given. (A primitive receiver stays unboxed here - ponytail:
-            // ToObject lives in builtins/internal.hpp, box it when a test needs it.)
-            if (!vm_proto->is_strict && !vm_proto->is_arrow && reg(in.a).is_nullish()) {
-                reg(in.a) = vm_frame->realm->global_this;
-            }
             break;
         }
         while (0);

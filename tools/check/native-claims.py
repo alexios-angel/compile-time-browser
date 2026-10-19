@@ -257,7 +257,15 @@ def run(argv: argparse.Namespace) -> dict:
     """Run the pipeline on argv.corpus, assert the five invariants (exiting on a
     violation) and return the counts as a dict."""
     translate = subprocess.run(
-        [argv.translate, "--ctbrowser-js-to-ctjs", argv.corpus, "--mlir-print-debuginfo"],
+        # Measured as its page's only script (WholePage.h), as pipeline.cmake
+        # builds it.
+        [
+            argv.translate,
+            "--ctbrowser-js-to-ctjs",
+            argv.corpus,
+            "--mlir-print-debuginfo",
+            "--whole-page",
+        ],
         capture_output=True,
         timeout=argv.timeout,
     )
@@ -271,7 +279,7 @@ def run(argv: argparse.Namespace) -> dict:
     # ctjs.call_direct into an emitc call, so counting them in the final module
     # would report a number that falls as the backend improves.
     closed = subprocess.run(
-        [argv.opt, "--ctjs-resolve-globals=report=true"],
+        [argv.opt, "--ctjs-fold-dynamic-code", "--ctjs-resolve-globals=report=true"],
         input=translate.stdout,
         capture_output=True,
         timeout=argv.timeout,

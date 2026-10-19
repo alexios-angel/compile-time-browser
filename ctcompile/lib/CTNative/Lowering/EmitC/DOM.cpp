@@ -148,8 +148,7 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
     for (mlir::BlockArgument parameter : entry.parameters()) {
         if (parameter == domDocumentParameter || llvm::any_of(domCalls, [&](const auto & item) {
                 return item.second.usesStyle() &&
-                       (item.second.styleParameter == parameter ||
-                        llvm::is_contained(item.second.styleParameters, parameter));
+                       llvm::is_contained(item.second.styleParameters, parameter);
             })) {
             domStyleParameters.push_back(parameter);
         }
@@ -839,7 +838,9 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         }
         arguments.push_back(element);
         if (edge.usesStyle()) {
-            auto style = domStyles.lookup(edge.styleParameter);
+            auto style = edge.styleParameters.size() == 1
+                             ? domStyles.lookup(edge.styleParameters.front())
+                             : mlir::Value{};
             if (!style) {
                 auto pointer = domStylePointers.lookup(element);
                 assert(pointer && "proved mixed receiver must retain its Style pointer");
@@ -854,8 +855,7 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
             llvm::append_range(arguments, call.getArgs().drop_front(edge.explicitReceiver ? 1 : 0));
         }
     }
-    if (edge.kind == HostDOMMethod::matches || edge.returnsElement() ||
-        edge.returnsElementVector()) {
+    if (edge.usesStyle()) {
         auto receiver = callValue(at, where, elementView, "ctnative::js_element_t",
                                   mlir::ValueRange{arguments[0], arguments[1]});
         domStyles[receiver] = arguments[1];

@@ -16,6 +16,7 @@
 #include "ctcompile/CTNative/Runtime/Array.hpp"
 #include "ctcompile/CTNative/Runtime/Browser.hpp"
 #include "ctcompile/CTNative/Runtime/Json.hpp"
+#include "ctcompile/CTNative/Runtime/Microtasks.hpp"
 #include "ctcompile/CTNative/Runtime/Object.hpp"
 #include "ctcompile/CTNative/Runtime/Owned.hpp"
 #include "ctcompile/CTNative/Runtime/RegExp.hpp"
@@ -1564,6 +1565,18 @@ int main() {
         CHECK(message([&] { (void)ctnative::setting(&again, "width"); }) ==
               "Cannot set properties of null (setting 'width')");
     }
+
+    microtasks queue;
+    bool afterThrow = false;
+    queue.enqueue([] { throw js_exception<js_string>{js_string{"boom"}}; });
+    queue.enqueue([&] { afterThrow = true; });
+    CHECK(queue.checkpoint() == 2);
+    CHECK(afterThrow && queue.pending() == 0);
+    CHECK(queue.reported() == std::vector<std::string>{"uncaught exception"});
+    bool laterJob = false;
+    queue.enqueue([&] { laterJob = true; });
+    CHECK(queue.checkpoint() == 1);
+    CHECK(laterJob && queue.pending() == 0);
 
     CHECK(unbound());
     REPORT("native_runtime");

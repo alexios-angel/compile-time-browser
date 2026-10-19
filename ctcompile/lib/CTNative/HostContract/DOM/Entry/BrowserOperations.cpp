@@ -108,10 +108,7 @@ bool emptyString(mlir::Value value) {
 /// std::nullopt when the expression has any other shape.
 std::optional<double> stringIndex(mlir::Value value, unsigned arithmeticDepth = 2) {
     if (auto binary = value.getDefiningOp<ctjs::BinaryOp>();
-        binary &&
-        (binary.getKind() == ctjs::BinaryKind::Div || binary.getKind() == ctjs::BinaryKind::Sub ||
-         binary.getKind() == ctjs::BinaryKind::Mul || binary.getKind() == ctjs::BinaryKind::Mod ||
-         binary.getKind() == ctjs::BinaryKind::Add || binary.getKind() == ctjs::BinaryKind::Pow)) {
+        binary && ctjs::isArithmetic(binary.getKind())) {
         // ponytail: two binary levels bound this literal proof's work. Deeper
         // expressions need a separately budgeted origin analysis.
         if (!arithmeticDepth) { return std::nullopt; }
@@ -168,15 +165,12 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         return true;
     }
     if ((unary && unary.getKind() == ctjs::UnaryKind::Neg) ||
-        (binary &&
-         (binary.getKind() == ctjs::BinaryKind::Div || binary.getKind() == ctjs::BinaryKind::Sub ||
-          binary.getKind() == ctjs::BinaryKind::Mul || binary.getKind() == ctjs::BinaryKind::Mod ||
-          binary.getKind() == ctjs::BinaryKind::Pow ||
-          (binary.getKind() == ctjs::BinaryKind::Add &&
-           ((binary.getLhs().getDefiningOp<ctjs::UnaryOp>() &&
-             numericIndexLiteral(binary.getLhs())) ||
-            (binary.getRhs().getDefiningOp<ctjs::UnaryOp>() &&
-             numericIndexLiteral(binary.getRhs()))))))) {
+        (binary && ctjs::isArithmetic(binary.getKind()) &&
+         (binary.getKind() != ctjs::BinaryKind::Add ||
+          (binary.getLhs().getDefiningOp<ctjs::UnaryOp>() &&
+           numericIndexLiteral(binary.getLhs())) ||
+          (binary.getRhs().getDefiningOp<ctjs::UnaryOp>() &&
+           numericIndexLiteral(binary.getRhs()))))) {
         if (!spend()) { return false; }
         const auto result = operation.getResult(0);
         if (!stringIndex(result)) {
@@ -719,8 +713,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         if (arguments.size() == 1 &&
             ((contains && hasKind(arguments[0], Kind::element)) ||
              ((matches || closest || query || queryAll) && hasKind(arguments[0], Kind::string)))) {
-            const auto hostMethod =
-                elementMethods.find(ctjs::constantKey(method.getKey()))->second.second;
+            const auto hostMethod = proved.methods.find(method)->second;
             proved.calls.push_back({invoke, hostMethod, invoke.getReceiver()});
             if (queryAll) {
                 values[invoke.getResult()] = Kind::elementVector;

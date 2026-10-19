@@ -34,116 +34,100 @@ void install_function(context & cx) {
                                        " called on incompatible receiver");
         return value::undefined();
     };
-    // OrdinaryCallBindThis, 10.2.1.2: a sloppy function's `this` is the
-    // global object for null or undefined and a wrapper for a primitive; a
-    // strict function, an arrow and a built-in take the value as given. Done
-    // here for the three explicit-receiver spellings; a plain `f()` is the
-    // VM's own call and binds undefined, which a sloppy body then sees.
-    const auto bind_this = [](context & c, value callee, value receiver) {
-        if (!callee.is_kind(heap_kind::function)) { return receiver; }
-        const struct function_proto * p = static_cast<closure_object *>(callee.as_heap())->proto;
-        if (p == nullptr || p->is_strict || p->is_arrow) { return receiver; }
-        if (receiver.is_nullish()) { return c.global_this(); }
-        return detail::box_primitive(c, receiver);
-    };
-    method(cx, function_proto, "call", 1,
-           [this_function, bind_this](context & c, std::span<value> a) {
-               const value self = this_function(c, "call");
-               if (!self.is_callable()) { return value::undefined(); }
-               const std::vector<value> rest(a.begin() + (a.empty() ? 0 : 1), a.end());
-               return c.call(self, rest, bind_this(c, self, arg_at(a, 0)));
-           });
-    method(cx, function_proto, "apply", 2,
-           [this_function, bind_this](context & c, std::span<value> a) {
-               const value self = this_function(c, "apply");
-               if (!self.is_callable()) { return value::undefined(); }
-               // A null or undefined argArray is an empty list (20.2.3.1 step 3).
-               const value list = arg_at(a, 1);
-               const value args = list.is_nullish()
-                                      ? c.make_array()
-                                      : detail::create_argument_list(c, list, 65536.0);
-               if (args.is_undefined()) { return args; }
-               const context::rooted keep{c, args};
-               return c.call(self, static_cast<array_object *>(args.as_heap())->items,
-                             bind_this(c, self, arg_at(a, 0)));
-           });
-    method(cx, function_proto, "bind", 1,
-           [this_function, bind_this](context & c, std::span<value> a) {
-               // A getter on the target's `length` or `name`, or a proxy's
-               // getPrototypeOf trap, may throw - and a throw that has landed
-               // is not pending (context::unwinds).
-               const detail::unwind_watch watch{c};
-               const value self = this_function(c, "bind");
-               if (!self.is_callable()) { return value::undefined(); }
-               const value receiver = bind_this(c, self, arg_at(a, 0));
-               // 10.4.1.3 step 1, ? target.[[GetPrototypeOf]](): a proxy's trap
-               // runs here and may throw; the bound function's [[Prototype]] is
-               // the target's, not Function.prototype's.
-               const value proto = detail::prototype_of(c, self);
-               if (watch.threw()) { return value::undefined(); }
-               // The arguments bound now are prepended to the ones supplied later,
-               // which is what makes `f.bind(o, 1)` a partial application rather than
-               // just a receiver change.
-               const auto bound =
-                   std::make_shared<std::vector<value>>(a.begin() + (a.empty() ? 0 : 1), a.end());
-               auto * fn = c.allocate<native_object>(
-                   "bound", [self, receiver, bound](context & inner, std::span<value> later) {
-                       std::vector<value> args = *bound;
-                       args.insert(args.end(), later.begin(), later.end());
-                       return inner.call(self, args, receiver);
-                   });
-               // The lambda's captures are invisible to the collector, so every
-               // value they hold is also pushed onto `retained`, which is traced.
-               // A bound function is often the only reference to its target (as in
-               // `return target.bind(null, arg)` from a factory); without this a
-               // collection would free the target and the next call would use it
-               // after free. A one-time snapshot is exact: `*bound`, `self` and
-               // `receiver` never change after bind.
-               fn->retained.push_back(self);
-               fn->retained.push_back(receiver);
-               // The [[Prototype]] taken above, which the collector does not
-               // reach through proto_link - null is a value like any other, so
-               // the layout stays fixed: target, this, prototype, then the
-               // bound arguments.
-               fn->retained.push_back(proto);
-               fn->retained.insert(fn->retained.end(), bound->begin(), bound->end());
-               // [[BoundTargetFunction]], for `new bound()`: context::construct
-               // constructs the target with the bound arguments prepended (10.4.1.2),
-               // reading them off `retained` as laid out above. A bound function is
-               // a constructor exactly when its target is (10.4.1.3 step 5).
-               fn->define(CTBROWSER_PRIVATE_KEY("BoundTargetFunction"), self, attr_none);
-               fn->is_constructor = is_constructor(self);
-               // undefined, not null, marks an explicitly null [[Prototype]].
-               fn->proto_link = proto.is_null() ? value::undefined() : proto;
-               // 20.2.3.2: `length` is the target's own numeric `length` minus the
-               // bound argument count, floored at 0 (absent or non-numeric counts as
-               // 0); `name` is "bound " + the target's name. Both are
-               // { writable: false, enumerable: false, configurable: true }.
-               double left = 0.0;
-               if (c.has_own_property(self, "length")) {
-                   const value target_length = c.lookup_property(self, "length");
-                   if (watch.threw()) { return value::undefined(); }
-                   if (target_length.is_number()) {
-                       // Step 7.b: +Infinity stays, -Infinity is 0, else
-                       // ToIntegerOrInfinity less the bound count - not ToLength,
-                       // which clamped an infinite length to 2^53 - 1.
-                       const double n = target_length.as_number();
-                       if (std::isinf(n)) {
-                           left = n > 0 ? n : 0.0;
-                       } else if (!std::isnan(n)) {
-                           left = std::trunc(n) - static_cast<double>(bound->size());
-                       }
-                   }
-               }
-               fn->define("length", value::number(std::max(0.0, left)), attr_configurable);
-               const value target_name = c.lookup_property(self, "name");
-               if (watch.threw()) { return value::undefined(); }
-               fn->define("name",
-                          c.string("bound " + (target_name.is_string() ? c.to_string(target_name)
-                                                                       : std::string{})),
-                          attr_configurable);
-               return value::object(fn);
-           });
+    // Forward the raw thisArg; the target binds it in its own realm on each call.
+    method(cx, function_proto, "call", 1, [this_function](context & c, std::span<value> a) {
+        const value self = this_function(c, "call");
+        if (!self.is_callable()) { return value::undefined(); }
+        const std::vector<value> rest(a.begin() + (a.empty() ? 0 : 1), a.end());
+        return c.call(self, rest, arg_at(a, 0));
+    });
+    method(cx, function_proto, "apply", 2, [this_function](context & c, std::span<value> a) {
+        const value self = this_function(c, "apply");
+        if (!self.is_callable()) { return value::undefined(); }
+        // A null or undefined argArray is an empty list (20.2.3.1 step 3).
+        const value list = arg_at(a, 1);
+        const value args =
+            list.is_nullish() ? c.make_array() : detail::create_argument_list(c, list, 65536.0);
+        if (args.is_undefined()) { return args; }
+        const context::rooted keep{c, args};
+        return c.call(self, static_cast<array_object *>(args.as_heap())->items, arg_at(a, 0));
+    });
+    method(cx, function_proto, "bind", 1, [this_function](context & c, std::span<value> a) {
+        // A getter on the target's `length` or `name`, or a proxy's
+        // getPrototypeOf trap, may throw - and a throw that has landed
+        // is not pending (context::unwinds).
+        const detail::unwind_watch watch{c};
+        const value self = this_function(c, "bind");
+        if (!self.is_callable()) { return value::undefined(); }
+        const value receiver = arg_at(a, 0);
+        // 10.4.1.3 step 1, ? target.[[GetPrototypeOf]](): a proxy's trap
+        // runs here and may throw; the bound function's [[Prototype]] is
+        // the target's, not Function.prototype's.
+        const value proto = detail::prototype_of(c, self);
+        if (watch.threw()) { return value::undefined(); }
+        // The arguments bound now are prepended to the ones supplied later,
+        // which is what makes `f.bind(o, 1)` a partial application rather than
+        // just a receiver change.
+        const auto bound =
+            std::make_shared<std::vector<value>>(a.begin() + (a.empty() ? 0 : 1), a.end());
+        auto * fn = c.allocate<native_object>(
+            "bound", [self, receiver, bound](context & inner, std::span<value> later) {
+                std::vector<value> args = *bound;
+                args.insert(args.end(), later.begin(), later.end());
+                return inner.call(self, args, receiver);
+            });
+        // The lambda's captures are invisible to the collector, so every
+        // value they hold is also pushed onto `retained`, which is traced.
+        // A bound function is often the only reference to its target (as in
+        // `return target.bind(null, arg)` from a factory); without this a
+        // collection would free the target and the next call would use it
+        // after free. A one-time snapshot is exact: `*bound`, `self` and
+        // `receiver` never change after bind.
+        fn->retained.push_back(self);
+        fn->retained.push_back(receiver);
+        // The [[Prototype]] taken above, which the collector does not
+        // reach through proto_link - null is a value like any other, so
+        // the layout stays fixed: target, this, prototype, then the
+        // bound arguments.
+        fn->retained.push_back(proto);
+        fn->retained.insert(fn->retained.end(), bound->begin(), bound->end());
+        // [[BoundTargetFunction]], for `new bound()`: context::construct
+        // constructs the target with the bound arguments prepended (10.4.1.2),
+        // reading them off `retained` as laid out above. A bound function is
+        // a constructor exactly when its target is (10.4.1.3 step 5).
+        fn->define(CTBROWSER_PRIVATE_KEY("BoundTargetFunction"), self, attr_none);
+        fn->is_constructor = is_constructor(self);
+        // undefined, not null, marks an explicitly null [[Prototype]].
+        fn->proto_link = proto.is_null() ? value::undefined() : proto;
+        // 20.2.3.2: `length` is the target's own numeric `length` minus the
+        // bound argument count, floored at 0 (absent or non-numeric counts as
+        // 0); `name` is "bound " + the target's name. Both are
+        // { writable: false, enumerable: false, configurable: true }.
+        double left = 0.0;
+        if (c.has_own_property(self, "length")) {
+            const value target_length = c.lookup_property(self, "length");
+            if (watch.threw()) { return value::undefined(); }
+            if (target_length.is_number()) {
+                // Step 7.b: +Infinity stays, -Infinity is 0, else
+                // ToIntegerOrInfinity less the bound count - not ToLength,
+                // which clamped an infinite length to 2^53 - 1.
+                const double n = target_length.as_number();
+                if (std::isinf(n)) {
+                    left = n > 0 ? n : 0.0;
+                } else if (!std::isnan(n)) {
+                    left = std::trunc(n) - static_cast<double>(bound->size());
+                }
+            }
+        }
+        fn->define("length", value::number(std::max(0.0, left)), attr_configurable);
+        const value target_name = c.lookup_property(self, "name");
+        if (watch.threw()) { return value::undefined(); }
+        fn->define("name",
+                   c.string("bound " +
+                            (target_name.is_string() ? c.to_string(target_name) : std::string{})),
+                   attr_configurable);
+        return value::object(fn);
+    });
     // Function.prototype.toString returns the exact source text from the
     // function's span (function_proto::source_begin/end) in its program's
     // `source`. context::to_string uses the same path, so String(f) and

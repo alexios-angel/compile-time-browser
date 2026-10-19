@@ -8,6 +8,10 @@
 // with the reason, and a value it does follow contributes every closure it
 // can hold. ClosureValues.cpp lists the steps it follows.
 //
+// It takes the realm's built-ins to be untouched when the script starts, which
+// holds only because the module is the whole page (the model the window fold
+// uses); do not use it on a module that is only part of a page.
+//
 //===----------------------------------------------------------------------===//
 #pragma once
 
@@ -42,6 +46,19 @@ public:
     };
     Answer closuresOf(mlir::Value value);
 
+    /// The values `value` may hold that the query follows no further (a
+    /// constant, a binary result, a made object), when it followed every one,
+    /// or why it could not. The setAttribute name rule reads this: a name is
+    /// known at build time when every leaf is one the rule admits.
+    struct Leaves {
+        /// Each value the walk stopped at.
+        llvm::SmallVector<mlir::Value> values;
+        /// Why the value may hold something else; empty when `values` is
+        /// complete.
+        std::string unknown;
+    };
+    Leaves leafValuesOf(mlir::Value value);
+
     /// The value `call` calls: `f` when the callee is a constant-key read of
     /// `call` or `apply` off `f` and `f` is also the receiver, else the callee.
     static mlir::Value calledValue(CallOp call);
@@ -52,9 +69,12 @@ public:
 
 private:
     /// The closures, array literals and object literals a value may be, or
-    /// why it may be something else.
+    /// why it may be something else. `leaves` holds every value the walk
+    /// stopped at without following further (a constant, a binary result):
+    /// the values leafValuesOf() reports.
     struct objects {
         llvm::SetVector<mlir::Operation *> made;
+        llvm::SetVector<mlir::Value> leaves;
         std::string unknown;
     };
     /// Every call that may enter a function, or why some may be unseen.

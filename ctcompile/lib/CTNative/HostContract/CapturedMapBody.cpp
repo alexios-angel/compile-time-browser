@@ -138,8 +138,8 @@ std::optional<size_fact> Walk::sizeFacts(const CapturedMapState & state) {
     if (!owner.step()) { return std::nullopt; }
     if (state.currentSize) { return size_fact{*state.currentSize, state.currentSize}; }
     llvm::SmallVector<mlir::Value> distinct;
-    for (const auto & entry :
-         llvm::ArrayRef<entry_fact>(state.entries).take_front(kMaxPrimitiveMapSizeCandidates)) {
+    for (const auto & entry : llvm::ArrayRef<CapturedMapEntry>(state.entries)
+                                  .take_front(kMaxPrimitiveMapSizeCandidates)) {
         if (!owner.step()) { return std::nullopt; }
         if (!entry.present) { continue; }
         bool disjoint = true;
@@ -613,11 +613,7 @@ bool Walk::run() {
         for (mlir::Operation * operation : result.snapshotOperations) {
             if (!owner.step()) { return false; }
             if (operation->getParentOfType<ctjs::FuncOp>() != function) { continue; }
-            for (mlir::Value operand : operation->getOperands()) {
-                if (!owner.step() || !owner.dominance.dominates(operand, operation)) {
-                    return false;
-                }
-            }
+            if (!owner.operandsDominate(operation)) { return false; }
         }
         for (mlir::Operation * copy : copies->calls) {
             if (!closedUses(copy->getResult(0), [&](mlir::OpOperand & use) {

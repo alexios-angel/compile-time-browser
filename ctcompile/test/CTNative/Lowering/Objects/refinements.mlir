@@ -16,7 +16,8 @@
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/emit.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EMIT --implicit-check-not=ctnative.not_native --implicit-check-not=ctnative.refine
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/dead.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DEAD --implicit-check-not=ctnative.unreachable_reason
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/dead.js --whole-page 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DEAD --implicit-check-not=ctnative.unreachable_reason
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/dead.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=OPEN --implicit-check-not=ctnative.unreachable_refusals
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/written.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=WRITTEN
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/cell.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=CELL
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/cellwritten.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=CELLWRITTEN
@@ -26,6 +27,10 @@
 // EMIT-DAG: call_opaque "ctnative::Array.prototype.map.call"
 // WRITTEN: @written${{[0-9]+}}{{.*}}ctnative.not_native =
 // DEAD: ctnative.unreachable_refusals = [{function = "fn${{[0-9]+}}", reason = "removed: unreachable
+// OPEN: ctjs.load_global "PROPS"
+// OPEN: ctnative.array_callback = @fn$[[CALLBACK:[0-9]+]]
+// OPEN: ctjs.func @fn$[[CALLBACK]]
+// OPEN-SAME: ctnative.not_native = "parameter 0 is !ctnative.boxed
 // CELL-NOT: parameter 0 is !ctnative.boxed
 // CELL: @fn${{[0-9]+}}{{.*}}ctnative.not_native = "called back by `getOffset${{[0-9]+}}`, which is not native"
 // CELL-NOT: parameter 0 is !ctnative.boxed

@@ -9,7 +9,6 @@
 #include "Analysis.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SmallPtrSet.h"
 
 namespace ctcompile::ctnative {
 namespace {
@@ -153,8 +152,6 @@ void BindingTimeAnalysis::Impl::analyze(ctjs::FuncOp fn) {
                      complete[fn] ? "closed static body" : "body requires runtime work"};
 }
 
-BindingTimeAnalysis::BindingTimeAnalysis(mlir::ModuleOp module)
-    : BindingTimeAnalysis(module, [](mlir::ModuleOp source) { prepareNativeMaps(source); }) {}
 BindingTimeAnalysis::BindingTimeAnalysis(mlir::ModuleOp module,
                                          llvm::function_ref<void(mlir::ModuleOp)> prepareHeapFacts)
     : impl(std::make_unique<Impl>(module, prepareHeapFacts)) {}

@@ -42,6 +42,10 @@ public:
 
     [[nodiscard]] value make_array();
 
+    [[nodiscard]] value wrap_primitive(value self, value primitive);
+    /// Boxes a primitive; objects and nullish values pass through unchanged.
+    [[nodiscard]] value box_primitive(value v);
+
     [[nodiscard]] value iter_result(value v, bool done);
 
     void define_global(std::string name, value v);
@@ -952,6 +956,10 @@ private:
 
     /// The realm a frame for `callee` runs in; see call_frame::realm.
     [[nodiscard]] realm_record * realm_for(const closure_object * callee) const noexcept;
+
+    /// OrdinaryCallBindThis, once on entry; strict functions and arrows keep the receiver.
+    [[nodiscard]] value bind_this(const function_proto & proto, realm_record & realm,
+                                  value receiver);
 
     [[nodiscard]] static value effective_this(const call_frame & f);
 

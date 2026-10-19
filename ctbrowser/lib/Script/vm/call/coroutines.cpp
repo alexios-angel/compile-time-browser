@@ -128,13 +128,17 @@ value context::make_closure(closure_object * enclosing, std::uint32_t function_i
 /// but not the body.
 value context::make_generator(closure_object * closure, value receiver,
                               std::span<const value> args) {
+    const rooted keep_closure{*this, value::object(closure)};
+    const rooted keep_receiver{*this, receiver};
+    const rooted_values keep_args{*this, args};
     auto * saved = allocate<coroutine_object>();
     saved->proto = closure->proto;
     saved->ip = 0;
     saved->argc = static_cast<std::uint16_t>(args.size());
     saved->closure = closure;
     saved->realm = realm_for(closure);
-    saved->receiver = receiver;
+    const rooted keep_saved{*this, value::object(saved)};
+    saved->receiver = bind_this(*saved->proto, *saved->realm, receiver);
     saved->generator = true;
     // The arguments are the frame's first registers, which is how an ordinary
     // call passes them: the callee's frame starts where its arguments already

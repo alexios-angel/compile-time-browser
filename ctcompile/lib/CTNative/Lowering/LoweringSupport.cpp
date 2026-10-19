@@ -49,14 +49,6 @@ template <class Kind> bool is(mlir::Type type) {
     return llvm::isa<Kind>(type);
 }
 
-/// Whether `level` holds for this Map or for any Map nested as its values.
-template <class Level> bool anyMapLevel(MapType type, Level && level) {
-    for (; type; type = llvm::dyn_cast<MapType>(type.getValueType())) {
-        if (level(type)) { return true; }
-    }
-    return false;
-}
-
 } // namespace
 
 mlir::Type scalarObservationType(mlir::MLIRContext * context, PrimitiveAlternatives alternatives) {
@@ -104,22 +96,17 @@ carrier carrierOf(mlir::Type type) {
     // The table, or undefined before the run-once function stores it: one
     // pointer holds both.
     if (llvm::isa<StaticTableType>(type)) { return carrier::staticTable; }
-    if (auto opt = llvm::dyn_cast<OptType>(type);
-        opt && llvm::isa<StaticTableType>(opt.getElementType())) {
-        return carrier::staticTable;
-    }
     // An identity class's instance, or neither one: a null shared_ptr holds
     // both null and undefined, so admission refuses where they differ.
     if (llvm::isa<InstanceType>(type)) { return carrier::instance; }
-    if (auto opt = llvm::dyn_cast<OptType>(type);
-        opt && llvm::isa<InstanceType>(opt.getElementType())) {
-        return carrier::instance;
-    }
     if (auto string = llvm::dyn_cast<StrType>(type);
         string && string.getEncoding() == StrEncoding::UTF8) {
         return carrier::string;
     }
     if (auto opt = llvm::dyn_cast<OptType>(type)) {
+        if (llvm::isa<StaticTableType, DictType, InstanceType>(opt.getElementType())) {
+            return carrierOf(opt.getElementType());
+        }
         const carrier inner = carrierOf(opt.getElementType());
         if (inner == carrier::booleanString) { return carrier::nullableBooleanString; }
         if (inner == carrier::numberString) { return carrier::nullableNumberString; }
@@ -159,10 +146,6 @@ carrier carrierOf(mlir::Type type) {
     }
     // A table holds one value carrier (Admission/Dictionaries.cpp says which),
     // or tables. A table that may be undefined is the same pointer, null.
-    if (auto optional = llvm::dyn_cast<OptType>(type);
-        optional && llvm::isa<DictType>(optional.getElementType())) {
-        return carrierOf(optional.getElementType());
-    }
     if (auto table = llvm::dyn_cast<DictType>(type)) {
         const carrier value = carrierOf(table.getElementType());
         return value == carrier::dictionary || !carrierInfo(value).spelling.empty()
@@ -516,27 +499,6 @@ std::string mapValueSpelling(mlir::Type type) {
         return llvm::cast<ec::OpaqueType>(mapCarrierType(map)).getValue().str();
     }
     llvm::report_fatal_error("native Map value has no carrier; admission should refuse it");
-}
-
-bool mapNeedsString(MapType type) {
-    return anyMapLevel(type, [](MapType level) {
-        return llvm::isa<StrType>(level.getKeyType()) ||
-               !nullableMapSpelling(level.getKeyType()).empty() ||
-               llvm::isa<StrType>(level.getValueType()) ||
-               !nullableMapSpelling(level.getValueType()).empty();
-    });
-}
-
-bool mapNeedsNullableString(MapType type) {
-    return anyMapLevel(type, [](MapType level) {
-        return !nullableMapSpelling(level.getKeyType()).empty() ||
-               !nullableMapSpelling(level.getValueType()).empty();
-    });
-}
-
-bool mapNeedsNullableStringKey(MapType type) {
-    return anyMapLevel(
-        type, [](MapType level) { return !nullableMapSpelling(level.getKeyType()).empty(); });
 }
 
 std::string dictionaryValueSpelling(DictType type) {
