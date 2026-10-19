@@ -204,9 +204,8 @@ ExceptionInvocationSource inspectSingleInvocationRegion(ctjs::FuncOp function, u
             } else if (chain.size() != attempt.invocations.size()) {
                 attempt.reject("native invocation chain must lie on one success path");
             }
-        } else if (chain.empty()) {
-            chain.emplace_back(attempt.invocations.begin()->second,
-                               llvm::cast<ctjs::CheckOp>(attempt.invocations.begin()->first));
+        } else if (chain.size() != attempt.invocations.size()) {
+            attempt.reject("native invocation chain must lie on one success path");
         }
         if (attempt.refusal.empty() && attempt.spend(uint64_t(attempt.prefix.size()) +
                                                      normal.blocks.size() + caught.blocks.size())) {
