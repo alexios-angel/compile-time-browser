@@ -21,6 +21,14 @@ HERE = Path(__file__).resolve().parent
 MAINS = {}
 
 CASES = {
+    "Objects/regexp-controls": [
+        "split-file %s %t",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/controls.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/native.mlir",
+        "FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/native.mlir",
+        "ctjs-opt %t/native.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/native.cpp",
+        "%gxx -O2 %t/native.cpp -o %t/gcc && %t/gcc | FileCheck %s --check-prefix=OUTPUT",
+        "%clangxx -O2 %t/native.cpp -o %t/clang && %t/clang | FileCheck %s --check-prefix=OUTPUT",
+    ],
     "Admission/divergence-refusals": [
         "split-file %s %t",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/equality.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=EQUALITY",
