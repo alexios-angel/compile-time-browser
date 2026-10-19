@@ -42,12 +42,6 @@ std::optional<llvm::StringRef> constantString(mlir::Value value) {
     return text ? std::optional<llvm::StringRef>(text.getValue()) : std::nullopt;
 }
 
-/// Whether `text` starts with `prefix`, ignoring ASCII case.
-bool startsWithLower(llvm::StringRef text, llvm::StringRef prefix) {
-    return text.size() >= prefix.size() &&
-           text.take_front(prefix.size()).equals_insensitive(prefix);
-}
-
 /// Why setting a URL through `api` to `value` may run code, or empty: a
 /// constant `javascript:` URL (the URL parser strips leading C0 controls and
 /// spaces, then TAB/LF/CR anywhere), or a URL not known at build time.
@@ -61,7 +55,7 @@ std::string urlTarget(mlir::Value value, llvm::StringRef api) {
     std::string url =
         text->drop_while([](char c) { return static_cast<unsigned char>(c) <= 0x20; }).str();
     std::erase_if(url, [](char c) { return c == '\t' || c == '\n' || c == '\r'; });
-    return startsWithLower(url, "javascript:")
+    return llvm::StringRef(url).starts_with_insensitive("javascript:")
                ? "`" + api.str() + "` set to the javascript: URL `" + text->str() +
                      "`, which runs code when followed"
                : std::string{};
@@ -118,7 +112,7 @@ std::string handlerName(mlir::Value name, llvm::StringRef api,
                "handler, whose code a native program cannot compile";
     };
     if (const auto text = constantString(name)) {
-        return startsWithLower(*text, "on")
+        return text->starts_with_insensitive("on")
                    ? "`" + api.str() + "` with the name `" + text->str() +
                          "` adds an on* event handler, whose code a native program cannot compile"
                    : std::string{};
@@ -127,13 +121,13 @@ std::string handlerName(mlir::Value name, llvm::StringRef api,
     if (!leaves.unknown.empty() || leaves.values.empty()) { return refused(); }
     for (mlir::Value leaf : leaves.values) {
         if (const auto text = constantString(leaf)) {
-            if (startsWithLower(*text, "on")) { return refused(); }
+            if (text->starts_with_insensitive("on")) { return refused(); }
             continue;
         }
         const auto prefix = leftmostPart(leaf);
         const bool rules_out =
             prefix && ((prefix->size() == 1 && (*prefix)[0] != 'o' && (*prefix)[0] != 'O') ||
-                       (prefix->size() >= 2 && !startsWithLower(*prefix, "on")));
+                       (prefix->size() >= 2 && !prefix->starts_with_insensitive("on")));
         if (!rules_out) { return refused(); }
     }
     return {};
