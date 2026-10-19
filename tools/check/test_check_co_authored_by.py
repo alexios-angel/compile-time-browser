@@ -7,10 +7,14 @@ import pytest
 HOOK = Path(__file__).with_name("check-co-authored-by.py")
 
 
-def passes(tmp_path, message):
+def run(tmp_path, message):
     path = tmp_path / "COMMIT_EDITMSG"
     path.write_text(message)
-    return subprocess.run([sys.executable, HOOK, path], capture_output=True).returncode == 0
+    # Run outside the checkout: in a copied worktree the .git pointer may not
+    # resolve, and git interpret-trailers then fails before parsing anything.
+    return subprocess.run(
+        [sys.executable, HOOK, path], capture_output=True, text=True, cwd=tmp_path
+    )
 
 
 @pytest.mark.parametrize(
@@ -24,7 +28,7 @@ def passes(tmp_path, message):
     ],
 )
 def test_accepts_a_final_trailer(tmp_path, message):
-    assert passes(tmp_path, message)
+    assert run(tmp_path, message).returncode == 0
 
 
 @pytest.mark.parametrize(
@@ -38,4 +42,7 @@ def test_accepts_a_final_trailer(tmp_path, message):
     ],
 )
 def test_rejects_a_missing_or_malformed_trailer(tmp_path, message):
-    assert not passes(tmp_path, message)
+    result = run(tmp_path, message)
+    # The hook's own refusal, not a crash.
+    assert result.returncode == 1
+    assert "must end with a trailer" in result.stderr
