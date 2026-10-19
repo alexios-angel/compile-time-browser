@@ -146,6 +146,7 @@ def main(argv=None):
     parser.add_argument("--mutate-as", default="number")
     parser.add_argument("--prebuilt")
     parser.add_argument("--core-build", type=Path)
+    parser.add_argument("--core-free", dest="core_build", action="store_const", const=None)
     args = parser.parse_args(argv)
     name = args.name
 
@@ -179,8 +180,8 @@ def main(argv=None):
         src = work / "unit.cpp"
         src.write_text(cpp)
         exe = str(work / "unit")
-        # String numeric conversion/formatting uses public Core. Other fixtures
-        # retain their header-only link; both reject Script and boxed AOT symbols.
+        # Number conversion/formatting uses public Core. Explicit Core-free
+        # controls retain their header-only link; both reject Script/AOT symbols.
         libraries = []
         if args.core_build:
             from CTNative.Browser.dom.dom import link_options
@@ -189,7 +190,7 @@ def main(argv=None):
                 argparse.Namespace(build=args.core_build, include=Path(CORE_INCLUDE[2:])),
                 core_only=True,
             )
-        run([args.cxx, *FLAGS, "-o", exe, str(src), *libraries])
+        run([args.cxx, *FLAGS, "--core-free", "-o", exe, str(src), *libraries])
 
     # --- (c) the symbol check, first shown to find interpreter symbols ------
     control = run([args.nm, "-C", args.vm_linked])

@@ -105,20 +105,20 @@
 // the module keeps its header-only link; it does not need --core-build.
 //
 //
-// RUN: %compilation_unit --module %s --js %S/values.js --work %t --name values
-// RUN: not %compilation_unit --module %s --js %S/values.js --work %t --name values_number --mutate third --mutate-as number 2>&1 | FileCheck %s --check-prefix=NUMBER
+// RUN: %compilation_unit --core-free --module %s --js %S/values.js --work %t --name values
+// RUN: not %compilation_unit --core-free --module %s --js %S/values.js --work %t --name values_number --mutate third --mutate-as number 2>&1 | FileCheck %s --check-prefix=NUMBER
 // NUMBER: global 'third' differs
-// RUN: not %compilation_unit --module %s --js %S/values.js --work %t --name values_boolean --mutate no --mutate-as boolean 2>&1 | FileCheck %s --check-prefix=BOOLEAN
+// RUN: not %compilation_unit --core-free --module %s --js %S/values.js --work %t --name values_boolean --mutate no --mutate-as boolean 2>&1 | FileCheck %s --check-prefix=BOOLEAN
 // BOOLEAN: global 'no' differs
-// RUN: not %compilation_unit --module %s --js %S/values.js --work %t --name values_string --mutate greeting --mutate-as string 2>&1 | FileCheck %s --check-prefix=STRING
+// RUN: not %compilation_unit --core-free --module %s --js %S/values.js --work %t --name values_string --mutate greeting --mutate-as string 2>&1 | FileCheck %s --check-prefix=STRING
 // STRING: global 'greeting' differs
-// RUN: not %compilation_unit --module %s --js %S/values.js --work %t --name values_undefined --mutate missing --mutate-as undefined 2>&1 | FileCheck %s --check-prefix=UNDEFINED
+// RUN: not %compilation_unit --core-free --module %s --js %S/values.js --work %t --name values_undefined --mutate missing --mutate-as undefined 2>&1 | FileCheck %s --check-prefix=UNDEFINED
 // UNDEFINED: global 'missing' differs
-// RUN: not %compilation_unit --module %s --js %S/values.js --work %t --name values_null --mutate nothing --mutate-as null 2>&1 | FileCheck %s --check-prefix=NULL
+// RUN: not %compilation_unit --core-free --module %s --js %S/values.js --work %t --name values_null --mutate nothing --mutate-as null 2>&1 | FileCheck %s --check-prefix=NULL
 // NULL: global 'nothing' differs
-// RUN: not %compilation_unit --module %s --js %S/values.js --work %t --name values_vacuous_mutation --mutate answer --mutate-as number 2>&1 | FileCheck %s --check-prefix=VACUOUS
+// RUN: not %compilation_unit --core-free --module %s --js %S/values.js --work %t --name values_vacuous_mutation --mutate answer --mutate-as number 2>&1 | FileCheck %s --check-prefix=VACUOUS
 // VACUOUS: VACUOUS
-// RUN: not %compilation_unit --module %s --js %S/values.js --work %t --name values_vm_linked --prebuilt ctcompile-test-native-values-vm-linked 2>&1 | FileCheck %s --check-prefix=VM-LINKED
+// RUN: not %compilation_unit --core-free --module %s --js %S/values.js --work %t --name values_vm_linked --prebuilt ctcompile-test-native-values-vm-linked 2>&1 | FileCheck %s --check-prefix=VM-LINKED
 // VM-LINKED: reaches the interpreter
 // RUN: %compile_clean --module %s --work %t --name values
 

@@ -87,10 +87,10 @@
 // emitted file builds warning-free with GCC and Clang, and that both reject it
 // once an unused variable is added.
 //
-// RUN: %compilation_unit --module %s --js %S/functions.js --work %t --name fixture
-// RUN: not %compilation_unit --module %s --js %S/functions.js --work %t --name fixture_off_by_one --mutate fib20 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE
+// RUN: %compilation_unit --core-free --module %s --js %S/functions.js --work %t --name fixture
+// RUN: not %compilation_unit --core-free --module %s --js %S/functions.js --work %t --name fixture_off_by_one --mutate fib20 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE
 // OFF-BY-ONE: global 'fib20' differs
-// RUN: not %compilation_unit --module %s --js %S/functions.js --work %t --name fixture_vm_linked --prebuilt ctcompile-test-native-vm-linked 2>&1 | FileCheck %s --check-prefix=VM-LINKED
+// RUN: not %compilation_unit --core-free --module %s --js %S/functions.js --work %t --name fixture_vm_linked --prebuilt ctcompile-test-native-vm-linked 2>&1 | FileCheck %s --check-prefix=VM-LINKED
 // VM-LINKED: reaches the interpreter
 // RUN: %compile_clean --module %s --work %t --name fixture
 // RUN: %compile_clean --module %s --work %t --name fixture_unused_variable --mutate | FileCheck %s --check-prefix=MUTANT

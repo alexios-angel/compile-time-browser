@@ -11,10 +11,10 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/globals.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/silent.mlir
 // RUN: FileCheck %s --check-prefix=SILENT --implicit-check-not=ctnative.not_native --implicit-check-not=printf --implicit-check-not=ctnative::print_ < %t/silent.mlir
 // RUN: ctjs-opt %t/silent.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/silent.cpp
-// RUN: %gxx -O2 %t/silent.cpp -o %t/silent-gcc
+// RUN: %gxx --core-free -O2 %t/silent.cpp -o %t/silent-gcc
 // RUN: %t/silent-gcc > %t/silent-gcc.out
 // RUN: test ! -s %t/silent-gcc.out
-// RUN: %clangxx -O2 %t/silent.cpp -o %t/silent-clang
+// RUN: %clangxx --core-free -O2 %t/silent.cpp -o %t/silent-clang
 // RUN: %t/silent-clang > %t/silent-clang.out
 // RUN: test ! -s %t/silent-clang.out
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/globals.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/observed.mlir
