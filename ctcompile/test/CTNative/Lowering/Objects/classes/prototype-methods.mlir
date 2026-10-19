@@ -20,7 +20,7 @@
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/prototype.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/prototype.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/prototype.mlir
 // RUN: FileCheck %s --check-prefix=PROTOTYPE --implicit-check-not=ctnative.not_native < %t/prototype.mlir
 // RUN: ctjs-opt %t/prototype.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/prototype.cpp
 // RUN: FileCheck %s --check-prefix=CPP --implicit-check-not=std::variant --implicit-check-not=std::visit < %t/prototype.cpp
@@ -41,28 +41,28 @@
 // own property (DISPOSE). OWNFIELD shadows the method with an own field
 // through its constant name, which still blocks the binding itself.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/keyed.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=KEYED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/this-key.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=THISKEY
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/helper.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=HELPER
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/prototype-key.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=PROTOKEY
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/deleted.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=DELETED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/reached.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=REACHED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/dispose.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=DISPOSE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/own-field.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=OWNFIELD
 //
 // A method's receiver is an instance of its class, which only the constructor
@@ -73,7 +73,7 @@
 // prototype) stays native instead of being lifted alone and then refused
 // with its refused caller.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/class-refused.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=CLASSREFUSED
 //
 // Each class binds its own methods, so an override is resolved per class (as
@@ -81,7 +81,7 @@
 // class keeps dispatching: in mixed.js both instances reach `measure`'s one
 // parameter, and neither class lifts.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=MIXED
 //
 // The constructor rule (ClosureLifting/Constructors.cpp) also refuses a class
@@ -94,7 +94,7 @@
 // `constructor` and the method's name off a record of its own; both used to
 // leave Shape refused and now run natively.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/table.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/table.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/table.mlir
 // RUN: FileCheck %s --check-prefix=TABLE --implicit-check-not=ctnative.not_native < %t/table.mlir
 // RUN: ctjs-opt %t/table.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/table.cpp
 // RUN: FileCheck %s --check-prefix=TABLE-CPP --implicit-check-not=std::variant --implicit-check-not=std::visit < %t/table.cpp
@@ -105,7 +105,7 @@
 // RUN: %native_reference %t/table.js | FileCheck %s --check-prefix=TABLE-RUN
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/table.js | FileCheck %s --check-prefix=TABLE-RUN
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/observed.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/observed.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/observed.mlir
 // RUN: FileCheck %s --check-prefix=OBSERVED --implicit-check-not=ctnative.not_native < %t/observed.mlir
 // RUN: ctjs-opt %t/observed.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/observed.cpp
 // RUN: FileCheck %s --check-prefix=OBSERVED-CPP --implicit-check-not=std::variant --implicit-check-not=std::visit < %t/observed.cpp
@@ -123,22 +123,22 @@
 // `constructor` or `__proto__`, which admission refuses on a struct
 // (CONSTRUCTOR, DUNDER).
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/arrow.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=ARROW
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/read-key.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=READKEY
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/this-read.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=THISREAD
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/param-read.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=PARAMREAD
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/constructor.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=CONSTRUCTOR
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/dunder.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=DUNDER
 
 // PROTOTYPE-DAG: emitc.class @Shape

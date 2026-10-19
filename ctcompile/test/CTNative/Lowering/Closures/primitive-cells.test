@@ -4,10 +4,10 @@
 # RUN: split-file %s %t
 # RUN: %node %t/expected.cjs %t/values.js
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir
-# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false observe-globals=true},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
 # RUN: FileCheck %s --check-prefix=RUNTIME --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/runtime.mlir
 # RUN: ctjs-translate --mlir-to-cpp %t/runtime.mlir | FileCheck %s --check-prefix=CPP --implicit-check-not=ctbrowser::script --implicit-check-not=ctbrowser::aot
-# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/optimized.mlir
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{observe-globals=true},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/optimized.mlir
 # RUN: ctjs-opt %t/runtime.mlir --ctnative-print-deduced -o %t/runtime.deduced.mlir
 # RUN: ctjs-opt %t/optimized.mlir --ctnative-print-deduced -o %t/optimized.deduced.mlir
 # RUN: %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name primitive_cells_runtime_gcc --core-build %build
@@ -21,14 +21,14 @@
 # RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name primitive_cells_numeric_mutation --mutate numericSnapshot --core-build %build 2>&1 | FileCheck %s --check-prefix=NUMERIC-MUTATION
 # RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name primitive_cells_string_mutation --mutate nestedSnapshot --mutate-as string --core-build %build 2>&1 | FileCheck %s --check-prefix=STRING-MUTATION
 # RUN: %node %t/witness-expected.cjs %t/shared-mixed.js
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/shared-mixed.js | ctjs-opt --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/shared-mixed.mlir
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/shared-mixed.js | ctjs-opt --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false observe-globals=true},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/shared-mixed.mlir
 # RUN: %compilation_unit --cxx g++ --module %t/shared-mixed.mlir --js %t/shared-mixed.js --work %t --name primitive_cells_witness_gcc --core-build %build
 # RUN: %compilation_unit --cxx %dom_clang --module %t/shared-mixed.mlir --js %t/shared-mixed.js --work %t --name primitive_cells_witness_clang --core-build %build
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/broad-union.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/object-union.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/container.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/index-switch.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=INDEX-SWITCH --implicit-check-not=ctnative.not_native --implicit-check-not=scf.index_switch --implicit-check-not=ctjs.func
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nested-sibling.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=NESTED-SIBLING --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/broad-union.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false observe-globals=true" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/object-union.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false observe-globals=true" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/container.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false observe-globals=true" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/index-switch.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false observe-globals=true" | FileCheck %s --check-prefix=INDEX-SWITCH --implicit-check-not=ctnative.not_native --implicit-check-not=scf.index_switch --implicit-check-not=ctjs.func
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nested-sibling.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false observe-globals=true" | FileCheck %s --check-prefix=NESTED-SIBLING --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 
 # RUNTIME-DAG: !emitc.ptr<!emitc.opaque<"ctnative::number_string">>
 # RUNTIME-DAG: !emitc.ptr<!emitc.opaque<"ctnative::boolean_string">>

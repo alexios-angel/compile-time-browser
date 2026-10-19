@@ -23,7 +23,7 @@
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/known.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/known.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/known.mlir
 // RUN: FileCheck %s --check-prefix=KNOWN --implicit-check-not=ctnative.not_native < %t/known.mlir
 // RUN: ctjs-opt %t/known.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/known.cpp
 // RUN: %gxx -O2 %t/known.cpp -o %t/known-gcc
@@ -32,13 +32,13 @@
 // RUN: %t/known-clang | FileCheck %s --check-prefix=OUT
 // RUN: %native_reference %t/known.js | FileCheck %s --check-prefix=OUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/kept.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=KEPT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/kept-static.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=KEPTSTATIC
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/runtime.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=RUNTIME
 
 // KNOWN: emitc.func @known_{{[0-9]+}}(%arg0: !emitc.opaque<"ctnative::js_num">)

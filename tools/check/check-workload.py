@@ -219,10 +219,15 @@ def string_entries(script):
     return ",".join(script.get("string_entries", []))
 
 
-def skim(text):
+def skim(text, regexes=False):
     """`text` with comments and string/template literals blanked to spaces,
-    keeping newlines, so structure scans (braces, declarations) see code only."""
+    keeping newlines, so structure scans (braces, declarations) see code only.
+    With `regexes`, also blanks what looks like a regular-expression literal: a
+    `/` after anything but an identifier, number, `)`, `]`, `++` or `--` (the
+    usual heuristic); a division after one of those stays readable."""
     out, i, n = list(text), 0, len(text)
+    significant = ""  # the last non-space character kept (quoted text reads as its quote)
+    tail = ""  # the last two, so `++` and `--` read as one token
     while i < n:
         c = text[i]
         if c in "\"'`":
@@ -240,6 +245,8 @@ def skim(text):
                 i += 1
                 if done:
                     break
+            significant = quote
+            tail = (tail + quote)[-2:]
         elif c == "/" and i + 1 < n and text[i + 1] == "/":
             while i < n and text[i] != "\n":
                 out[i] = " "
@@ -254,7 +261,32 @@ def skim(text):
             if i + 1 < n:
                 out[i] = out[i + 1] = " "
                 i += 2
+        elif regexes and c == "/" and not (
+            significant.isalnum() or significant in "_$)]" or tail.endswith(("++", "--"))
+        ):
+            out[i] = " "
+            i += 1
+            in_class = False
+            while i < n and text[i] != "\n":
+                if text[i] == "\\" and i + 1 < n:
+                    out[i] = out[i + 1] = " "
+                    i += 2
+                    continue
+                if text[i] == "[":
+                    in_class = True
+                elif text[i] == "]":
+                    in_class = False
+                done = text[i] == "/" and not in_class
+                out[i] = " "
+                i += 1
+                if done:
+                    break
+            significant = "/"
+            tail = (tail + "/")[-2:]
         else:
+            if not c.isspace():
+                significant = c
+                tail = (tail + c)[-2:]
             i += 1
     return "".join(out)
 
@@ -285,7 +317,6 @@ def directives(text):
             return found
         quote = text[i]
         i += 1
-        start = i
         value = []
         while i < n and text[i] != quote:
             if text[i] == "\\" and i + 1 < n:
@@ -302,27 +333,131 @@ def directives(text):
             i += 1
 
 
+WORD = re.compile(r"[A-Za-z_$][\w$]*")
+
+
+def binding_names(code, start):
+    """The names one declarator binds, from its start up to `=` or the list's
+    end: a plain name, or the identifiers of a destructuring pattern at its
+    first nesting level (defaults after `=` and keys before `:` skipped, rest
+    elements read by their last name)."""
+    pos = start
+    while pos < len(code) and code[pos].isspace():
+        pos += 1
+    if pos >= len(code):
+        return set(), pos
+    if code[pos] not in "{[":
+        match = WORD.match(code, pos)
+        return ({match.group(0)}, match.end()) if match else (set(), pos)
+    # A destructuring pattern: every identifier at nesting level 1 that is not
+    # a property key (not followed by `:`) and not inside a default value.
+    names, depth, pos = set(), 0, pos
+    key_or_default = False
+    while pos < len(code):
+        c = code[pos]
+        if c in "{[":
+            depth += 1
+            key_or_default = False
+        elif c in "}]":
+            depth -= 1
+            if depth == 0:
+                return names, pos + 1
+        elif depth == 1:
+            if c == ":":
+                key_or_default = True
+            elif c == ",":
+                key_or_default = False
+            elif c == "=":
+                # A default value: skip it to the next `,` at level 1 or out.
+                inner = 0
+                pos += 1
+                while pos < len(code) and (inner or code[pos] not in ",}]"):
+                    if code[pos] in "{[(":
+                        inner += 1
+                    elif code[pos] in "})]":
+                        if inner:
+                            inner -= 1
+                        elif code[pos] in "}]":
+                            break
+                    pos += 1
+                continue
+            elif not key_or_default:
+                match = WORD.match(code, pos)
+                if match and match.group(0) not in (
+                    "true", "false", "null", "undefined", "new", "typeof", "in", "of", "instanceof",
+                ):
+                    names.add(match.group(0))
+                    pos = match.end()
+                    continue
+        pos += 1
+    return names, pos
+
+
 def top_level_declarations(text):
-    """The names `text` declares at its top level: function declarations and
-    var/let/const bindings at brace depth 0. A declaration at depth 0 of a
-    later script hoists into a joined program, changing what an earlier script
-    sees; one inside a block or function body does not."""
+    """The names `text` declares at its top level: function and class
+    declarations and var/let/const bindings at brace depth 0, including
+    generator functions, comma-separated binding lists and destructuring
+    patterns. A declaration at depth 0 of a later script hoists into a joined
+    program, changing what an earlier script sees; one inside a block or
+    function body does not."""
     code = skim(text)
-    names = set()
+    names, pos, n = set(), 0, len(code)
     depth = 0
-    depth_at = []  # depth after each position, so a match can ask its own depth
-    for c in code:
-        depth_at.append(depth)
+    depth_at = [0] * n
+    for i, c in enumerate(code):
+        depth_at[i] = depth
         if c == "{":
             depth += 1
         elif c == "}":
             depth = max(0, depth - 1)
-    declaration = re.compile(
-        r"\bfunction\s+([A-Za-z_$][\w$]*)|\b(?:var|let|const)\s+([A-Za-z_$][\w$]*)"
-    )
-    for match in declaration.finditer(code):
-        if depth_at[match.start()] == 0:
-            names.add(next(group for group in match.groups() if group is not None))
+    while pos < n:
+        match = WORD.search(code, pos)
+        if not match:
+            break
+        word = match.group(0)
+        if depth_at[match.start()] != 0:
+            pos = match.end()
+            continue
+        if word in ("function", "class"):
+            # function NAME, function* NAME, class NAME; an anonymous
+            # `export default function () {}` binds nothing the library names.
+            at = match.end()
+            while at < n and code[at].isspace():
+                at += 1
+            if word == "function" and at < n and code[at] == "*":
+                at += 1
+                while at < n and code[at].isspace():
+                    at += 1
+            named = WORD.match(code, at)
+            if named:
+                names.add(named.group(0))
+            pos = match.end()
+        elif word in ("var", "let", "const"):
+            pos = match.end()
+            while pos < n:
+                bound, pos = binding_names(code, pos)
+                names.update(bound)
+                while pos < n and code[pos].isspace():
+                    pos += 1
+                if pos < n and code[pos] == "=":
+                    # Skip the initializer to the next depth-0 comma or `;`.
+                    inner = 0
+                    pos += 1
+                    while pos < n and (inner or code[pos] not in ",;"):
+                        if code[pos] in "({[":
+                            inner += 1
+                        elif code[pos] in ")}]":
+                            if inner:
+                                inner -= 1
+                        pos += 1
+                if pos >= n or code[pos] == ";":
+                    break
+                if code[pos] == ",":
+                    pos += 1
+                    continue
+                break
+        else:
+            pos = match.end()
     return names
 
 
@@ -330,14 +465,32 @@ def join_problem(library, probe):
     """Why joining `library` and `probe` into one classic script would change
     what they do as two scripts, or None when the join is safe. Two scripts run
     as two programs: the first before the second's declarations exist, and each
-    with its own directive prologue."""
+    with its own directive prologue. When the scan cannot read the probe
+    safely, it says so and the join is refused: a refused join is safe, a wrong
+    join is not."""
     if directives(library) != directives(probe):
         return (
             "their directive prologues differ "
             f"({sorted(directives(library))} vs {sorted(directives(probe))}), "
             "and one joined script keeps only the first"
         )
-    mentioned = {name for name in top_level_declarations(probe) if re.search(rf"\b{re.escape(name)}\b", skim(library))}
+    # A `/` outside comments is a regular-expression literal or a division;
+    # skim would blank a quoted character inside one and could hide a probe
+    # declaration, so the scan refuses rather than risk a wrong join.
+    if "/" in skim(probe):
+        return (
+            "the probe uses a regular expression or a division, which the "
+            "declaration scan cannot read safely"
+        )
+    # The regex/division ambiguity in the library is undecidable by a lexical
+    # scan, so read it both ways and refuse on any mention either reading
+    # shows: blanking too little and blanking too much are both covered.
+    readings = (skim(library), skim(library, regexes=True))
+    mentioned = {
+        name
+        for name in top_level_declarations(probe)
+        if any(re.search(rf"(?<![\w$]){re.escape(name)}(?![\w$])", code) for code in readings)
+    }
     if mentioned:
         return (
             f"the probe declares {sorted(mentioned)} at its top level, which the "

@@ -9,12 +9,12 @@
 # caught. A String indexed by a String stays refused.
 # RUN: split-file %s %t
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir
-# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false observe-globals=true},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
 # RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/runtime.mlir
 # RUN: %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name strings_gcc --core-build %build
 # RUN: %compilation_unit --cxx %dom_clang --module %t/runtime.mlir --js %t/values.js --work %t --name strings_clang --core-build %build
 # RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name strings_mutation --mutate tidied --mutate-as string --core-build %build 2>&1 | FileCheck %s --check-prefix=MUTATION
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/key.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=KEY
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/key.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false observe-globals=true" | FileCheck %s --check-prefix=KEY
 
 # NATIVE-DAG: ctnative::String.prototype.trim.call
 # NATIVE-DAG: ctnative::String.prototype.toLowerCase.call

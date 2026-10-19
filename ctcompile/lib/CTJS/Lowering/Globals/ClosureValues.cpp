@@ -302,7 +302,7 @@ std::string ClosureValues::inFrame(FuncOp function, mlir::Operation * call,
             continue;
         }
         auto argument = mlir::dyn_cast<mlir::BlockArgument>(value);
-        if (argument && argument.getOwner()->isEntryBlock() &&
+        if (argument && argument.getOwner() == &function.getBody().front() &&
             argument.getArgNumber() >= implicit_arguments) {
             if (readsRawArguments(function)) {
                 return quoted(function) + " reads its raw arguments";

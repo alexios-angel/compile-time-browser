@@ -12,63 +12,63 @@
 // RUN: split-file %s %t
 // RUN: python3 %S/nullable-global-output.py --translate ctjs-translate --opt ctjs-opt --work %t/execute --node %node --reference %native_reference
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/hoisted.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=HOISTED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/pick.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=PICK
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/outerstore.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=OUTERSTORE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/dominates.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=DOMINATES
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/field.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=FIELD
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/readbefore.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=READBEFORE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/onepath.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=ONEPATH
 
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boolean.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false observe-globals=true' \
 // RUN:   | FileCheck %s --check-prefix=BOOLEAN
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boolean-optional.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false observe-globals=true' \
 // RUN:   | FileCheck %s --check-prefix=BOOLEAN_OPTIONAL
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boolean-mixed.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false observe-globals=true' \
 // RUN:   | FileCheck %s --check-prefix=BOOLEAN_MIXED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boolean-writes.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false observe-globals=true' \
 // RUN:   | FileCheck %s --check-prefix=BOOLEAN_WRITES
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boolean-callee.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false observe-globals=true' \
 // RUN:   | FileCheck %s --check-prefix=BOOLEAN_CALLEE
 
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false observe-globals=true' \
 // RUN:   | FileCheck %s --check-prefix=STRING
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string-optional.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false observe-globals=true' \
 // RUN:   | FileCheck %s --check-prefix=STRING_OPTIONAL
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string-mixed.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false observe-globals=true' \
 // RUN:   | FileCheck %s --check-prefix=STRING_MIXED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string-writes.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false observe-globals=true' \
 // RUN:   | FileCheck %s --check-prefix=STRING_WRITES
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string-callee.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false observe-globals=true' \
 // RUN:   | FileCheck %s --check-prefix=STRING_CALLEE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string-overwrite.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false observe-globals=true' \
 // RUN:   | FileCheck %s --check-prefix=STRING_OVERWRITE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string-early.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false observe-globals=true' \
 // RUN:   | FileCheck %s --check-prefix=STRING_EARLY
 
 // Hoisted globals, conditionally assigned cells and undominated field reads may

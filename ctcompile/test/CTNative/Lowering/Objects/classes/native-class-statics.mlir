@@ -14,7 +14,7 @@
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/shape.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/shape.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/shape.mlir
 // RUN: FileCheck %s --implicit-check-not=ctnative.not_native --implicit-check-not=ctnative.class_reason < %t/shape.mlir
 // RUN: ctjs-opt %t/shape.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/shape.cpp
 // RUN: FileCheck %s --check-prefix=CPP < %t/shape.cpp
@@ -31,7 +31,7 @@
 // same program reading `o.constructor.SIDES` is refused
 // (native-class-statics-refusals.mlir, constructor-static.js).
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/describe.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/describe.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/describe.mlir
 // RUN: FileCheck %s --check-prefix=DESCRIBE --implicit-check-not=ctnative.not_native --implicit-check-not=ctnative.class_reason < %t/describe.mlir
 // RUN: ctjs-opt %t/describe.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/describe.cpp
 // RUN: %gxx -O2 %t/describe.cpp -o %t/describe-gcc
@@ -46,7 +46,7 @@
 // names `Tag` and resolves to Tag's getter, and it does not stop the rewrite
 // of `Shape`, which has a static member of the same name.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/arrow.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/arrow.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/arrow.mlir
 // RUN: FileCheck %s --check-prefix=ARROW --implicit-check-not=ctnative.not_native --implicit-check-not=ctnative.class_reason < %t/arrow.mlir
 // RUN: ctjs-opt %t/arrow.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/arrow.cpp
 // RUN: %gxx -O2 %t/arrow.cpp -o %t/arrow-gcc
@@ -64,7 +64,7 @@
 // the new value, as the original does. The copies are recorded in
 // ctnative.copies.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/helper.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/helper.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/helper.mlir
 // RUN: FileCheck %s --check-prefix=HELPER --implicit-check-not=ctnative.not_native --implicit-check-not=ctnative.class_reason < %t/helper.mlir
 // RUN: ctjs-opt %t/helper.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/helper.cpp
 // RUN: %gxx -O2 %t/helper.cpp -o %t/helper-gcc
@@ -79,7 +79,7 @@
 // through the arrow's closure, made earlier in the same function, so each
 // becomes a direct call of the arrow's copy for that class.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/viacall.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/viacall.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/viacall.mlir
 // RUN: FileCheck %s --check-prefix=VIACALL --implicit-check-not=ctnative.not_native --implicit-check-not=ctnative.class_reason < %t/viacall.mlir
 // RUN: ctjs-opt %t/viacall.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/viacall.cpp
 // RUN: %gxx -O2 %t/viacall.cpp -o %t/viacall-gcc
