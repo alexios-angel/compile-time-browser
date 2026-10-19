@@ -193,17 +193,13 @@ ExceptionInvocationSource inspectSingleInvocationRegion(ctjs::FuncOp function, u
                 block = nullptr;
             }
         }
-        if (maxCalls == 0 || attempt.throws != 0 || attempt.invocations.size() != 1) {
-            if (maxCalls <= 1 || attempt.throws != 0 || attempt.invocations.empty() ||
-                attempt.invocations.size() > maxCalls) {
-                attempt.reject(
-                    maxCalls <= 1
-                        ? "native invocation source needs one checked call and no explicit throws"
-                        : "native invocation source needs a bounded chain of checked calls and no "
-                          "explicit throws");
-            } else if (chain.size() != attempt.invocations.size()) {
-                attempt.reject("native invocation chain must lie on one success path");
-            }
+        if (attempt.throws != 0 || attempt.invocations.empty() ||
+            attempt.invocations.size() > maxCalls) {
+            attempt.reject(
+                maxCalls <= 1
+                    ? "native invocation source needs one checked call and no explicit throws"
+                    : "native invocation source needs a bounded chain of checked calls and no "
+                      "explicit throws");
         } else if (chain.size() != attempt.invocations.size()) {
             attempt.reject("native invocation chain must lie on one success path");
         }
