@@ -227,11 +227,13 @@ def main(argv=None):
         observations[name] = observe(args, name, witness, {"trace": "1"})
     raw = args.work / "bootstrap-button.raw.mlir"
     prepared = args.work / "bootstrap-button.prepared.mlir"
+    # The probe imports the whole page so absent-global folds can prove the UMD branch.
     imported = run(
         [
             args.translate,
             "--ctbrowser-js-to-ctjs",
             str(js),
+            "--whole-page",
             "--mlir-print-debuginfo",
             "-o",
             str(raw),
