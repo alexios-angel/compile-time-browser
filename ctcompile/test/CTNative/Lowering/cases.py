@@ -838,6 +838,9 @@ CASES = {
         "not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/plugin.js --work %t --name unreachable_mutation --mutate registered 2>&1 | FileCheck %s --check-prefix=MUTATION",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/kept.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true | FileCheck %s --check-prefix=KEPT --implicit-check-not=unreachable_refusals",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/plugin.js --whole-page | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=\"optimize=false observe-globals=true\" | FileCheck %s --check-prefix=UNOPTIMIZED --implicit-check-not=unreachable_refusals",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/unbounded-plugin.js --whole-page | ctjs-opt --pass-pipeline=\"builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{observe-globals=true},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))\" -o %t/unbounded.mlir",
+        "FileCheck %s --check-prefix=UNBOUNDED --implicit-check-not=ctnative.not_native < %t/unbounded.mlir",
+        "not ctjs-translate --mlir-to-cpp %t/unbounded.mlir 2>&1 | FileCheck %s --check-prefix=OUTPUT",
     ],
     "Emission/observe-globals": [
         "split-file %s %t",

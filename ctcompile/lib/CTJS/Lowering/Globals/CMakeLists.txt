@@ -9,3 +9,4 @@ target_sources(ctcompile-ctjs-lowering PRIVATE
   Effects.h
   RegisterFlow.h
 )
+target_link_libraries(ctcompile-ctjs-lowering PRIVATE ctbrowser::dom)

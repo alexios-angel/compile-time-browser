@@ -1664,11 +1664,11 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         // Only a whole page folds (WholePage.h): on a module that is only part
         // of one, a later script can bind the name this one never stores.
         const bool whole_page = wholePage(module);
-        const llvm::StringSet<> named =
-            whole_page ? pageNamedElements(module) : llvm::StringSet<>{};
+        const auto named = pageNamedElements(module);
+        module.walk([&](LoadGlobalOp load) { load->removeAttr(kAbsentGlobalTypeof); });
         llvm::DenseMap<mlir::StringAttr, std::size_t> folded;
         global_prefix prefix(module, world);
-        if (dynamic && world.top) { prefix.enter(world.top); }
+        if ((dynamic || !named.vmComplete) && world.top) { prefix.enter(world.top); }
         // A name the script declares with `var` is a binding of the realm even
         // when nothing in this program stores it: the declaration keeps a
         // value an earlier script gave the name. The importer lists those
@@ -1689,6 +1689,11 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
                 llvm::erase_if(facts.loads, [&](LoadGlobalOp load) {
                     if (!load.getTypeofLookup() ||
                         (dynamic && !prefix.reads.contains(load.getOperation()))) {
+                        return false;
+                    }
+                    if (!named.complete ||
+                        (!named.vmComplete && !prefix.reads.contains(load.getOperation()))) {
+                        load->setAttr(kAbsentGlobalTypeof, builder.getUnitAttr());
                         return false;
                     }
                     mlir::OpBuilder at(load);
@@ -1755,7 +1760,7 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
                 reads.push_back(get);
             });
             for (GetPropertyOp get : reads) {
-                if (dynamic) {
+                if (dynamic || !named.complete || !named.vmComplete) {
                     get->setAttr(kAbsentGlobalProperty, builder.getUnitAttr());
                     continue;
                 }

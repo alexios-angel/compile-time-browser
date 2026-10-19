@@ -40,12 +40,34 @@ inline constexpr llvm::StringLiteral kWholePage = "ctjs.whole_page";
 /// ever run.
 [[nodiscard]] bool wholePage(mlir::ModuleOp module);
 
-/// The ids and names of the page's elements the page driver recorded in the
-/// dictionary's `named` array (HTML's named access on the Window object,
-/// 7.3.3: `window.jQuery` is an element whose id or name is "jQuery"). A pass
-/// that folds a never-bound global to undefined skips a name in this set.
-/// Empty on a module that is not its whole page.
-[[nodiscard]] llvm::StringSet<> pageNamedElements(mlir::ModuleOp module);
+/// A reason on each unbounded naming operation and a permanent array on the
+/// module. When native absence is consumed, surviving ops refuse their
+/// functions and the array refuses complete C++ output even after pruning.
+inline constexpr llvm::StringLiteral kUnboundedPageNaming = "ctjs.unbounded_page_naming";
+
+/// A native-only absence fold consumed an incomplete naming proof. Together
+/// with the original census, this permanently refuses complete C++ output.
+inline constexpr llvm::StringLiteral kPageNamingAssumedAbsent = "ctjs.naming_assumed_absent";
+
+/// A typeof lookup kept for the VM because an unbounded naming mutation can
+/// bind its name. Native folding requires that mutation's explicit refusal.
+inline constexpr llvm::StringLiteral kAbsentGlobalTypeof = "ctjs.absent_global_typeof";
+
+/// The names the initial page or its bounded mutations may give an element.
+/// An unbounded mutation makes the VM census incomplete and permanently adds
+/// to the module's kUnboundedPageNaming array; native absence uses bounded names.
+struct PageNamedElements {
+    llvm::StringSet<> names;
+    llvm::SmallVector<std::string> prefixes;
+    bool complete = true;
+    bool vmComplete = true;
+
+    [[nodiscard]] bool contains(llvm::StringRef name) const;
+};
+
+/// Collects initial names and all DOM naming mutations, following the same
+/// value sources as the run-time code census. Never ignores refused bodies.
+[[nodiscard]] PageNamedElements pageNamedElements(mlir::ModuleOp module);
 
 /// Set on an operation that may create code at run time, with the reason.
 /// Native admission refuses the function holding it with that reason.

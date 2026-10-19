@@ -53,6 +53,17 @@ llvm::StringRef engineReservedName(mlir::Operation * op) {
 } // namespace
 
 bool admission::function(ctjs::FuncOp fn) {
+    std::string naming;
+    if (fn->getParentOfType<mlir::ModuleOp>()->hasAttr(ctjs::kPageNamingAssumedAbsent)) {
+        fn.walk([&](mlir::Operation * op) {
+            if (auto why = op->getAttrOfType<mlir::StringAttr>(ctjs::kUnboundedPageNaming)) {
+                naming = why.getValue().str();
+                return mlir::WalkResult::interrupt();
+            }
+            return mlir::WalkResult::advance();
+        });
+    }
+    if (!naming.empty()) { return refuse(naming); }
     if (auto why = fn->getAttrOfType<mlir::StringAttr>("ctnative.structure_refusal")) {
         return refuse(why.getValue().str());
     }

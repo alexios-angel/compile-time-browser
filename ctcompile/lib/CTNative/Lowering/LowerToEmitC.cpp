@@ -74,6 +74,19 @@ using namespace lowering_detail;
 /// page (WholePage.h) folds: another script could bind the name.
 void foldAbsentGlobalReads(mlir::ModuleOp module) {
     if (!ctjs::wholePage(module)) { return; }
+    const auto named = ctjs::pageNamedElements(module);
+    module.walk([&](ctjs::LoadGlobalOp load) {
+        if (!load->hasAttr(ctjs::kAbsentGlobalTypeof) || !load.getTypeofLookup() ||
+            named.contains(load.getName())) {
+            return;
+        }
+        mlir::OpBuilder at(load);
+        if (!named.complete) { module->setAttr(ctjs::kPageNamingAssumedAbsent, at.getUnitAttr()); }
+        auto undefined = ctjs::ConstantOp::create(at, load.getLoc(), load.getType(),
+                                                  ctjs::UndefinedAttr::get(module.getContext()));
+        load.getResult().replaceAllUsesWith(undefined.getResult());
+        load.erase();
+    });
     llvm::SmallVector<ctjs::GetPropertyOp> marked;
     module.walk([&](ctjs::GetPropertyOp get) {
         if (get->hasAttr(ctjs::kAbsentGlobalProperty)) { marked.push_back(get); }
@@ -98,10 +111,12 @@ void foldAbsentGlobalReads(mlir::ModuleOp module) {
         get->removeAttr(ctjs::kAbsentGlobalProperty);
         const llvm::StringRef key = ctjs::constantKey(get.getKey());
         auto holder = get.getObject().getDefiningOp<ctjs::LoadGlobalOp>();
-        if (!holder || key.empty() || spelled.contains(key) || ctjs::nativeRealmProvides(key)) {
+        if (!holder || key.empty() || named.contains(key) || spelled.contains(key) ||
+            ctjs::nativeRealmProvides(key)) {
             continue;
         }
         mlir::OpBuilder at(get);
+        if (!named.complete) { module->setAttr(ctjs::kPageNamingAssumedAbsent, at.getUnitAttr()); }
         auto undefined = ctjs::ConstantOp::create(at, get.getLoc(), get.getType(),
                                                   ctjs::UndefinedAttr::get(module.getContext()));
         get.getResult().replaceAllUsesWith(undefined.getResult());

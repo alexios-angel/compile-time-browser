@@ -20,6 +20,8 @@
 #include "RegisterFlow.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 
+#include <ctbrowser/dom/tokenizer.hpp>
+
 #include "mlir/IR/Builders.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -285,12 +287,258 @@ bool wholePage(mlir::ModuleOp module) {
     return module->hasAttr(kWholePage);
 }
 
-llvm::StringSet<> pageNamedElements(mlir::ModuleOp module) {
-    llvm::StringSet<> named;
+bool PageNamedElements::contains(llvm::StringRef name) const {
+    return names.contains(name) || llvm::any_of(prefixes, [&](const std::string & prefix) {
+               return name.starts_with(prefix);
+           });
+}
+
+PageNamedElements pageNamedElements(mlir::ModuleOp module) {
+    PageNamedElements named;
+    if (!wholePage(module)) {
+        named.complete = false;
+        return named;
+    }
     auto record = module->getAttrOfType<mlir::DictionaryAttr>(kWholePage);
     auto list = record ? record.getAs<mlir::ArrayAttr>("named") : mlir::ArrayAttr{};
     for (mlir::Attribute entry : list ? list.getValue() : llvm::ArrayRef<mlir::Attribute>{}) {
-        if (auto name = mlir::dyn_cast<mlir::StringAttr>(entry)) { named.insert(name.getValue()); }
+        if (auto name = mlir::dyn_cast<mlir::StringAttr>(entry)) {
+            named.names.insert(name.getValue());
+        }
+    }
+    globals_detail::ClosureValues closures(module);
+    mlir::Builder builder(module.getContext());
+    llvm::SetVector<mlir::Attribute> refusals;
+    if (auto prior = module->getAttrOfType<mlir::ArrayAttr>(kUnboundedPageNaming)) {
+        refusals.insert(prior.begin(), prior.end());
+        named.complete &= prior.empty();
+    }
+    const auto unbounded = [&](mlir::Operation * op, llvm::StringRef why) {
+        named.complete = false;
+        auto reason = builder.getStringAttr("DOM naming mutation is unbounded: " + why.str() +
+                                            " (" + describe(op) + ")");
+        refusals.insert(reason);
+        op->setAttr(kUnboundedPageNaming, reason);
+    };
+    const auto notElement = [&](mlir::Value value) {
+        const auto leaves = closures.leafValuesOf(value);
+        return leaves.unknown.empty() && !leaves.values.empty() &&
+               llvm::all_of(leaves.values, [](mlir::Value leaf) {
+                   if (auto constant = leaf.getDefiningOp<ConstantOp>()) {
+                       return isPrimitiveAttr(constant.getValue());
+                   }
+                   return mlir::isa_and_present<CreateArrayOp, CreateObjectOp>(
+                       leaf.getDefiningOp());
+               });
+    };
+    const auto leavesOf = [&](mlir::Value value) {
+        globals_detail::ClosureValues::Leaves leaves;
+        if (value && constantString(value)) {
+            leaves.values.push_back(value);
+        } else if (value) {
+            leaves = closures.leafValuesOf(value);
+        } else {
+            leaves.unknown = "missing value";
+        }
+        return leaves;
+    };
+    const auto add = [&](mlir::Value value, mlir::Operation * op) {
+        const auto leaves = leavesOf(value);
+        if (!leaves.unknown.empty() || leaves.values.empty()) {
+            unbounded(op, "id/name value is unknown");
+        }
+        for (mlir::Value leaf : leaves.values) {
+            if (const auto text = constantString(leaf)) {
+                named.names.insert(*text);
+            } else if (const auto prefix = leftmostPart(leaf); prefix && !prefix->empty()) {
+                named.prefixes.push_back(prefix->str());
+            } else {
+                unbounded(op, "id/name value has no constant prefix");
+            }
+        }
+    };
+    const auto markup = [&](mlir::Value value, mlir::Operation * op) {
+        const auto leaves = leavesOf(value);
+        if (!leaves.unknown.empty() || leaves.values.empty()) {
+            unbounded(op, "markup is unknown");
+        }
+        for (mlir::Value leaf : leaves.values) {
+            const auto text = constantString(leaf);
+            if (!text) {
+                unbounded(op, "markup is not a constant string");
+                continue;
+            }
+            ctbrowser::html::tokenizer tokenizer(*text);
+            for (auto token = tokenizer.next();
+                 token.kind != ctbrowser::html::token_kind::end_of_file; token = tokenizer.next()) {
+                for (const auto & attr : token.attributes) {
+                    if (attr.name == "id" || attr.name == "name") {
+                        named.names.insert(attr.value);
+                    }
+                }
+            }
+        }
+    };
+    const auto mayName = [&](mlir::Value key, bool lowercase) {
+        const auto leaves = leavesOf(key);
+        if (!leaves.unknown.empty() || leaves.values.empty()) { return true; }
+        return llvm::any_of(leaves.values, [&](mlir::Value leaf) {
+            if (const auto text = constantString(leaf)) {
+                return lowercase
+                           ? text->equals_insensitive("id") || text->equals_insensitive("name")
+                           : *text == "id" || *text == "name";
+            }
+            const auto prefix = leftmostPart(leaf);
+            if (!prefix) { return true; }
+            const auto starts = [&](llvm::StringRef word) {
+                return lowercase ? word.take_front(prefix->size()).equals_insensitive(*prefix)
+                                 : word.starts_with(*prefix);
+            };
+            return starts("id") || starts("name");
+        });
+    };
+    module.walk([&](mlir::Operation * op) {
+        mlir::Value callee;
+        mlir::Value receiver;
+        mlir::Value newTarget;
+        mlir::Value spread;
+        llvm::SmallVector<mlir::Value> arguments;
+        if (auto call = mlir::dyn_cast<CallOp>(op)) {
+            callee = call.getCallee();
+            receiver = call.getReceiver();
+            llvm::append_range(arguments, call.getArgs());
+        } else if (auto construct = mlir::dyn_cast<ConstructOp>(op)) {
+            callee = construct.getCallee();
+            newTarget = construct.getNewTarget();
+            llvm::append_range(arguments, construct.getArgs());
+        } else if (auto call = mlir::dyn_cast<CallSpreadOp>(op)) {
+            callee = call.getCallee();
+            receiver = call.getReceiver();
+            spread = call.getArgs();
+        } else if (auto construct = mlir::dyn_cast<ConstructSpreadOp>(op)) {
+            callee = construct.getCallee();
+            spread = construct.getArgs();
+        } else if (auto direct = mlir::dyn_cast<CallDirectOp>(op); direct && !direct.getTarget()) {
+            callee = direct.getCalleeValue();
+            receiver = direct.getReceiver();
+            newTarget = direct.getNewTarget();
+            llvm::append_range(arguments, direct.getArgs());
+        }
+        if (callee) {
+            const auto targets = closures.closuresOf(callee);
+            const bool opaque = !targets.unknown.empty() || targets.closures.empty();
+            // Spread containers are copied, so a fresh array does not prove
+            // that its elements exclude Nodes. Fail closed without unrolling it.
+            if (opaque &&
+                (spread || (receiver && !notElement(receiver)) ||
+                 (newTarget && !notElement(newTarget)) ||
+                 llvm::any_of(arguments, [&](mlir::Value value) { return !notElement(value); }))) {
+                named.vmComplete = false;
+            }
+        }
+        if (auto load = mlir::dyn_cast<LoadGlobalOp>(op);
+            load && (load.getName() == "Object" || load.getName() == "Reflect")) {
+            const auto uses = registerFlowUses(load.getResult());
+            if (!uses) {
+                unbounded(op, "reflection builtin moves through unknown registers");
+                return;
+            }
+            for (mlir::OpOperand * use : *uses) {
+                if (mlir::isa<RootOp>(use->getOwner()) || nonCoercing(use->getOwner()) ||
+                    mlir::isa<ConstructOp>(use->getOwner())) {
+                    continue;
+                }
+                auto read = mlir::dyn_cast<GetPropertyOp>(use->getOwner());
+                auto call = mlir::dyn_cast<CallOp>(use->getOwner());
+                if ((read && use->getOperandNumber() == 0 && !constantKey(read.getKey()).empty()) ||
+                    (call && use->getOperandNumber() == 1)) {
+                    continue;
+                }
+                unbounded(op, "reflection builtin escapes or is aliased");
+            }
+            return;
+        }
+        if (auto write = mlir::dyn_cast<SetPropertyOp>(op)) {
+            if (notElement(write.getObject())) { return; }
+            if (mayName(write.getKey(), false)) { add(write.getValue(), op); }
+            const auto keys = leavesOf(write.getKey());
+            if (!keys.unknown.empty() || keys.values.empty()) {
+                unbounded(op, "property key may be an Attr or markup setter");
+            }
+            for (mlir::Value leaf : keys.values) {
+                const auto key = constantString(leaf);
+                if (!key) {
+                    unbounded(op, "property key may be an Attr or markup setter");
+                } else if (*key == "innerHTML" || *key == "outerHTML") {
+                    markup(write.getValue(), op);
+                } else if (*key == "value" || *key == "nodeValue" || *key == "textContent") {
+                    add(write.getValue(), op);
+                }
+            }
+            return;
+        }
+        auto read = mlir::dyn_cast<GetPropertyOp>(op);
+        if (!read || notElement(read.getObject())) { return; }
+        const llvm::StringRef key = constantKey(read.getKey());
+        const mlir::Value owner = registerFlowOrigin(read.getObject());
+        auto builtin = owner ? owner.getDefiningOp<LoadGlobalOp>() : LoadGlobalOp{};
+        const bool global = builtin && globals_detail::names_global_object(builtin.getName());
+        if (key == "Object" || key == "Reflect" || (global && key.empty())) {
+            unbounded(op, "property read may yield an aliased reflection builtin");
+        }
+        const bool attribute = key == "setAttribute" || key == "setAttributeNS";
+        const bool reflection =
+            builtin &&
+            ((builtin.getName() == "Reflect" && (key == "set" || key == "defineProperty")) ||
+             (builtin.getName() == "Object" &&
+              (key == "assign" || key == "defineProperty" || key == "defineProperties")));
+        const bool html = llvm::StringSwitch<bool>(key)
+                              .Cases({"write", "writeln", "createContextualFragment",
+                                      "parseFromString", "insertAdjacentHTML", "setHTMLUnsafe"},
+                                     true)
+                              .Default(false);
+        const bool other = llvm::StringSwitch<bool>(key)
+                               .Cases({"setAttributeNode", "setAttributeNodeNS", "setNamedItem",
+                                       "setNamedItemNS", "toggleAttribute"},
+                                      true)
+                               .Default(false);
+        if (!attribute && !html && !other && !reflection) { return; }
+        const auto uses = registerFlowUses(read.getResult());
+        if (!uses) {
+            unbounded(op, "naming method moves through unknown registers");
+            return;
+        }
+        for (mlir::OpOperand * use : *uses) {
+            if (mlir::isa<RootOp>(use->getOwner()) || nonCoercing(use->getOwner())) { continue; }
+            auto call = mlir::dyn_cast<CallOp>(use->getOwner());
+            if (!call || use->getOperandNumber() != 0 || other) {
+                unbounded(op, "naming method is indirect or has unknown attribute contents");
+                continue;
+            }
+            const auto args = call.getArgs();
+            if (reflection) {
+                if (!args.empty() && notElement(args.front())) { continue; }
+                unbounded(call, "reflection target or property contents may name an element");
+                continue;
+            }
+            if (html) {
+                if (key == "write" || key == "writeln") {
+                    // Separate writes can complete one tag across calls.
+                    unbounded(call, "document.write may complete markup from another write");
+                } else {
+                    const std::size_t index = key == "insertAdjacentHTML" ? 1 : 0;
+                    markup(index < args.size() ? args[index] : mlir::Value{}, call);
+                }
+                continue;
+            }
+            const std::size_t index = key.ends_with("NS") ? 1 : 0;
+            if (index >= args.size() || mayName(args[index], true)) {
+                add(index + 1 < args.size() ? args[index + 1] : mlir::Value{}, call);
+            }
+        }
+    });
+    if (!refusals.empty()) {
+        module->setAttr(kUnboundedPageNaming, builder.getArrayAttr(refusals.getArrayRef()));
     }
     return named;
 }
