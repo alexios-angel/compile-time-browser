@@ -35,8 +35,7 @@ bool recordAliases(classInitialization & proof, mlir::Value record,
 bool mapSetValue(classInitialization & proof, mlir::OpOperand & use) {
     auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
     return call && use.getOperandNumber() == 3 && proof.mapOperations.contains(call) &&
-           ctjs::constantKey(call.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey()) ==
-               "set";
+           ctjs::methodKey(call) == "set";
 }
 
 } // namespace

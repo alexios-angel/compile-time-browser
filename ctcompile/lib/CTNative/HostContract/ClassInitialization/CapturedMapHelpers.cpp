@@ -448,8 +448,7 @@ bool classInitialization::normalizeNestedMap(ctjs::FuncOp scope, const HostContr
         if (!step()) { return false; }
         auto call = llvm::dyn_cast<ctjs::CallOp>(op);
         if (!call) { continue; }
-        const auto action =
-            ctjs::constantKey(call.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey());
+        const auto action = ctjs::methodKey(call);
         if ((action == "clear" || action == "set") && !unusedResult(call.getResult())) {
             return refuse("class nested Map mutation result escapes");
         }
@@ -572,8 +571,7 @@ bool classInitialization::normalizeNestedMap(ctjs::FuncOp scope, const HostContr
                 continue;
             }
             auto call = llvm::cast<ctjs::CallOp>(op);
-            const auto action =
-                ctjs::constantKey(call.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey());
+            const auto action = ctjs::methodKey(call);
             if (action == "clear") {
                 entries.clear();
                 continue;
