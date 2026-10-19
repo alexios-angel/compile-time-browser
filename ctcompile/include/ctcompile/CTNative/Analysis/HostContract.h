@@ -91,15 +91,6 @@ struct HostContract {
         ctbrowserIntrinsics
     };
     Provider provider = Provider::closedSource;
-    /// True for the two DOM entry providers: ctbrowserDOM and ctbrowserDOMSession.
-    [[nodiscard]] bool domProvider() const {
-        return provider == Provider::ctbrowserDOM || provider == Provider::ctbrowserDOMSession;
-    }
-    /// True for any provider with DOM inputs: the two above and
-    /// ctbrowserDOMDataSession.
-    [[nodiscard]] bool isDOM() const {
-        return domProvider() || provider == Provider::ctbrowserDOMDataSession;
-    }
     /// hostContractFingerprint() of the module the manifest was written for; a
     /// mismatch means the manifest is stale.
     std::string moduleSha256;
