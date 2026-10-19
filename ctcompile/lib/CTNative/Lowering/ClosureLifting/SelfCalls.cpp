@@ -36,7 +36,7 @@ void closureLifter::liftSelfCalls(ctjs::FuncOp target, unsigned captures, unsign
         // value no longer exists, and the native call drops the operand.
         auto direct = directCall(at, call.getLoc(), target, call.getReceiver(), undefined,
                                  undefined, forwarded, call.getArgs(), captures + parameters);
-        for (llvm::StringRef slots : {kNativeCellArgs, kNativeObjectArgs}) {
+        for (llvm::StringRef slots : {kNativeCellArgs, kNativeSharedCellArgs, kNativeObjectArgs}) {
             if (mlir::Attribute listed = target->getAttr(slots)) { direct->setAttr(slots, listed); }
         }
         call.getResult().replaceAllUsesWith(direct.getResult());
