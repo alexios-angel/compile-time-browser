@@ -350,16 +350,6 @@ bool TypeInference::consumedByStringCallback(mlir::Operation * op) {
            consumedByStringCallback(user);
 }
 
-bool TypeInference::isStringCallbackParameter(mlir::Value value) {
-    auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
-    if (!argument || !argument.getOwner()->isEntryBlock() ||
-        argument.getArgNumber() < ctjs::implicit_arguments) {
-        return false;
-    }
-    auto function = llvm::dyn_cast<ctjs::FuncOp>(argument.getOwner()->getParentOp());
-    return function && function->hasAttr(kNativeStringCallback);
-}
-
 mlir::Type TypeInference::stringCallbackType(mlir::Operation * op,
                                              llvm::ArrayRef<const TypeLattice *> operands,
                                              bool & pending) {
