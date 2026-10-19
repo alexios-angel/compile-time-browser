@@ -50,6 +50,10 @@ public:
     std::size_t checkpoint() {
         if (performing_) { return 0; }
         performing_ = true;
+        struct reset {
+            bool & flag;
+            ~reset() { flag = false; }
+        } guard{performing_};
         std::size_t ran = 0;
         while (!jobs_.empty()) {
             job run = std::move(jobs_.front());
@@ -57,9 +61,10 @@ public:
             ++ran;
             try {
                 run();
-            } catch (const std::exception & thrown) { reported_.emplace_back(thrown.what()); }
+            } catch (const std::exception & thrown) {
+                reported_.emplace_back(thrown.what());
+            } catch (...) { reported_.emplace_back("uncaught exception"); }
         }
-        performing_ = false;
         return ran;
     }
 
