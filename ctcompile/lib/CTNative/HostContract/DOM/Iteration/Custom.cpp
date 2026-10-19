@@ -1530,7 +1530,6 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         helper.body.erase();
     }
     bool primitiveClose = false;
-    bool suppressedThrow = false;
     bool observableThrow = false;
     // Check each method body. Replacing its result records with their fields
     // cannot run a getter, consult a prototype or skip a field's producer.
@@ -1572,7 +1571,6 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             // A primitive return must be suppressed; an always-throwing
             // method may instead rethrow its value at a normal close.
             primitiveClose = true;
-            suppressedThrow = static_cast<bool>(thrown);
             // On a normal close the cleanup exception propagates: keep the
             // thrown value and rethrow it at the original call so
             // DOMEntryAnalysis can check it. Nothing observes the final state
@@ -2219,7 +2217,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
     }
 
-    if (!observedNext && (!stateInitials.empty() || suppressedThrow)) {
+    if (!observedNext && (!stateInitials.empty() || observableThrow)) {
         for (mlir::Operation * user : object->getUsers()) {
             if (!spend()) { return error("DOM custom iterator budget exhausted"); }
             if (user != open &&
@@ -2928,7 +2926,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         branch.replaceAllUsesWith(yield.getOperands());
         branch.erase();
     }
-    if (suppressedThrow && !retainedCompletions) {
+    if (observableThrow && !retainedCompletions) {
         // Completion normalization must also have removed the unused
         // eager-array paths. Otherwise a surviving alias of the holder or a
         // method could call the rewritten body without suppression. (Observed
