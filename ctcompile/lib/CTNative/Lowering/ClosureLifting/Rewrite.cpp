@@ -630,10 +630,14 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
                                                 field.getKey(), field.getValue());
                 }
             }
+            // All actuals are already evaluated SSA values. Only their unused
+            // argument slots go; their effects and exceptions stay before new.
+            const auto actuals =
+                built.getArgs().take_front(std::min<size_t>(built.getArgs().size(), parameters));
             auto direct = directCall(at, built.getLoc(), target,
                                      carriesReceiver ? instance.getResult() : undefined,
                                      preserveReceiver ? built.getCallee() : undefined, undefined,
-                                     captured, built.getArgs(), captures + parameters);
+                                     captured, actuals, captures + parameters);
             if (carriesReceiver) { direct->setAttr(kNativeReceiver, mlir::UnitAttr::get(context)); }
             // Mark which arguments are addresses on the call as well as the
             // callee, like the receiver mark: replace() reads it once per
