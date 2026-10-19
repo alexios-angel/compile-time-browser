@@ -10,6 +10,23 @@
 
 namespace ctbrowser::shell {
 
+void browser::report_script_error(std::string_view error, std::string_view specifier) {
+    // JavaScript listeners cannot enter while the VM's failure flag is set.
+    // The caller keeps the diagnostic alive across error-listener callbacks.
+    (void)script_->take_error();
+    (void)bindings_->dispatch_error(error, specifier);
+}
+
+bool browser::run_page_script(std::string_view source, std::string_view specifier) {
+    if (!script_) { return false; }
+    const bool ok = run_script(source);
+    if (!ok) {
+        const std::string error = script_error_;
+        report_script_error(error, specifier);
+    }
+    return ok;
+}
+
 void browser::run_scripts() {
     // Order matters on teardown too: the old context must go before the old
     // program it was executing.
@@ -292,16 +309,11 @@ void browser::run_scripts() {
         // <script> can see that an earlier one died (testharness.js relies on
         // this).
         if (!result.ok) {
-            // Clear the VM's failure flag before dispatching `error`: every
-            // entry into JavaScript refuses to run while it is set, so no
-            // listener would run. The error text is already in `result.error`
-            // and `script_error_`.
-            (void)script_->take_error();
             // Still the current script while its error is reported: a
             // window.onerror reading document.currentScript sees the script
             // that failed, even one that failed to parse (WPT
             // Document.currentScript.html asserts this by id).
-            (void)bindings_->dispatch_error(result.error, script.specifier);
+            report_script_error(result.error, script.specifier);
         }
         running.pop_back();
         bindings_->set_current_script(running.empty() ? node_id{} : running.back());
