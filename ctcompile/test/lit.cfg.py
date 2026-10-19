@@ -141,10 +141,10 @@ config.substitutions.append(("%native_reference", config.native_reference))
 
 # The native-output check scripts (CTNative/Checks/*.py) as substitutions, so
 # a fixture's RUN lines name only what differs per fixture: the module, the
-# program, the global to break. %compilation_unit uses the host compiler
-# (public headers only, no browser library), the nm CMake found, the
-# interpreter reference, and ctcompile-test-type-oracle as a binary that does
-# link the interpreter, to check that nm sees the difference.
+# program, the global to break. Native links use public Core for Number
+# formatting; --core-free preserves standalone controls. The interpreter
+# reference and ctcompile-test-type-oracle prove that nm sees interpreter
+# symbols before the native binary is checked for their absence.
 # These are inserted at the front of the list: lit expands substitutions in
 # order without re-scanning, so the tool names they expand to (ctjs-translate,
 # ctcompile-test-type-oracle) are resolved only if the tool substitutions
@@ -156,7 +156,7 @@ config.substitutions.insert(
         "%compilation_unit",
         f"python3 {checks}/compilation-unit.py --translate ctjs-translate --cxx {config.host_cxx}"
         f" --nm {config.nm} --reference {config.native_reference}"
-        " --vm-linked ctcompile-test-type-oracle",
+        " --vm-linked ctcompile-test-type-oracle --core-build %build",
     ),
 )
 config.substitutions.insert(
@@ -230,6 +230,13 @@ config.substitutions.append(("%cmake", config.cmake))
 # Native.cmake chose for it, and read the engine's build tree.
 config.substitutions.append(("%dom_clang", config.dom_clang))
 config.substitutions.append(("%build", config.build_root))
+
+native_link = f"python3 {config.test_source_root}/native_link.py --build {config.build_root} -- "
+config.substitutions[:] = [
+    (name, native_link + command if name in ("%gxx", "%clangxx", "%cxx_exe") else command)
+    for name, command in config.substitutions
+]
+config.environment["CTCOMPILE_BUILD"] = config.build_root
 
 # The Python drivers import each other across directories (CTNative/harness.py
 # explains how), and running one by hand needs the same path.

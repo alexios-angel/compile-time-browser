@@ -21,13 +21,29 @@
 // used only as a development-time reference to compare against, and a native
 // program must not depend on it.
 //
+// Generated code reads like the JavaScript it came from. A JavaScript
+// operator is the C++ operator where the C++ one does exactly what the
+// JavaScript one does: `a === b` is `==` on every carrier, `<` and the other
+// relational operators come from `<=>` (NaN is unordered, so each of them is
+// false, and Strings order by UTF-16 code unit), `a % b` on Numbers is fmod,
+// and `a[i]` past the end reads undefined. Loose `a == b` is the named
+// ctnative::loose_equals, never an operator, and the other coercions keep
+// named helpers too. A JavaScript method is a member of the same name called
+// with `.` (`s.toUpperCase()`, `v.push(x)`). C++ has no properties, so a
+// property JavaScript computes (`length`, `classList`) is a member function
+// of that name with no arguments (`v.length()`), and a real field stays a
+// field. Nothing converts implicitly: there are no new converting
+// constructors, and every new conversion operator is explicit.
+//
 //===----------------------------------------------------------------------===//
 
-#pragma once
+#ifndef CTCOMPILE_CTNATIVE_RUNTIME_HPP
+#define CTCOMPILE_CTNATIVE_RUNTIME_HPP
 
 #include "ctcompile/CTNative/Runtime/Error.hpp"
 #include "ctcompile/CTNative/Runtime/Math.hpp"
 #include "ctcompile/CTNative/Runtime/Number.hpp"
+#include "ctcompile/CTNative/Runtime/Output.hpp"
 #include "ctcompile/CTNative/Runtime/String.hpp"
 #include "ctcompile/CTNative/Runtime/Symbol.hpp"
 
@@ -36,9 +52,9 @@
 #include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <compare>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <exception>
 #include <functional>
 #include <iterator>
@@ -109,6 +125,8 @@ public:
     explicit constexpr js_boolean_t(T boolean) : value(boolean) {}
     explicit constexpr operator bool() const { return value; }
     constexpr js_num to_number() const { return js_num{value ? 1.0 : 0.0}; }
+    /// Boolean.prototype.toString (ECMA-262 20.3.3.3): "true" or "false".
+    js_string toString() const { return value ? js_string{"true"} : js_string{"false"}; }
     friend constexpr bool operator==(js_boolean_t, js_boolean_t) = default;
 };
 inline constexpr js_num to_number(js_boolean_t value) {
@@ -143,6 +161,25 @@ struct nullable_scalar {
         std::terminate();
     }
     static nullable_scalar null() { return js_null_t{}; }
+    /// ToBoolean (ECMA-262 7.1.2): false for undefined, null, +0, -0, NaN and
+    /// false.
+    explicit operator bool() const {
+        return (tag == kind::number || tag == kind::boolean) && value != 0.0 && !std::isnan(value);
+    }
+    /// `a === b` (ECMA-262 7.2.15, IsStrictlyEqual): the same kind, and for a
+    /// Number or a Boolean the same value, so NaN !== NaN and -0 === +0.
+    friend bool operator==(const nullable_scalar & a, const nullable_scalar & b) {
+        if (a.tag != b.tag) { return false; }
+        return a.tag == kind::undefined || a.tag == kind::null || a.value == b.value;
+    }
+    /// The same against a Number or a Boolean, without converting it: equal
+    /// only when this holds that kind and the same value.
+    friend bool operator==(const nullable_scalar & a, js_num b) {
+        return a.tag == kind::number && a.value == b.value();
+    }
+    friend bool operator==(const nullable_scalar & a, js_boolean_t b) {
+        return a.tag == kind::boolean && (a.value != 0.0) == static_cast<bool>(b);
+    }
 };
 inline nullable_scalar to_nullable(nullable_scalar value) {
     return value;
@@ -164,28 +201,45 @@ inline js_boolean_t global_boolean(nullable_scalar value) {
     if (value.tag != nullable_scalar::kind::boolean) { std::terminate(); }
     return js_boolean_t{value.value != 0.0};
 }
+// --- printed globals ----------------------------------------------------------
+//
+// A test entry ends by printing each global it observes, one `name=value`
+// line, which ctcompile-test-native-reference prints the same way for the
+// interpreter and CTNative/Checks/compilation-unit.py compares. Every line
+// goes through print_line (Output.hpp).
+
+/// A Number as a printed global spells it: Number::toString (ECMA-262
+/// 6.1.6.1.20), except that -0 keeps its sign, as JavaScript's console
+/// prints it. The globals are compared as values, and -0 is not +0.
+inline std::string printed_number(double value) {
+    if (value == 0.0 && std::signbit(value)) { return "-0"; }
+    return ctbrowser::number_to_string(value);
+}
+inline void print_number(const char * name, js_num value) {
+    print_line(std::string{name} + '=' + printed_number(value.value()));
+}
+/// The bool overload is the one compilation-unit.py's boolean mutation
+/// (`!value`) calls.
+inline void print_boolean(const char * name, bool value) {
+    print_line(std::string{name} + (value ? "=true" : "=false"));
+}
+inline void print_boolean(const char * name, js_boolean_t value) {
+    print_boolean(name, static_cast<bool>(value));
+}
 inline void print_scalar(const char * name, nullable_scalar value) {
     switch (value.tag) {
-    case nullable_scalar::kind::undefined: std::printf("%s=undefined\n", name); return;
-    case nullable_scalar::kind::null: std::printf("%s=null\n", name); return;
-    case nullable_scalar::kind::number: std::printf("%s=%.17g\n", name, value.value); return;
-    case nullable_scalar::kind::boolean:
-        std::printf("%s=%s\n", name, value.value != 0.0 ? "true" : "false");
-        return;
+    case nullable_scalar::kind::undefined: print_line(std::string{name} + "=undefined"); return;
+    case nullable_scalar::kind::null: print_line(std::string{name} + "=null"); return;
+    case nullable_scalar::kind::number: print_number(name, js_num{value.value}); return;
+    case nullable_scalar::kind::boolean: print_boolean(name, value.value != 0.0); return;
     }
     std::terminate();
 }
 inline bool scalar_truthy(nullable_scalar value) {
-    return (value.tag == nullable_scalar::kind::number ||
-            value.tag == nullable_scalar::kind::boolean) &&
-           value.value != 0.0 && !std::isnan(value.value);
+    return static_cast<bool>(value);
 }
 inline js_boolean_t scalar_strict_equal(nullable_scalar left, nullable_scalar right) {
-    if (left.tag != right.tag) { return js_boolean_t{false}; }
-    if (left.tag == nullable_scalar::kind::undefined || left.tag == nullable_scalar::kind::null) {
-        return js_boolean_t{true};
-    }
-    return js_boolean_t{left.value == right.value};
+    return js_boolean_t{left == right};
 }
 inline js_boolean_t scalar_equal(nullable_scalar left, nullable_scalar right) {
     const bool lnull =
@@ -218,6 +272,8 @@ struct nullable_string {
     std::string value;
     nullable_string() = default;
     nullable_string(const std::string & text) : tag(kind::string), value(text) {}
+    /// ToBoolean (ECMA-262 7.1.2): only a non-empty String is true.
+    explicit operator bool() const { return tag == kind::string && !value.empty(); }
     js_num to_number() const {
         switch (tag) {
         case kind::undefined: return js_num{js_nan_t{}};
@@ -263,8 +319,13 @@ inline nullable_string string_at(const js_string & text, js_num index) {
     return ctbrowser::utf16_to_wtf8(
         std::u16string_view{units}.substr(static_cast<std::size_t>(at), 1));
 }
+template <class T>
+requires std::is_same_v<T, char>
+nullable_string js_basic_string<T>::operator[](js_num index) const {
+    return string_at(*this, index);
+}
 inline bool string_truthy(const nullable_string & value) {
-    return value.tag == nullable_string::kind::string && !value.value.empty();
+    return static_cast<bool>(value);
 }
 inline std::string string_typeof(const nullable_string & value) {
     return value.tag == nullable_string::kind::undefined    ? "undefined"
@@ -283,26 +344,29 @@ inline std::string global_string(const nullable_string & value) {
     if (value.tag != nullable_string::kind::string) { std::terminate(); }
     return value.value;
 }
+/// `name="<text>"`, every byte outside RFC 3986's unreserved set written as
+/// `%` and two uppercase hex digits, so any String prints as one line.
 inline void print_string(const char * name, const std::string & value) {
-    std::printf("%s=\"", name);
     static constexpr char hex[] = "0123456789ABCDEF";
+    std::string line = std::string{name} + "=\"";
     for (const char raw : value) {
         const auto c = static_cast<unsigned char>(raw);
         if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
             std::string_view("-._~").contains(raw)) {
-            std::putchar(c);
+            line += raw;
         } else {
-            std::putchar('%');
-            std::putchar(hex[c >> 4]);
-            std::putchar(hex[c & 15]);
+            line += '%';
+            line += hex[c >> 4];
+            line += hex[c & 15];
         }
     }
-    std::printf("\"\n");
+    line += '"';
+    print_line(line);
 }
 inline void print_scalar(const char * name, const nullable_string & value) {
     switch (value.tag) {
-    case nullable_string::kind::undefined: std::printf("%s=undefined\n", name); return;
-    case nullable_string::kind::null_value: std::printf("%s=null\n", name); return;
+    case nullable_string::kind::undefined: print_line(std::string{name} + "=undefined"); return;
+    case nullable_string::kind::null_value: print_line(std::string{name} + "=null"); return;
     case nullable_string::kind::string: print_string(name, value.value); return;
     }
     std::terminate();
@@ -378,7 +442,10 @@ template <class Scalar, bool Nullable> struct string_union {
             return tag == union_kind::string;
         }
     }
-    /// Equal when both hold the same kind with equal values.
+    /// ToBoolean (ECMA-262 7.1.2) of the kind it holds; defined below, after
+    /// detail::union_truthy.
+    explicit operator bool() const;
+    /// `a === b`: equal when both hold the same kind with equal values.
     friend bool operator==(const string_union & a, const string_union & b) {
         if (a.tag != b.tag) { return false; }
         switch (a.tag) {
@@ -409,14 +476,23 @@ auto visit_carrier(const string_union<S, N> & value, Text text, Scalar scalar) {
     std::terminate();
 }
 template <class S, bool N> js_string union_text(const string_union<S, N> & value) {
-    return visit_carrier(
-        value, [](const std::string & text) { return js_string{text}; },
-        [](nullable_scalar scalar) { return scalar.to_string(); });
+    switch (value.tag) {
+    case union_kind::undefined: return js_string{"undefined"};
+    case union_kind::null: return js_string{"null"};
+    case union_kind::scalar: return value.scalar.toString();
+    case union_kind::string: return value.text;
+    }
+    std::terminate();
 }
 template <class S, bool N> bool union_truthy(const string_union<S, N> & value) {
     return visit_carrier(
         value, [](const std::string & text) { return !text.empty(); }, scalar_truthy);
 }
+} // namespace detail
+template <class S, bool N> string_union<S, N>::operator bool() const {
+    return detail::union_truthy(*this);
+}
+namespace detail {
 template <class S, bool N> std::string union_typeof(const string_union<S, N> & value) {
     return visit_carrier(
         value, [](const std::string &) { return std::string{"string"}; }, scalar_typeof);
@@ -427,9 +503,19 @@ template <class S, bool N> js_num union_number(const string_union<S, N> & value)
         [](nullable_scalar scalar) { return to_number(scalar); });
 }
 template <class S, bool N> void print_union(const char * name, const string_union<S, N> & value) {
-    visit_carrier(
-        value, [name](const std::string & text) { print_string(name, text); },
-        [name](nullable_scalar scalar) { print_scalar(name, scalar); });
+    switch (value.tag) {
+    case union_kind::undefined: print_line(std::string{name} + "=undefined"); return;
+    case union_kind::null: print_line(std::string{name} + "=null"); return;
+    case union_kind::scalar:
+        if constexpr (std::is_same_v<S, js_boolean_t>) {
+            print_boolean(name, value.scalar);
+        } else {
+            print_number(name, value.scalar);
+        }
+        return;
+    case union_kind::string: print_string(name, value.text.value()); return;
+    }
+    std::terminate();
 }
 // Widening keeps every kind; absence stays its own kind.
 template <class R, class S, bool N> R widen(const string_union<S, N> & value) {
@@ -735,6 +821,118 @@ js_boolean_t primitive_equal(const L & left, const R & right) {
     });
 }
 
+// --- ToString and the mixed-kind operators --------------------------------
+//
+// ToString of every primitive carrier, which String(x) (String.hpp) calls,
+// and the arithmetic operators on two primitives of different kinds, which
+// convert through ToNumber (Number(x), Number.hpp) exactly as JavaScript
+// does: `"3" * 2` is 6, `null + 1` is 1 and `true - "1"` is 0. None takes an
+// object or a Symbol, whose ToPrimitive could run JavaScript or throw, and
+// none converts implicitly: each operand is a carrier of its own kind. Mixed
+// kinds have no `<=>` yet: Clang 18 rejects a namespace-scope operator<=>
+// template whenever it is considered for two built-in operands.
+
+inline js_string js_num::toFixed(js_num digits) const {
+    // ToIntegerOrInfinity: NaN is 0, and the rest truncate toward zero.
+    const double places = std::isnan(digits.number) ? 0.0 : std::trunc(digits.number);
+    if (!(places >= 0.0 && places <= 100.0)) {
+        throw range_error("toFixed() digits argument must be between 0 and 100");
+    }
+    return js_string{ctbrowser::number_to_fixed(number, static_cast<int>(places))};
+}
+
+inline js_string to_js_string(js_num value) {
+    return value.toString();
+}
+inline js_string to_js_string(js_boolean_t value) {
+    return value.toString();
+}
+inline js_string to_js_string(undefined_t) {
+    return js_string{"undefined"};
+}
+inline js_string to_js_string(js_null_t) {
+    return js_string{"null"};
+}
+inline js_string to_js_string(nullable_scalar value) {
+    return value.to_string();
+}
+inline js_string to_js_string(const nullable_string & value) {
+    return js_string{string_text(value)};
+}
+template <class S, bool N> js_string to_js_string(const string_union<S, N> & value) {
+    return detail::union_text(value);
+}
+inline js_num to_number(const nullable_string & value) {
+    return value.to_number();
+}
+
+namespace detail {
+/// The carriers whose ToNumber runs no JavaScript.
+template <class T>
+concept number_operand = primitive_equality_operand<T>;
+/// The carriers that may or may not hold a String, where the kind of `+` and of
+/// a relational comparison is only known at run time.
+template <class T>
+concept maybe_string = std::is_same_v<T, nullable_string> || primitive_union<T>;
+/// Two primitive carriers that are not both Numbers, whose operator applies
+/// ToNumber to each.
+template <class L, class R>
+concept mixed_numbers = number_operand<L> && number_operand<R> &&
+                        !(std::is_same_v<L, js_num> && std::is_same_v<R, js_num>);
+/// The same, for `+`: neither may be or hold a String, which selects
+/// concatenation instead.
+template <class L, class R>
+concept mixed_definite_numbers =
+    mixed_numbers<L, R> && !std::is_same_v<L, js_string> && !std::is_same_v<R, js_string> &&
+    !maybe_string<L> && !maybe_string<R>;
+/// The values `+` with a String turns into text: absence, and the optional and
+/// union carriers.
+template <class T>
+concept concatenated = one_of<T, undefined_t, js_null_t, nullable_scalar> || maybe_string<T>;
+} // namespace detail
+
+/// `a - b`, `a * b`, `a / b` and `a % b` (ECMA-262 13.7 and 13.8,
+/// ApplyStringOrNumericBinaryOperator) on primitives of different kinds:
+/// ToNumber of each, then the Number operator.
+template <class L, class R>
+requires detail::mixed_numbers<L, R>
+js_num operator-(const L & left, const R & right) {
+    return Number(left) - Number(right);
+}
+template <class L, class R>
+requires detail::mixed_numbers<L, R>
+js_num operator*(const L & left, const R & right) {
+    return Number(left) * Number(right);
+}
+template <class L, class R>
+requires detail::mixed_numbers<L, R>
+js_num operator/(const L & left, const R & right) {
+    return Number(left) / Number(right);
+}
+template <class L, class R>
+requires detail::mixed_numbers<L, R>
+js_num operator%(const L & left, const R & right) {
+    return Number(left) % Number(right);
+}
+/// `a + b` where neither operand is or may hold a String: ToNumber of each,
+/// then addition (`true + 1` is 2, `null + 1` is 1, `undefined + 1` is NaN).
+template <class L, class R>
+requires detail::mixed_definite_numbers<L, R>
+js_num operator+(const L & left, const R & right) {
+    return Number(left) + Number(right);
+}
+/// `a + b` where one operand is a String: concatenation with ToString of the
+/// other (`"a" + null` is "anull", `"a" + undefined` is "aundefined").
+template <class T>
+requires detail::concatenated<T>
+js_string operator+(const js_string & left, const T & right) {
+    return left + to_js_string(right);
+}
+template <class T>
+requires detail::concatenated<T>
+js_string operator+(const T & left, const js_string & right) {
+    return to_js_string(left) + right;
+}
 // --- dense arrays ------------------------------------------------------------
 //
 // Three helpers: vec_push, vec_length and vec_at. vec_at exists instead of
@@ -791,6 +989,41 @@ inline void vec_push(std::vector<double> & v, js_num x) {
     v.push_back(x.value());
 }
 
+/// A JavaScript Array of one proved element type, stored densely. It is a
+/// std::vector, so range-for and the C++ algorithms see its elements, and it
+/// adds the members JavaScript calls on an Array. Its `[]` is JavaScript's,
+/// so it hides std::vector's unchecked one.
+template <class T> class js_array : public std::vector<T> {
+public:
+    js_array() = default;
+    /// Adopts `values`; explicit, so a std::vector never becomes an Array by
+    /// accident.
+    explicit js_array(std::vector<T> values) : std::vector<T>(std::move(values)) {}
+
+    /// `a.length` (ECMA-262 10.4.2): the element count, since a dense array
+    /// has no holes.
+    js_num length() const { return js_num{static_cast<double>(this->size())}; }
+    /// Array.prototype.push with one argument (ECMA-262 23.1.3.23): appends
+    /// the element and returns the new length.
+    js_num push(T value) {
+        this->push_back(std::move(value));
+        return length();
+    }
+    /// The same for an array of Numbers stored as double.
+    js_num push(js_num value)
+    requires std::is_same_v<T, double>
+    {
+        this->push_back(value.value());
+        return length();
+    }
+    /// `a[i]` (ECMA-262 10.4.2, [[Get]] of an array index): the element at an
+    /// integral index below the length, else undefined (never NaN). -0 names
+    /// index 0; NaN, fractions and negative indices name no element.
+    auto operator[](nullable_scalar key) const {
+        return vec_at(static_cast<const std::vector<T> &>(*this), key);
+    }
+};
+
 // --- object values -----------------------------------------------------------
 
 /// Defined by each generated program; its fields are the program's proved
@@ -808,6 +1041,15 @@ struct object_value {
     object_value(js_boolean_t value) : scalar(value) {}
     object_value(bool value) : object_value(js_boolean_t{value}) {}
     object_value(std::shared_ptr<identity_object> value) : object(std::move(value)) {}
+    /// ToBoolean (ECMA-262 7.1.2): an object is true, a scalar is its own
+    /// ToBoolean.
+    explicit operator bool() const { return object || static_cast<bool>(scalar); }
+    /// `a === b` (ECMA-262 7.2.15, IsStrictlyEqual): the same object, or two
+    /// strictly equal scalars.
+    friend bool operator==(const object_value & a, const object_value & b) {
+        if (a.object || b.object) { return a.object == b.object; }
+        return a.scalar == b.scalar;
+    }
 };
 template <> struct read_carrier<object_value> {
     using type = object_value;
@@ -829,17 +1071,29 @@ inline object_value to_object_value(object_value value) {
     return value;
 }
 inline bool object_truthy(const object_value & value) {
-    return value.object || scalar_truthy(value.scalar);
+    return static_cast<bool>(value);
 }
 inline js_boolean_t object_strict_equal(const object_value & left, const object_value & right) {
-    if (left.object || right.object) { return js_boolean_t{left.object == right.object}; }
-    return scalar_strict_equal(left.scalar, right.scalar);
+    return js_boolean_t{left == right};
 }
 inline js_boolean_t object_equal(const object_value & left, const object_value & right) {
     // The admission check excludes any pair that could invoke an
     // object-to-primitive conversion.
     if (left.object || right.object) { return js_boolean_t{left.object == right.object}; }
     return scalar_equal(left.scalar, right.scalar);
+}
+
+/// JavaScript's loose `a == b` (ECMA-262 7.2.14, IsLooselyEqual) on two
+/// primitive carriers. It is a named function and never an operator: loose
+/// equality is not an equivalence (`'0' == 0` and `0 == ''`, yet
+/// `'0' != ''`), and the C++ library assumes `==` is one.
+template <primitive_equality_operand L, primitive_equality_operand R>
+js_boolean_t loose_equals(const L & left, const R & right) {
+    return primitive_equal(left, right);
+}
+/// The same on object values: the same object, or loosely equal scalars.
+inline js_boolean_t loose_equals(const object_value & left, const object_value & right) {
+    return object_equal(left, right);
 }
 inline std::string object_typeof(const object_value & value) {
     return value.object ? "object" : scalar_typeof(value.scalar);
@@ -1651,3 +1905,5 @@ template <> struct map_key_less<ctbrowser::element_ref> {
 
 // Needs the carriers above, so it comes last.
 #include "ctcompile/CTNative/Runtime/Narrowing.hpp"
+
+#endif // CTCOMPILE_CTNATIVE_RUNTIME_HPP

@@ -59,7 +59,7 @@ bool readOnlyCall(ec::CallOpaqueOp call) {
         .Cases({"ctnative::map_snapshot_at<true>", "ctnative::map_snapshot_at<false>"}, true)
         .Cases({"ctnative::to_number", "ctnative::to_nullable"}, true)
         .Cases({"ctnative::scalar_truthy", "ctnative::scalar_strict_equal"}, true)
-        .Cases({"ctnative::scalar_equal", "ctnative::scalar_typeof"}, true)
+        .Cases({"ctnative::loose_equals", "ctnative::scalar_typeof"}, true)
         .Cases({"static_cast<double>", "static_cast<void>"}, true)
         .Cases({"std::fabs", "std::isfinite", "std::fmod", "std::pow"}, true)
         .Default(false);

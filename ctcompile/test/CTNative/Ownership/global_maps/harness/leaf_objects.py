@@ -226,9 +226,14 @@ def check_leaf_readback_calls(cpp, name, mode, *, source=None):
     if [methods_by_value.get(callee) for callee, _ in calls] != expected:
         raise RuntimeError(f"{name}/{mode}: changed the live readback method order")
     if name in LEAF_COMPARISON_CASES:
-        comparisons = re.findall(r"ctnative::object_strict_equal\((\w+), (\w+)\)", cpp)
         reads = re.findall(r"\b(\w+)\s*=\s*ctnative::map_get_present_identity\(", cpp)
         created = re.findall(r"\b(\w+)\s*=\s*std::make_shared<ctnative::identity_object>\(\)", cpp)
+        # `===` on two object identities is their `==`; a mixed pair keeps
+        # ctnative::object_strict_equal.
+        identities = set(reads) | set(created)
+        comparisons = re.findall(r"ctnative::object_strict_equal\((\w+), (\w+)\)", cpp) + [
+            pair for pair in re.findall(r"\b(\w+) == (\w+)\b", cpp) if identities & set(pair)
+        ]
         if (
             len(comparisons) != 1
             or len(reads) != 1

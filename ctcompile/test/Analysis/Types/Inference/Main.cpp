@@ -197,8 +197,8 @@ int main() {
         // `ctjs.func`, properly dominates the read. The next three rows test
         // that rule and its two negatives. The negatives matter most:
         // narrowing a value that can be undefined gives a wrong answer, not a
-        // refusal, because a global is printed with `%.17g` and
-        // undefined-as-NaN prints `nan`.
+        // refusal, because a global is printed as a Number and
+        // undefined-as-NaN prints `NaN`.
         {"a closed object's field reads as its store where the store dominates the read",
          five + "  %o = ctjs.create_object\n"
                 "  %k = ctjs.constant #ctjs.string<\"x\">\n"

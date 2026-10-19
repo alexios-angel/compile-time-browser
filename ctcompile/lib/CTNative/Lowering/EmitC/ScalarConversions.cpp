@@ -191,7 +191,7 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
         if (target == string || target == rawString) {
             helper = "ctnative::string_text";
         } else if (llvm::isa<mlir::IntegerType>(target)) {
-            helper = "ctnative::string_truthy";
+            return ec::CastOp::create(b, where, target, value);
         } else {
             llvm::report_fatal_error("nullable string has no admitted numeric conversion");
         }
@@ -199,13 +199,17 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
         needsObjectValue = true;
         helper = "ctnative::to_object_value";
     } else if (isObjectValueCarrier(value.getType()) && llvm::isa<mlir::IntegerType>(target)) {
+        // ToBoolean is object_value's explicit `bool`.
         needsObjectValue = true;
-        helper = "ctnative::object_truthy";
+        return ec::CastOp::create(b, where, target, value);
     } else if (isNullableCarrier(target)) {
         helper = "ctnative::to_nullable";
     } else if (isNullableCarrier(value.getType())) {
-        helper = llvm::isa<mlir::IntegerType>(target) ? "ctnative::scalar_truthy"
-                                                      : "ctnative::to_number";
+        // ToBoolean is nullable_scalar's explicit `bool`.
+        if (llvm::isa<mlir::IntegerType>(target)) {
+            return ec::CastOp::create(b, where, target, value);
+        }
+        helper = "ctnative::to_number";
     } else if ((isBooleanCarrier(value.getType()) || isBooleanStringCarrier(value.getType()) ||
                 isNumberStringCarrier(value.getType()) ||
                 isNullableBooleanStringCarrier(value.getType()) ||

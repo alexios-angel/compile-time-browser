@@ -253,9 +253,9 @@ def CTNativeLowerToEmitC : Pass<"ctnative-lower-to-emitc", "mlir::ModuleOp"> {
 
     The importer's top-level function becomes `main`. A native program
     prints only what the JavaScript prints. With the test-only option
-    `observe-globals`, `main` also prints every numeric global as
-    `name=%.17g` at its end - the convention the compilation-unit gate
-    compares against the interpreter.
+    `observe-globals`, `main` also prints every numeric global as `name=`
+    and its Number::toString, with -0 kept, at its end - the convention
+    the compilation-unit gate compares against the interpreter.
 
     With explicit `host-manifest`, instead preserve the fingerprinted input
     before admission and consume a bounded complete ordinary-global owner

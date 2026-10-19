@@ -16,7 +16,7 @@
 // NATIVE-DAG: call_opaque "ctnative::make_map<std::string, ctnative::object_value>"
 // NATIVE-DAG: call_opaque "ctnative::to_object_value"
 // NATIVE-DAG: call_opaque "ctnative::object_strict_equal"
-// NATIVE-DAG: call_opaque "ctnative::object_truthy"
+// NATIVE-DAG: cast {{.*}} : !emitc.opaque<"ctnative::object_value"> to i1
 // NATIVE-DAG: call_opaque "ctnative::object_typeof"
 // STORED: call_opaque "ctnative::object_set_field_78"
 // FIELD: ctnative.not_native = "an owning field receiver may be scalar, null or undefined;

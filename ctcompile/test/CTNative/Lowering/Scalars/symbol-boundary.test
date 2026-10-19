@@ -1,14 +1,14 @@
 # Typed Symbol values have identity, owning descriptions and immutable well-known
 # properties. Without a host contract, lowering source that uses Symbol is refused.
 # RUN: split-file %s %t
-# RUN: not %gxx -O2 -c %t/warning.cpp -o %t/warning.o 2>&1 | FileCheck %s --check-prefix=WARNING
+# RUN: not %gxx --core-free -O2 -c %t/warning.cpp -o %t/warning.o 2>&1 | FileCheck %s --check-prefix=WARNING
 # RUN: %node %t/expected.cjs %t/values.js
-# RUN: %gxx -O2 %t/main.cpp %t/other.cpp -o %t/gcc
-# RUN: %clangxx -O2 %t/main.cpp %t/other.cpp -o %t/clang
-# RUN: %compilation_unit --prebuilt %t/gcc --module %t/unused.mlir --js %t/values.js --work %t --name symbol_api_gcc
-# RUN: %compilation_unit --prebuilt %t/clang --module %t/unused.mlir --js %t/values.js --work %t --name symbol_api_clang
-# RUN: %gxx -O2 -DSYMBOL_MUTATE_ALIAS %t/main.cpp %t/other.cpp -o %t/mutated
-# RUN: not %compilation_unit --prebuilt %t/mutated --module %t/unused.mlir --js %t/values.js --work %t --name symbol_api_mutated 2>&1 | FileCheck %s --check-prefix=MUTATED
+# RUN: %gxx --core-free -O2 %t/main.cpp %t/other.cpp -o %t/gcc
+# RUN: %clangxx --core-free -O2 %t/main.cpp %t/other.cpp -o %t/clang
+# RUN: %compilation_unit --core-free --prebuilt %t/gcc --module %t/unused.mlir --js %t/values.js --work %t --name symbol_api_gcc
+# RUN: %compilation_unit --core-free --prebuilt %t/clang --module %t/unused.mlir --js %t/values.js --work %t --name symbol_api_clang
+# RUN: %gxx --core-free -O2 -DSYMBOL_MUTATE_ALIAS %t/main.cpp %t/other.cpp -o %t/mutated
+# RUN: not %compilation_unit --core-free --prebuilt %t/mutated --module %t/unused.mlir --js %t/values.js --work %t --name symbol_api_mutated 2>&1 | FileCheck %s --check-prefix=MUTATED
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/read.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=READ
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/type.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=TYPE
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/hook.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=HOOK
@@ -56,7 +56,7 @@ static_assert(!std::is_invocable_v<decltype(Symbol.hasInstance)>);
 static_assert(!std::is_assignable_v<decltype((Symbol.hasInstance)), js_symbol_t>);
 
 void boolean(const char * name, bool value) {
-    ctnative::print_scalar(name, ctnative::js_boolean_t{value});
+    ctnative::print_boolean(name, value);
 }
 
 void description(const char * name, const js_symbol_t & value) {
@@ -64,7 +64,7 @@ void description(const char * name, const js_symbol_t & value) {
     if (text) {
         ctnative::print_string(name, text->value());
     } else {
-        ctnative::print_scalar(name, ctnative::undefined_t{});
+        ctnative::print_line(std::string{name} + "=undefined");
     }
 }
 

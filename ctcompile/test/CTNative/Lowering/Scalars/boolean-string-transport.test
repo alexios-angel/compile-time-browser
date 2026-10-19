@@ -37,7 +37,7 @@
 # NUMERIC-MUTATION: global 'numericTrue' differs
 # STRING-MUTATION: global 'decoratedFalse' differs
 # REFUSED: ctnative.not_native =
-# EQUALITY: call_opaque "ctnative::primitive_equal"
+# EQUALITY: call_opaque "ctnative::loose_equals"
 
 #--- values.js
 function convert(value) { return value + 2; }

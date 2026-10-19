@@ -37,4 +37,23 @@ mlir::Value memberCall(mlir::OpBuilder & builder, mlir::Location where, mlir::Ty
         .getResult(0);
 }
 
+mlir::Value methodCall(mlir::OpBuilder & builder, mlir::Location where, mlir::Type result,
+                       mlir::Value receiver, const llvm::Twine & name, mlir::ValueRange operands) {
+    auto place = llvm::dyn_cast<ec::LValueType>(receiver.getType());
+    if (!place) { return memberCall(builder, where, result, receiver, name, operands); }
+    // A load outside an expression would copy the receiver into a variable of
+    // its own; inside one it is just the variable's name.
+    llvm::SmallVector<mlir::Value> captured{receiver};
+    captured.append(operands.begin(), operands.end());
+    auto expression = ec::ExpressionOp::create(builder, where, result, captured, false);
+    expression.createBody();
+    mlir::Block & body = expression.getRegion().front();
+    mlir::OpBuilder inside = mlir::OpBuilder::atBlockBegin(&body);
+    mlir::Value self = ec::LoadOp::create(inside, where, place.getValueType(), body.getArgument(0));
+    mlir::Value called =
+        memberCall(inside, where, result, self, name, body.getArguments().drop_front());
+    ec::YieldOp::create(inside, where, called);
+    return expression.getResult();
+}
+
 } // namespace ctcompile::ctnative::lowering_detail

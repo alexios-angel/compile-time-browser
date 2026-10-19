@@ -1,6 +1,6 @@
 # String methods on a proved String, as css-dump.js uses them: `trim()`,
-# `toLowerCase()` and `toUpperCase()` (Bootstrap's Config message) become
-# ctnative::String.prototype.<name>.call, a template substitution of a Number,
+# `toLowerCase()` and `toUpperCase()` (Bootstrap's Config message) stay
+# js_string's members of those names, a template substitution of a Number,
 # a Boolean, null or undefined is its ToString, and `s[i]`
 # with a Number index becomes ctnative::string_at, which counts UTF-16 code
 # units (`é` is one) and answers undefined past the end. `Number(s)` is
@@ -16,9 +16,9 @@
 # RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name strings_mutation --mutate tidied --mutate-as string --core-build %build 2>&1 | FileCheck %s --check-prefix=MUTATION
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/key.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false observe-globals=true" | FileCheck %s --check-prefix=KEY
 
-# NATIVE-DAG: ctnative::String.prototype.trim.call
-# NATIVE-DAG: ctnative::String.prototype.toLowerCase.call
-# NATIVE-DAG: ctnative::String.prototype.toUpperCase.call
+# NATIVE-DAG: member_call_opaque {{.*}} "trim"() : !emitc.opaque<"ctnative::js_string">, () -> !emitc.opaque<"ctnative::js_string">
+# NATIVE-DAG: member_call_opaque {{.*}} "toLowerCase"() : !emitc.opaque<"ctnative::js_string">, () -> !emitc.opaque<"ctnative::js_string">
+# NATIVE-DAG: member_call_opaque {{.*}} "toUpperCase"() : !emitc.opaque<"ctnative::js_string">, () -> !emitc.opaque<"ctnative::js_string">
 # NATIVE-DAG: ctnative::string_at
 # NATIVE-DAG: "ctnative::Number"
 # MUTATION: global 'tidied' differs

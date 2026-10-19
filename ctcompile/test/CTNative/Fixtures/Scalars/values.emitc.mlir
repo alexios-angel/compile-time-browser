@@ -12,15 +12,15 @@
 // The output convention, shared with the reference interpreter
 // (test/Runtime/Reference/Interpreter.cpp) and produced here:
 //
-//     Number      std::printf("%s=%.17g\n", "<name>", (double) <global>)
+//     Number      ctnative::print_number("<name>", (double) <global>)
 //     Boolean     ctnative::print_boolean("<name>", <global>)
 //     undefined   ctnative::print_undefined("<name>")
 //     null        ctnative::print_null("<name>")
 //     String      ctnative::print_string("<name>", <global>)
 //
 // one line per global, sorted bytewise by name, and `main` returns 0. The
-// Number line is the plain printf above because older fixtures expect
-// exactly that text.
+// Number line goes through ctnative::print_number so the native and the
+// interpreter agree on Number::toString (-0 kept on both sides).
 //
 // Five kinds need only three representations:
 //
@@ -49,12 +49,15 @@
 //
 // CHECK: #include <cstdint>
 // CHECK: #include <cstdio>
+// CHECK: #include <cmath>
+// CHECK: #include <format>
 // CHECK: #include <string>
 // CHECK: namespace ctnative {
 // CHECK: inline void print_string(const char * name, const std::string & s) {
 // CHECK: inline void print_boolean(const char * name, bool b) {
 // CHECK: inline void print_undefined(const char * name) {
 // CHECK: inline void print_null(const char * name) {
+// CHECK: inline void print_number(const char * name, double value) {
 // CHECK: } // namespace ctnative
 //
 // Exactly three representations, no fourth.
@@ -72,7 +75,7 @@
 // CHECK-LABEL: int32_t main() {
 // The prints, sorted bytewise by name. The interpreter side sorts the same
 // way, and a line out of place fails the comparison.
-// CHECK: std::printf("%s=%.17g\n", "answer", {{v[0-9]+}});
+// CHECK: ctnative::print_number("answer", {{v[0-9]+}});
 // CHECK: ctnative::print_string("empty", {{v[0-9]+}});
 // CHECK: ctnative::print_string("greeting", {{v[0-9]+}});
 // CHECK: ctnative::print_string("looks_null", {{v[0-9]+}});
@@ -81,7 +84,7 @@
 // CHECK: ctnative::print_boolean("no", {{v[0-9]+}});
 // CHECK: ctnative::print_null("nothing");
 // CHECK: ctnative::print_string("raw", {{v[0-9]+}});
-// CHECK: std::printf("%s=%.17g\n", "third", {{v[0-9]+}});
+// CHECK: ctnative::print_number("third", {{v[0-9]+}});
 // CHECK: ctnative::print_boolean("yes", {{v[0-9]+}});
 // CHECK: return {{v[0-9]+}};
 //
@@ -98,27 +101,32 @@
 // compile of the value-printing helpers on both toolchains
 // (compile-clean.py).
 //
+// print_number is a local helper over std::format (see the verbatim block), so
+// the module keeps its header-only link; it does not need --core-build.
 //
-// RUN: %compilation_unit --module %s --js %S/values.js --work %t --name values
-// RUN: not %compilation_unit --module %s --js %S/values.js --work %t --name values_number --mutate third --mutate-as number 2>&1 | FileCheck %s --check-prefix=NUMBER
+//
+// RUN: %compilation_unit --core-free --module %s --js %S/values.js --work %t --name values
+// RUN: not %compilation_unit --core-free --module %s --js %S/values.js --work %t --name values_number --mutate third --mutate-as number 2>&1 | FileCheck %s --check-prefix=NUMBER
 // NUMBER: global 'third' differs
-// RUN: not %compilation_unit --module %s --js %S/values.js --work %t --name values_boolean --mutate no --mutate-as boolean 2>&1 | FileCheck %s --check-prefix=BOOLEAN
+// RUN: not %compilation_unit --core-free --module %s --js %S/values.js --work %t --name values_boolean --mutate no --mutate-as boolean 2>&1 | FileCheck %s --check-prefix=BOOLEAN
 // BOOLEAN: global 'no' differs
-// RUN: not %compilation_unit --module %s --js %S/values.js --work %t --name values_string --mutate greeting --mutate-as string 2>&1 | FileCheck %s --check-prefix=STRING
+// RUN: not %compilation_unit --core-free --module %s --js %S/values.js --work %t --name values_string --mutate greeting --mutate-as string 2>&1 | FileCheck %s --check-prefix=STRING
 // STRING: global 'greeting' differs
-// RUN: not %compilation_unit --module %s --js %S/values.js --work %t --name values_undefined --mutate missing --mutate-as undefined 2>&1 | FileCheck %s --check-prefix=UNDEFINED
+// RUN: not %compilation_unit --core-free --module %s --js %S/values.js --work %t --name values_undefined --mutate missing --mutate-as undefined 2>&1 | FileCheck %s --check-prefix=UNDEFINED
 // UNDEFINED: global 'missing' differs
-// RUN: not %compilation_unit --module %s --js %S/values.js --work %t --name values_null --mutate nothing --mutate-as null 2>&1 | FileCheck %s --check-prefix=NULL
+// RUN: not %compilation_unit --core-free --module %s --js %S/values.js --work %t --name values_null --mutate nothing --mutate-as null 2>&1 | FileCheck %s --check-prefix=NULL
 // NULL: global 'nothing' differs
-// RUN: not %compilation_unit --module %s --js %S/values.js --work %t --name values_vacuous_mutation --mutate answer --mutate-as number 2>&1 | FileCheck %s --check-prefix=VACUOUS
+// RUN: not %compilation_unit --core-free --module %s --js %S/values.js --work %t --name values_vacuous_mutation --mutate answer --mutate-as number 2>&1 | FileCheck %s --check-prefix=VACUOUS
 // VACUOUS: VACUOUS
-// RUN: not %compilation_unit --module %s --js %S/values.js --work %t --name values_vm_linked --prebuilt ctcompile-test-native-values-vm-linked 2>&1 | FileCheck %s --check-prefix=VM-LINKED
+// RUN: not %compilation_unit --core-free --module %s --js %S/values.js --work %t --name values_vm_linked --prebuilt ctcompile-test-native-values-vm-linked 2>&1 | FileCheck %s --check-prefix=VM-LINKED
 // VM-LINKED: reaches the interpreter
 // RUN: %compile_clean --module %s --work %t --name values
 
 module {
   emitc.include <"cstdint">
   emitc.include <"cstdio">
+  emitc.include <"cmath">
+  emitc.include <"format">
   emitc.include <"string">
 
   // The value-printing prelude, one `emitc.verbatim` per C++ line, because an
@@ -126,11 +134,12 @@ module {
   // 1,500-character line is not reviewable. Only the text has to match what
   // the lowering emits, not how it is assembled.
   //
-  // No std::printf in here, for two reasons. A `%` in the data would be read
-  // as a conversion by printf. And compilation-unit.py's --mutate inserts its
-  // edit in front of the first `std::printf(` in the emitted C++, which must
-  // be the first line `main` prints, not a line of a helper defined above it.
-  // The driver asserts that placement; this module keeps its side of it.
+  // No std::printf in here. A `%` in the data would be read as a conversion
+  // by printf, and compilation-unit.py's --mutate anchors its edit on the
+  // first print_* call in `main` (the helpers it recognises are the ctnative
+  // print_* set and, for older fixtures, printf), so the helper has to be
+  // the module's own line, not a line of a helper defined above it. The
+  // driver asserts that placement; this module keeps its side of it.
   // (The verbatim comment lines below name two files that have since been
   // replaced by Checks/compilation-unit.py and Runtime/Reference/Interpreter.cpp.)
   emitc.verbatim "// ctcompile: the differential gate's value forms - the convention is stated"
@@ -180,6 +189,21 @@ module {
   emitc.verbatim "inline void print_null(const char * name) {"
   emitc.verbatim "  std::fputs(name, stdout);"
   emitc.verbatim "  std::fputs(\"=null\\n\", stdout);"
+  emitc.verbatim "}"
+  emitc.verbatim "// ctcompile: a Number global, spelled Number::toString (-0 kept) so the"
+  emitc.verbatim "// interpreter side, which prints the same way, agrees on the double's"
+  emitc.verbatim "// value. std::format's shortest round-trip agrees with Number::toString"
+  emitc.verbatim "// on this fixture's values (42 and 1/3) only; do not copy this helper."
+  emitc.verbatim "// Other values need the runtime's general ctnative::print_number."
+  emitc.verbatim "inline void print_number(const char * name, double value) {"
+  emitc.verbatim "  const std::string text = std::isnan(value) ? std::string{\"NaN\"}"
+  emitc.verbatim "                           : std::isinf(value) ? std::string{value > 0 ? \"Infinity\" : \"-Infinity\"}"
+  emitc.verbatim "                           : (value == 0.0 && std::signbit(value)) ? std::string{\"-0\"}"
+  emitc.verbatim "                                               : std::format(\"{}\", value);"
+  emitc.verbatim "  std::fputs(name, stdout);"
+  emitc.verbatim "  std::fputc('=', stdout);"
+  emitc.verbatim "  std::fputs(text.c_str(), stdout);"
+  emitc.verbatim "  std::fputc('\\n', stdout);"
   emitc.verbatim "}"
   emitc.verbatim "} // namespace ctnative"
 
@@ -261,12 +285,10 @@ module {
     // var nothing = null;  var missing;   No storage, nothing to assign.
 
     // --- The output convention: every global, sorted bytewise by name -------
-    %fmt = emitc.literal "\"%s=%.17g\\n\"" : !emitc.ptr<!emitc.opaque<"const char">>
-
     %o_answer = emitc.load %g_answer : !emitc.lvalue<i32>
     %d_answer = emitc.cast %o_answer : i32 to f64
     %n_answer = emitc.literal "\"answer\"" : !emitc.ptr<!emitc.opaque<"const char">>
-    emitc.call_opaque "std::printf"(%fmt, %n_answer, %d_answer) : (!emitc.ptr<!emitc.opaque<"const char">>, !emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
+    emitc.call_opaque "ctnative::print_number"(%n_answer, %d_answer) : (!emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
 
     %o_empty = emitc.load %g_empty : !emitc.lvalue<!emitc.opaque<"std::string">>
     %n_empty = emitc.literal "\"empty\"" : !emitc.ptr<!emitc.opaque<"const char">>
@@ -301,7 +323,7 @@ module {
 
     %o_third = emitc.load %g_third : !emitc.lvalue<f64>
     %n_third = emitc.literal "\"third\"" : !emitc.ptr<!emitc.opaque<"const char">>
-    emitc.call_opaque "std::printf"(%fmt, %n_third, %o_third) : (!emitc.ptr<!emitc.opaque<"const char">>, !emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
+    emitc.call_opaque "ctnative::print_number"(%n_third, %o_third) : (!emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
 
     %o_yes = emitc.load %g_yes : !emitc.lvalue<i1>
     %n_yes = emitc.literal "\"yes\"" : !emitc.ptr<!emitc.opaque<"const char">>

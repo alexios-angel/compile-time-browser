@@ -16,7 +16,7 @@
 // NATIVE-DAG: call_opaque "ctnative::make_number_map<std::shared_ptr<ctnative::identity_object>>"
 // NATIVE-DAG: emitc.func @makeKey_1({{.*}}) -> !emitc.opaque<"std::shared_ptr<ctnative::identity_object>">
 // FIELDS: call_opaque "ctnative::object_set_field_78"
-// INSPECT: call_opaque "ctnative::object_strict_equal"
+// INSPECT: cmp eq, {{.*}} : (!emitc.opaque<"std::shared_ptr<ctnative::identity_object>">, !emitc.opaque<"std::shared_ptr<ctnative::identity_object>">) -> i1
 // MIXED: ctnative.not_native =
 // MIXED: identity-only Map key flow contains a non-object producer
 // OPTIONAL: ctnative.not_native = "native Map needs supported keys and numeric, boolean, closed mixed, owning-string, object-identity union or acyclic Map values; inferred !ctnative.map<!ctnative.boxed,
