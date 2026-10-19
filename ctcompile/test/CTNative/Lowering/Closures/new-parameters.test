@@ -14,7 +14,7 @@
 # RUN: split-file %s %t
 # RUN: for name in point trap made; do \
 # RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --mlir-print-debuginfo 2>/dev/null \
-# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/$name.mlir; \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/$name.mlir; \
 # RUN:   ctjs-opt %t/$name.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/$name.cpp; \
 # RUN:   FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/$name.mlir; done
 # RUN: FileCheck %s --check-prefix=POINT-CPP < %t/point.cpp
@@ -38,7 +38,7 @@
 # constructed through it with a number.
 # RUN: for name in backdrop kinds; do \
 # RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js 2>/dev/null \
-# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 # RUN:   | FileCheck %s --check-prefix=KEPT; done
 
 # NATIVE: emitc.func @main

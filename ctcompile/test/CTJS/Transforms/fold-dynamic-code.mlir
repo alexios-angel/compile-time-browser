@@ -11,11 +11,9 @@
 // the program rebinds) stays for clause 5 to refuse, and these tests pin
 // both halves.
 //
-// A name splices only when the module never stores it and never writes or
-// deletes it as a constant property key, and only while no computed-key
-// write or `Object.defineProperty`/`Object.assign`-style call onto the
-// global object could rebind any of the four names by a key known only at
-// run time.
+// A name splices only when resolution on a throwaway clone proves there is
+// no rebind, including aliases, parameters, computed writes and object
+// mutators. The actual module retains no speculative resolver rewrites.
 
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/newfunction.js 2>/dev/null \
@@ -38,6 +36,17 @@
 // RUN:   | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=KEPT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/syntaxerror.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=SYNTAX
+// RUN: for name in alias parameter reflect define-alias injected skipped declarations lexical-declarations timer-declarations timer-lexical dynamic-timer nested-eval direct-eval; do \
+// RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js -o %t/$name.mlir 2>/dev/null; \
+// RUN:   ctjs-opt %t/$name.mlir -o %t/$name.plain.mlir; \
+// RUN:   ctjs-opt %t/$name.mlir --ctjs-fold-dynamic-code -o %t/$name.folded.mlir; \
+// RUN:   cmp %t/$name.plain.mlir %t/$name.folded.mlir || exit 1; done
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/phaser.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=PHASER
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nested.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=NESTED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/interval.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=INTERVAL
 
 //--- newfunction.js
 // A constant body splices: the construct site becomes a ctjs.create_closure
@@ -92,7 +101,6 @@ var t = schedule();
 //--- dynamic.js
 // A non-constant body is left alone for clause 5: the load of `Function` and
 // the construct both stay.
-// KEPT-LABEL: ctjs.func {{.*}}@dynamic$
 // KEPT: ctjs.load_global "Function"
 // KEPT: ctjs.construct
 function dynamic(source) {
@@ -103,9 +111,6 @@ var d = dynamic('return 1');
 //--- rebound.js
 // A name the program stores is not spliced, even at a constant site: the
 // store could rebind it before the call runs.
-// KEPT-LABEL: ctjs.func {{.*}}@rebound$
-// KEPT: ctjs.store_global "Function"
-// KEPT: ctjs.load_global "Function"
 var Function = 1;
 function rebound() {
     return new Function('return 1');
@@ -116,9 +121,6 @@ var rb = rebound();
 // A computed-key write onto the global object could rebind ANY of the four
 // by a name known only at run time, so no site splices, however constant its
 // own string is.
-// KEPT-LABEL: ctjs.func {{.*}}@computed$
-// KEPT: ctjs.load_global "Function"
-// KEPT: ctjs.construct
 function computed(key) {
     globalThis[key] = 1;
     return new Function('return 1');
@@ -128,9 +130,6 @@ var c = computed('x');
 //--- defprop.js
 // `Object.defineProperty(globalThis, name, desc)` with a non-constant name
 // can rebind any of the four, so the site is left alone.
-// KEPT-LABEL: ctjs.func {{.*}}@defprop$
-// KEPT: ctjs.load_global "Function"
-// KEPT: ctjs.construct
 function defprop(name) {
     Object.defineProperty(globalThis, name, { value: 1 });
     return new Function('return 1');
@@ -141,9 +140,6 @@ var dp = defprop('x');
 // `Object.assign(globalThis, source)` copies every key of source onto the
 // global object; with source not a closed literal the keys are unknowable,
 // so the site is left alone.
-// KEPT-LABEL: ctjs.func {{.*}}@assign$
-// KEPT: ctjs.load_global "Function"
-// KEPT: ctjs.construct
 function assign(source) {
     Object.assign(globalThis, source);
     return new Function('return 1');
@@ -157,7 +153,102 @@ var a = assign({});
 // SYNTAX-LABEL: ctjs.func {{.*}}@broken_call$
 // SYNTAX-NOT: ctjs.load_global "Function"
 // SYNTAX: ctjs.create_closure
+// SYNTAX: ctjs.call
+// SYNTAX-LABEL: ctjs.func @anonymous$
+// SYNTAX: ctjs.load_global "SyntaxError"
+// SYNTAX: ctjs.construct
+// SYNTAX: ctjs.throw
 function broken_call() {
     return new Function('return (');
 }
 var b = broken_call();
+
+// Rebind and declaration refusals leave the entire module byte-identical,
+// including its original call and attributes. Mutation checks separately
+// disable the rebind proof for alias/parameter/reflect/define-alias.
+
+//--- alias.js
+function changed() { return 7; }
+function alias() {
+    var w = window;
+    w.eval = changed;
+    var e = eval;
+    return e('21 + 21');
+}
+var r = alias();
+
+//--- parameter.js
+function changed() { return 7; }
+function install(w) { w.eval = changed; }
+install(window);
+var r = (0, eval)('21 + 21');
+
+//--- reflect.js
+function changed() { return 7; }
+Reflect.set(window, 'eval', changed);
+var r = (0, eval)('21 + 21');
+
+//--- define-alias.js
+function changed() { return 7; }
+var w = self;
+Object.defineProperty(w, 'eval', { value: changed });
+var r = (0, eval)('21 + 21');
+
+//--- injected.js
+var f = Function('eval = 1; return 1');
+var r = (0, eval)('21 + 21');
+
+//--- skipped.js
+function* changed() { eval = 1; yield 1; }
+var r = (0, eval)('21 + 21');
+
+//--- declarations.js
+var r = (0, eval)('var x = 1; 21 + 21');
+
+//--- lexical-declarations.js
+var r = (0, eval)('let x = 1; x + 1');
+
+//--- timer-declarations.js
+setTimeout('var x = 1; 21 + 21', 0);
+
+//--- timer-lexical.js
+setTimeout('let x = 1; x + 1', 0);
+
+//--- dynamic-timer.js
+function later(source) { setTimeout(source, 0); }
+var r = (0, eval)('21 + 21');
+
+//--- nested-eval.js
+var f = Function('source', 'return eval(source)');
+var r = (0, eval)('21 + 21');
+
+//--- direct-eval.js
+function direct(source) { return eval(source); }
+var r = (0, eval)('21 + 21');
+
+//--- phaser.js
+// Phaser's global-return probe stays refused while its receiver escapes.
+// Node substitutes the global object for this bare sloppy call; the VM
+// observes undefined. This pass must not choose either behaviour.
+// PHASER-LABEL: ctjs.func @probe$
+// PHASER: ctjs.load_global "Function"
+// PHASER: ctjs.construct
+// PHASER: ctjs.call
+function probe() { return new Function('return this')(); }
+var r = probe();
+
+//--- nested.js
+// Parameter-default closures are emitted before the outer function. Find the
+// wrapper's returned closure rather than guessing its index is one, and shift
+// every nested closure index consistently.
+// NESTED: ctjs.create_closure
+// NESTED-LABEL: ctjs.func @anonymous$
+// NESTED: ctjs.create_closure
+function nested() { return Function('a = () => 4', 'return () => a()'); }
+var r = nested();
+
+//--- interval.js
+// INTERVAL: ctjs.load_global "setInterval"
+// INTERVAL: ctjs.create_closure
+// INTERVAL: ctjs.call
+setInterval('tick()', 100, 7);

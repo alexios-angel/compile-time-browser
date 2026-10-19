@@ -18,19 +18,6 @@ HERE = Path(__file__).resolve().parent
 MAINS = {}
 
 CASES = {
-    "Transforms/fold-dynamic-code": [
-        "split-file %s %t",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/newfunction.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=NEWFN",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/functioncall.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=FNCALL",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/eval.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=EVAL",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/timer.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=TIMER",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/dynamic.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=KEPT",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/rebound.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=KEPT",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/computed.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=KEPT",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/defprop.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=KEPT",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/assign.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=KEPT",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/syntaxerror.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=SYNTAX",
-    ],
     "IR/exceptions": [
         "split-file %s %t",
         "ctjs-opt %t/joined.mlir | ctjs-opt | FileCheck %s --check-prefix=ROUNDTRIP",
@@ -87,6 +74,23 @@ CASES = {
         "ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-declarations.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=PREFIXPROPS",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-call.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-twice.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT",
+    ],
+    "Transforms/fold-dynamic-code": [
+        "split-file %s %t",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/newfunction.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=NEWFN",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/functioncall.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=FNCALL",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/eval.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=EVAL",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/timer.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=TIMER",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/dynamic.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=KEPT",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/rebound.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=KEPT",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/computed.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=KEPT",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/defprop.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=KEPT",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/assign.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=KEPT",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/syntaxerror.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=SYNTAX",
+        "for name in alias parameter reflect define-alias injected skipped declarations lexical-declarations timer-declarations timer-lexical dynamic-timer nested-eval direct-eval; do    ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js -o %t/$name.mlir 2>/dev/null;    ctjs-opt %t/$name.mlir -o %t/$name.plain.mlir;    ctjs-opt %t/$name.mlir --ctjs-fold-dynamic-code -o %t/$name.folded.mlir;    cmp %t/$name.plain.mlir %t/$name.folded.mlir || exit 1; done",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/phaser.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=PHASER",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/nested.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=NESTED",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/interval.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=INTERVAL",
     ],
     "Transforms/array-iteration": [
         "ctjs-translate --ctbrowser-js-to-ctjs %s    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf    | FileCheck %s",

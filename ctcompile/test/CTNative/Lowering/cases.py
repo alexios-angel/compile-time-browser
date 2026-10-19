@@ -23,7 +23,7 @@ MAINS = {}
 CASES = {
     "Closures/new-parameters": [
         "split-file %s %t",
-        "for name in point trap made; do    ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/$name.mlir;    ctjs-opt %t/$name.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/$name.cpp;    FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/$name.mlir; done",
+        "for name in point trap made; do    ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/$name.mlir;    ctjs-opt %t/$name.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/$name.cpp;    FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/$name.mlir; done",
         "FileCheck %s --check-prefix=POINT-CPP < %t/point.cpp",
         "FileCheck %s --check-prefix=TRAP-CPP < %t/trap.cpp",
         "%gxx -O2 %t/point.cpp -o %t/point-gcc && %t/point-gcc | FileCheck %s --check-prefix=POINT",
@@ -38,7 +38,7 @@ CASES = {
         "%clangxx -O2 %t/made.cpp -o %t/made-clang && %t/made-clang | FileCheck %s --check-prefix=MADE",
         "%native_reference %t/made.js | FileCheck %s --check-prefix=MADE",
         '%node -e \'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);\' %t/made.js | FileCheck %s --check-prefix=MADE',
-        "for name in backdrop kinds; do    ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc    | FileCheck %s --check-prefix=KEPT; done",
+        "for name in backdrop kinds; do    ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true    | FileCheck %s --check-prefix=KEPT; done",
     ],
     "Admission/divergence-refusals": [
         "split-file %s %t",

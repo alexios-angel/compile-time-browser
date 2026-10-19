@@ -196,9 +196,16 @@ def CTJSFoldDynamicCode : Pass<"ctjs-fold-dynamic-code", "mlir::ModuleOp"> {
     removes those loads; whatever is left (a non-constant string, a name
     the program rebinds) stays for clause 5 to refuse.
 
-    A name is spliced only when the module never stores it and never
-    writes or deletes it as a constant property key, so no site the pass
-    rewrites can observe a rebind.
+    Candidate splices are built in a private module. Global resolution on
+    another throwaway clone proves that no alias, call, parameter, computed
+    store or object mutator can rebind the builtins. Refused bodies and the
+    newly imported source participate in that proof. Only the candidate's
+    splices, never the resolver's speculative rewrites, reach the real module.
+
+    Eval and timer source that declares bindings is left unchanged because
+    its declaration instantiation belongs at execution time, not page startup.
+    Any snippet the bytecode importer cannot import completely is also left
+    for the native tier's ordinary refusal.
   }];
   let statistics = [
     Statistic<"spliced", "spliced-sites",
