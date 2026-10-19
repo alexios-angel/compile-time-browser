@@ -30,7 +30,7 @@
 // RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --whole-page 2>/dev/null \
 // RUN:     | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:     | FileCheck %s --check-prefix=CLEAN --implicit-check-not=ctjs.runtime_code; done
-// RUN: for name in timer-local-mixed timer-return-mixed timer-array-mixed timer-cell-mixed timer-interval-mixed; do \
+// RUN: for name in timer-local-mixed timer-return-mixed timer-array-mixed timer-cell-mixed timer-interval-mixed timer-omitted timer-short-array; do \
 // RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --whole-page 2>/dev/null \
 // RUN:     | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:     | FileCheck %s --check-prefix=MIXED; done
@@ -127,6 +127,20 @@ later("x = 1");
     function later(code) { setInterval(code, 0); }
     later(function () {});
     later("x = 1");
+})();
+
+//--- timer-omitted.js
+(function () {
+    function later(code) { setTimeout(code, 0); }
+    later(function () {});
+    later();
+})();
+
+//--- timer-short-array.js
+(function () {
+    function choose(flag) { if (flag) return [function () {}]; return []; }
+    var [code] = choose(false);
+    setTimeout(code, 0);
 })();
 
 //--- timer-local-function.js

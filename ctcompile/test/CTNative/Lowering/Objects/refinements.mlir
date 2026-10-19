@@ -29,7 +29,8 @@
 // DEAD: ctnative.unreachable_refusals = [{function = "fn${{[0-9]+}}", reason = "removed: unreachable
 // OPEN: ctjs.load_global "PROPS"
 // OPEN: ctnative.array_callback = @fn$[[CALLBACK:[0-9]+]]
-// OPEN: emitc.func @fn_[[CALLBACK]]
+// OPEN: ctjs.func @fn$[[CALLBACK]]
+// OPEN-SAME: ctnative.not_native = "parameter 0 is !ctnative.boxed
 // CELL-NOT: parameter 0 is !ctnative.boxed
 // CELL: @fn${{[0-9]+}}{{.*}}ctnative.not_native = "called back by `getOffset${{[0-9]+}}`, which is not native"
 // CELL-NOT: parameter 0 is !ctnative.boxed

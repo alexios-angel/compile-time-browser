@@ -259,8 +259,13 @@ def run(argv: argparse.Namespace) -> dict:
     translate = subprocess.run(
         # Measured as its page's only script (WholePage.h), as pipeline.cmake
         # builds it.
-        [argv.translate, "--ctbrowser-js-to-ctjs", argv.corpus, "--mlir-print-debuginfo",
-         "--whole-page"],
+        [
+            argv.translate,
+            "--ctbrowser-js-to-ctjs",
+            argv.corpus,
+            "--mlir-print-debuginfo",
+            "--whole-page",
+        ],
         capture_output=True,
         timeout=argv.timeout,
     )
