@@ -485,8 +485,8 @@ GATES = {
     },
     "Scalars/divergence": {
         "compilation_unit": [
-            "--module %{obj}/divergence.pipeline.emitc.mlir --js %S/divergence.js --work %t --name divergence",
-            "--module %{obj}/divergence.pipeline.deduced.emitc.mlir --js %S/divergence.js --work %t --name divergence_deduced",
+            "--module %{obj}/divergence.pipeline.emitc.mlir --js %S/divergence.js --work %t --name divergence --core-build %build",
+            "--module %{obj}/divergence.pipeline.deduced.emitc.mlir --js %S/divergence.js --work %t --name divergence_deduced --core-build %build",
         ],
         "compile_clean": [
             "--module %{obj}/divergence.pipeline.emitc.mlir --work %t --name divergence",
@@ -498,8 +498,8 @@ GATES = {
     },
     "Scalars/optional-scalars": {
         "compilation_unit": [
-            "--module %{obj}/optional_scalars.pipeline.emitc.mlir --js %S/optional-scalars.js --work %t --name optional_scalars",
-            "--module %{obj}/optional_scalars.pipeline.deduced.emitc.mlir --js %S/optional-scalars.js --work %t --name optional_scalars_deduced",
+            "--module %{obj}/optional_scalars.pipeline.emitc.mlir --js %S/optional-scalars.js --work %t --name optional_scalars --core-build %build",
+            "--module %{obj}/optional_scalars.pipeline.deduced.emitc.mlir --js %S/optional-scalars.js --work %t --name optional_scalars_deduced --core-build %build",
         ],
         "compile_clean": [
             "--module %{obj}/optional_scalars.pipeline.emitc.mlir --work %t --name optional_scalars",
@@ -511,8 +511,8 @@ GATES = {
     },
     "Scalars/scalar-unions": {
         "compilation_unit": [
-            "--module %{obj}/scalar_unions.pipeline.emitc.mlir --js %S/scalar-unions.js --work %t --name scalar_unions",
-            "--module %{obj}/scalar_unions.pipeline.deduced.emitc.mlir --js %S/scalar-unions.js --work %t --name scalar_unions_deduced",
+            "--module %{obj}/scalar_unions.pipeline.emitc.mlir --js %S/scalar-unions.js --work %t --name scalar_unions --core-build %build",
+            "--module %{obj}/scalar_unions.pipeline.deduced.emitc.mlir --js %S/scalar-unions.js --work %t --name scalar_unions_deduced --core-build %build",
         ],
         "compile_clean": [
             "--module %{obj}/scalar_unions.pipeline.emitc.mlir --work %t --name scalar_unions",
@@ -524,8 +524,8 @@ GATES = {
     },
     "Scalars/string": {
         "compilation_unit": [
-            "--module %{obj}/strings.pipeline.emitc.mlir --js %S/string.js --work %t --name strings",
-            "--module %{obj}/strings.pipeline.deduced.emitc.mlir --js %S/string.js --work %t --name strings_deduced",
+            "--module %{obj}/strings.pipeline.emitc.mlir --js %S/string.js --work %t --name strings --core-build %build",
+            "--module %{obj}/strings.pipeline.deduced.emitc.mlir --js %S/string.js --work %t --name strings_deduced --core-build %build",
         ],
         "compile_clean": [
             "--module %{obj}/strings.pipeline.emitc.mlir --work %t --name strings",

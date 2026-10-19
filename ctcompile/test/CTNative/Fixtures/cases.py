@@ -171,6 +171,46 @@ CASES = {
         "not %compilation_unit --module %s --js %S/values.js --work %t --name values_vm_linked --prebuilt ctcompile-test-native-values-vm-linked 2>&1 | FileCheck %s --check-prefix=VM-LINKED",
         "%compile_clean --module %s --work %t --name values",
     ],
+    "Scalars/string": [
+        "%compilation_unit --module %{obj}/strings.pipeline.emitc.mlir --js %S/string.js --work %t --name strings --core-build %build",
+        "not %compilation_unit --module %{obj}/strings.pipeline.emitc.mlir --js %S/string.js --work %t --name strings_off_by_one --mutate startup42 --core-build %build 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE",
+        "%compilation_unit --module %{obj}/strings.pipeline.deduced.emitc.mlir --js %S/string.js --work %t --name strings_deduced --core-build %build",
+        "%compile_clean --module %{obj}/strings.pipeline.emitc.mlir --work %t --name strings",
+        "%compile_clean --module %{obj}/strings.pipeline.deduced.emitc.mlir --work %t --name strings_deduced",
+        "%print_deduced --plain %{obj}/strings.pipeline.emitc.mlir --deduced %{obj}/strings.pipeline.deduced.emitc.mlir --mutated %{obj}/strings.pipeline.mutated.emitc.mlir --work %t --name strings",
+    ],
+    "Scalars/scalar-unions": [
+        "%compilation_unit --module %{obj}/scalar_unions.pipeline.emitc.mlir --js %S/scalar-unions.js --work %t --name scalar_unions --core-build %build",
+        "not %compilation_unit --module %{obj}/scalar_unions.pipeline.emitc.mlir --js %S/scalar-unions.js --work %t --name scalar_unions_off_by_one --mutate zz_lifetime --core-build %build 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE",
+        "%compilation_unit --module %{obj}/scalar_unions.pipeline.deduced.emitc.mlir --js %S/scalar-unions.js --work %t --name scalar_unions_deduced --core-build %build",
+        "%compile_clean --module %{obj}/scalar_unions.pipeline.emitc.mlir --work %t --name scalar_unions",
+        "%compile_clean --module %{obj}/scalar_unions.pipeline.deduced.emitc.mlir --work %t --name scalar_unions_deduced",
+        "%print_deduced --plain %{obj}/scalar_unions.pipeline.emitc.mlir --deduced %{obj}/scalar_unions.pipeline.deduced.emitc.mlir --mutated %{obj}/scalar_unions.pipeline.mutated.emitc.mlir --work %t --name scalar_unions",
+    ],
+    "Scalars/optional-scalars": [
+        "%compilation_unit --module %{obj}/optional_scalars.pipeline.emitc.mlir --js %S/optional-scalars.js --work %t --name optional_scalars --core-build %build",
+        "not %compilation_unit --module %{obj}/optional_scalars.pipeline.emitc.mlir --js %S/optional-scalars.js --work %t --name optional_scalars_off_by_one --mutate number_present --core-build %build 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE",
+        "%compilation_unit --module %{obj}/optional_scalars.pipeline.deduced.emitc.mlir --js %S/optional-scalars.js --work %t --name optional_scalars_deduced --core-build %build",
+        "%compile_clean --module %{obj}/optional_scalars.pipeline.emitc.mlir --work %t --name optional_scalars",
+        "%compile_clean --module %{obj}/optional_scalars.pipeline.deduced.emitc.mlir --work %t --name optional_scalars_deduced",
+        "%print_deduced --plain %{obj}/optional_scalars.pipeline.emitc.mlir --deduced %{obj}/optional_scalars.pipeline.deduced.emitc.mlir --mutated %{obj}/optional_scalars.pipeline.mutated.emitc.mlir --work %t --name optional_scalars",
+    ],
+    "Scalars/divergence": [
+        "%compilation_unit --module %{obj}/divergence.pipeline.emitc.mlir --js %S/divergence.js --work %t --name divergence --core-build %build",
+        "%compilation_unit --module %{obj}/divergence.pipeline.deduced.emitc.mlir --js %S/divergence.js --work %t --name divergence_deduced --core-build %build",
+        "%compile_clean --module %{obj}/divergence.pipeline.emitc.mlir --work %t --name divergence",
+        "%compile_clean --module %{obj}/divergence.pipeline.deduced.emitc.mlir --work %t --name divergence_deduced",
+        "%print_deduced --plain %{obj}/divergence.pipeline.emitc.mlir --deduced %{obj}/divergence.pipeline.deduced.emitc.mlir --mutated %{obj}/divergence.pipeline.mutated.emitc.mlir --work %t --name divergence",
+    ],
+    "Scalars/template-literal": [
+        "rm -rf %t && mkdir -p %t",
+        "%native_reference --page %S/template-literal.html --script %S/template-literal.js > %t/vm.txt",
+        "FileCheck %s --match-full-lines --strict-whitespace < %t/vm.txt",
+        "%cmake -DTRANSLATE=ctjs-translate -DOPT=ctjs-opt -DSOURCE=%S/template-literal.js -DOUTPUT=%t/template.mlir -P %S/../../Checks/pipeline.cmake",
+        "ctjs-translate --mlir-to-cpp %t/template.mlir -o %t/template.cpp",
+        "grep -c 'ctnative::format(' %t/template.cpp | FileCheck %s --check-prefix=CALLS",
+        "python3 %S/template_literal.py --cpp %t/template.cpp --expected %t/vm.txt --build %build --include %{monorepo}/ctbrowser/include --work %t",
+    ],
 }
 
 

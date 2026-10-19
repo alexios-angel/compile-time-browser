@@ -11,10 +11,10 @@
 # fail naming G, which proves the comparison can catch a wrong value.
 
 # Tagged optional scalars distinguish null, undefined and present NaN.
-# RUN: %compilation_unit --module %{obj}/optional_scalars.pipeline.emitc.mlir --js %S/optional-scalars.js --work %t --name optional_scalars
-# RUN: not %compilation_unit --module %{obj}/optional_scalars.pipeline.emitc.mlir --js %S/optional-scalars.js --work %t --name optional_scalars_off_by_one --mutate number_present 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE
+# RUN: %compilation_unit --module %{obj}/optional_scalars.pipeline.emitc.mlir --js %S/optional-scalars.js --work %t --name optional_scalars --core-build %build
+# RUN: not %compilation_unit --module %{obj}/optional_scalars.pipeline.emitc.mlir --js %S/optional-scalars.js --work %t --name optional_scalars_off_by_one --mutate number_present --core-build %build 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE
 # OFF-BY-ONE: global 'number_present' differs
-# RUN: %compilation_unit --module %{obj}/optional_scalars.pipeline.deduced.emitc.mlir --js %S/optional-scalars.js --work %t --name optional_scalars_deduced
+# RUN: %compilation_unit --module %{obj}/optional_scalars.pipeline.deduced.emitc.mlir --js %S/optional-scalars.js --work %t --name optional_scalars_deduced --core-build %build
 # RUN: %compile_clean --module %{obj}/optional_scalars.pipeline.emitc.mlir --work %t --name optional_scalars
 # RUN: %compile_clean --module %{obj}/optional_scalars.pipeline.deduced.emitc.mlir --work %t --name optional_scalars_deduced
 # RUN: %print_deduced --plain %{obj}/optional_scalars.pipeline.emitc.mlir --deduced %{obj}/optional_scalars.pipeline.deduced.emitc.mlir --mutated %{obj}/optional_scalars.pipeline.mutated.emitc.mlir --work %t --name optional_scalars

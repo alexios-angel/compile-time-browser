@@ -311,24 +311,34 @@ def mutate(cpp, target, kind, fail):
     that its edit landed, and the substituting branches that the text they
     replace occurs exactly once."""
     if kind == "number":
-        # The edit goes inside main, before its first print of a Number, and
-        # that is asserted. A module prints a Number with `print_number(`,
-        # qualified as `ctnative::print_number(` when generated and bare in the
-        # hand-written one; an older hand-written module may use `printf(`.
-        # The insertion goes before the qualifier, or `ctnative::<assignment>`
-        # would not compile: a negative test that passes for the wrong reason.
+        # The edit goes inside main, before its first print of any kind, and
+        # that is asserted. A module prints a Number with `print_number(`, a
+        # Boolean with `print_boolean(`, a String with `print_string(`, a
+        # scalar with `print_scalar(`, an absent with `print_undefined(` or
+        # `print_null(`, each qualified as `ctnative::print_*(` when generated
+        # and bare in a hand-written one; an older hand-written module may
+        # still use `printf(`. The insertion goes before the qualifier, or
+        # `ctnative::<assignment>` would not compile: a negative test that
+        # passes for the wrong reason.
         main_at = cpp.find("int32_t main() {")
         if main_at < 0:
             fail(
                 "cannot mutate - no `int32_t main() {` in the emitted C++, the output convention has changed under this script"
             )
         from_main = cpp[main_at:]
-        prints = [
-            at for at in (from_main.find("printf("), from_main.find("print_number(")) if at >= 0
-        ]
+        helpers = (
+            "printf(",
+            "print_number(",
+            "print_boolean(",
+            "print_string(",
+            "print_scalar(",
+            "print_undefined(",
+            "print_null(",
+        )
+        prints = [at for at in (from_main.find(helper) for helper in helpers) if at >= 0]
         if not prints:
             fail(
-                "cannot mutate - no print_number( or printf( inside main in the emitted C++, the output convention has changed under this script"
+                "cannot mutate - no print_number(, print_boolean(, print_string(, print_scalar(, print_undefined(, print_null( or printf( inside main in the emitted C++, the output convention has changed under this script"
             )
         relative = min(prints)
         for qualifier in ("std::", "ctnative::"):
