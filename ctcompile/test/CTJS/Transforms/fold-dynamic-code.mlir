@@ -36,7 +36,7 @@
 // RUN:   | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=KEPT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/syntaxerror.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=SYNTAX
-// RUN: for name in alias parameter reflect define-alias injected skipped declarations lexical-declarations timer-declarations timer-lexical dynamic-timer nested-eval direct-eval; do \
+// RUN: for name in alias parameter reflect define-alias injected skipped declarations lexical-declarations timer-declarations timer-lexical dynamic-timer mixed-delayed nested-eval direct-eval; do \
 // RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js -o %t/$name.mlir 2>/dev/null; \
 // RUN:   ctjs-opt %t/$name.mlir -o %t/$name.plain.mlir; \
 // RUN:   ctjs-opt %t/$name.mlir --ctjs-fold-dynamic-code -o %t/$name.folded.mlir; \
@@ -47,6 +47,11 @@
 // RUN:   | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=NESTED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/interval.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=INTERVAL
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/callable-delayed.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=CALLABLE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/anonymous.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-fold-dynamic-code --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=ANONYMOUS
 
 //--- newfunction.js
 // A constant body splices: the construct site becomes a ctjs.create_closure
@@ -252,3 +257,36 @@ var r = nested();
 // INTERVAL: ctjs.create_closure
 // INTERVAL: ctjs.call
 setInterval('tick()', 100, 7);
+
+//--- mixed-delayed.js
+// A may-set containing a closure does not exclude a String alternative. The
+// first task can rebind eval before the final callback, so nothing splices.
+(function () {
+    function later(code) { setTimeout(code, 0); }
+    later(function () {});
+    later('eval = function () { return 7; }');
+    setTimeout(function () {
+        var result = (0, eval)('21 + 21');
+    }, 0);
+})();
+
+//--- callable-delayed.js
+// A directly known closure callback cannot compile source. Its constant
+// indirect eval remains eligible, unlike the mixed helper parameter.
+// CALLABLE-NOT: ctjs.load_global "eval"
+// CALLABLE: ctjs.func @_script_${{[0-9]+}}
+// CALLABLE-NOT: ctjs.load_global "eval"
+(function () {
+    setTimeout(function () {}, 0);
+    setTimeout(function () {
+        var result = (0, eval)('21 + 21');
+    }, 0);
+})();
+
+//--- anonymous.js
+// The VM's named wrapper makes `anonymous` a self-binding, unlike Node's
+// Function constructor. Keep native own-closure refusal until that inherited
+// VM discrepancy is repaired; never admit the wrong native observation.
+// ANONYMOUS: ctnative.not_native = "{{.*}}own closure{{.*}}"
+var anonymous = 5;
+var result = Function('return typeof anonymous')();

@@ -87,10 +87,12 @@ CASES = {
         "ctjs-translate --ctbrowser-js-to-ctjs %t/defprop.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=KEPT",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/assign.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=KEPT",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/syntaxerror.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=SYNTAX",
-        "for name in alias parameter reflect define-alias injected skipped declarations lexical-declarations timer-declarations timer-lexical dynamic-timer nested-eval direct-eval; do    ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js -o %t/$name.mlir 2>/dev/null;    ctjs-opt %t/$name.mlir -o %t/$name.plain.mlir;    ctjs-opt %t/$name.mlir --ctjs-fold-dynamic-code -o %t/$name.folded.mlir;    cmp %t/$name.plain.mlir %t/$name.folded.mlir || exit 1; done",
+        "for name in alias parameter reflect define-alias injected skipped declarations lexical-declarations timer-declarations timer-lexical dynamic-timer mixed-delayed nested-eval direct-eval; do    ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js -o %t/$name.mlir 2>/dev/null;    ctjs-opt %t/$name.mlir -o %t/$name.plain.mlir;    ctjs-opt %t/$name.mlir --ctjs-fold-dynamic-code -o %t/$name.folded.mlir;    cmp %t/$name.plain.mlir %t/$name.folded.mlir || exit 1; done",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/phaser.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=PHASER",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/nested.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=NESTED",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/interval.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=INTERVAL",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/callable-delayed.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=CALLABLE",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/anonymous.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc    | FileCheck %s --check-prefix=ANONYMOUS",
     ],
     "Transforms/array-iteration": [
         "ctjs-translate --ctbrowser-js-to-ctjs %s    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf    | FileCheck %s",

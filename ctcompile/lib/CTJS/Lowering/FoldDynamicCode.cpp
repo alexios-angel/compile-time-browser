@@ -5,7 +5,6 @@
 // clone, so its existing global-object flow proof also guards these splices.
 //
 //===----------------------------------------------------------------------===//
-#include "Globals/ClosureValues.h"
 #include "Globals/Effects.h"
 #include "Globals/RegisterFlow.h"
 
@@ -291,7 +290,6 @@ struct CTJSFoldDynamicCodePass : impl::CTJSFoldDynamicCodeBase<CTJSFoldDynamicCo
             }
         }
         bool runtimeCompiler = false;
-        globals_detail::ClosureValues closures(*proof);
         proof->walk([&](LoadGlobalOp load) {
             if (load.getName() == "__ctbrowser_direct_eval") { runtimeCompiler = true; }
             if (load.getName() != "setTimeout" && load.getName() != "setInterval") { return; }
@@ -306,8 +304,11 @@ struct CTJSFoldDynamicCodePass : impl::CTJSFoldDynamicCodeBase<CTJSFoldDynamicCo
                     runtimeCompiler = true;
                     continue;
                 }
-                auto handlers = closures.closuresOf(call.getArgs().front());
-                if (!handlers.unknown.empty() || handlers.closures.empty()) {
+                // A closure may-set does not exclude String alternatives.
+                // Require one exact closure definition; helper parameters stay
+                // refused until a complete all-values proof is available.
+                mlir::Value handler = globals_detail::registerFlowOrigin(call.getArgs().front());
+                if (!handler || !handler.getDefiningOp<CreateClosureOp>()) {
                     runtimeCompiler = true;
                 }
             }
