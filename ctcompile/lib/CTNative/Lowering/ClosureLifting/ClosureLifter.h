@@ -271,8 +271,8 @@ struct closureLifter {
     // every read and a hoisted `var` is `opt<num>` however the program uses it.
     // That join is flow-insensitive: `opt<num>` carries undefined as NaN, and
     // at a `ctjs.store_global` (where a value becomes observable) the print
-    // convention spells a Number `%.17g`, so such a binding would print `nan`
-    // where the interpreter prints `undefined`.
+    // convention spells a Number with Number::toString, so such a binding
+    // would print `NaN` where the interpreter prints `undefined`.
     //
     // A write that dominates every read makes the initial unobservable, and
     // the type at every read is then the join of the writes alone.
@@ -536,10 +536,7 @@ struct closureLifter {
     /// Erases the cells captureLexicalThis made once only such arrows
     /// capture them (ArrowThis.cpp).
     void releaseLexicalThisCells();
-    /// What a read of an arrow's lexical `this` stands for: its maker's
-    /// receiver, or the maker's own such read (ArrowThis.cpp).
-    mlir::Value lexicalThisMaker(mlir::Value value);
-    /// The cell captureLexicalThis boxed that maker's value in (ArrowThis.cpp).
+    /// The lexical-this cell an arrow reads through `value` (ArrowThis.cpp).
     ctjs::CreateCellOp lexicalThisCell(mlir::Value value);
     /// True when `use` of a `this` is a held capture of the host callback its
     /// ctjs.call registers (ArrowThis.cpp).

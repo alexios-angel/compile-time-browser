@@ -17,5 +17,5 @@
 # CHECK-DAG: ctnative::Array.prototype.push.call(
 # CHECK-DAG: ctnative::Array.prototype.join.call(
 # CHECK-DAG: ctnative::Array.prototype.sort.call(
-# CHECK-DAG: ctnative::String.prototype.split.call({{.*}}, ctnative::whitespace_run)
+# CHECK-DAG: .split(ctnative::whitespace_run)
 # OFF-BY-ONE: global 'size' differs

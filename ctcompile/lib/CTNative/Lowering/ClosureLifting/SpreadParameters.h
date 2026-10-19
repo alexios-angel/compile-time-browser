@@ -35,14 +35,15 @@ struct calledFunction {
 /// The shape is the literal's own keys at the call, all written by the
 /// literal itself before the call in the call's block, none an array index
 /// or a reserved name. The parameter must not be written, and the function
-/// must not read `arguments`. Then `typeof` of the parameter becomes the
-/// constant "object", an scf.if that tests it against a constant string keeps
-/// the arm that test selects, and each spread of it into a fresh literal
-/// becomes one constant-key read and one own-property definition per key.
-/// Any other parameter is left as it is. A test is folded only when the arm it
-/// drops holds nothing but constants and fresh literals, whose operations it
-/// adds to `erasedLiterals` for the caller's census. Returns how many
-/// parameters it rewrote.
+/// must not read `arguments` or use its own closure (`%arg2`, through which a
+/// named function expression calls itself). Then `typeof` of the parameter
+/// becomes the constant "object", an scf.if that tests it against a constant
+/// string keeps the arm that test selects, and each spread of it into a fresh
+/// literal becomes one constant-key read and one own-property definition per
+/// key. Any other parameter is left as it is. A test is folded only when the
+/// arm it drops holds nothing but constants and fresh literals, whose
+/// operations it adds to `erasedLiterals` for the caller's census. Returns
+/// how many parameters it rewrote.
 unsigned rewriteSpreadParameters(llvm::ArrayRef<calledFunction> functions,
                                  llvm::SmallVectorImpl<mlir::Operation *> & erasedLiterals);
 

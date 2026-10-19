@@ -53,13 +53,12 @@ def inline_runtime(cpp):
 
     A driver that instruments a helper (the lifetime harnesses rewrite make_map
     to record a weak_ptr of every Map) edits text, and the text has to be in the
-    file it edits. #pragma once goes, since the text is now the main file.
+    file it edits. Keep its include guard so later runtime headers cannot
+    include the real file and define its carriers a second time.
     """
     if cpp.count(RUNTIME_INCLUDE_LINE) != 1:
         raise RuntimeError("the emitted C++ does not include the runtime header exactly once")
-    return cpp.replace(
-        RUNTIME_INCLUDE_LINE, RUNTIME_HEADER.read_text().replace("#pragma once\n", "")
-    )
+    return cpp.replace(RUNTIME_INCLUDE_LINE, RUNTIME_HEADER.read_text())
 
 
 def forge_module(text, attributes):
@@ -175,8 +174,7 @@ for (const name of JSON.parse(process.argv[2])) {
     const value = vm.runInContext(name, context);
     let text;
     if (typeof value === 'number') {
-        text = Number.isNaN(value) ? 'nan' : Object.is(value, -0) ? '-0' :
-            value === -Infinity ? '-inf' : String(value);
+        text = Object.is(value, -0) ? '-0' : String(value);
     } else if (typeof value === 'string') {
         text = '"' + encodeURIComponent(value).replace(/[!'()*]/g,
             c => '%' + c.charCodeAt(0).toString(16).toUpperCase()) + '"';

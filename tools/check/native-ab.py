@@ -62,19 +62,9 @@ import tempfile
 import time
 from pathlib import Path
 
-# The compile flags of the compile-clean check. ctcompile/test/CTNative/Checks/
-# compile-clean.py and compilation-unit.py use the same list; a compile time
-# measured under different flags describes a different compile.
-GATE_FLAGS = [
-    "-std=c++23",
-    "-O2",
-    "-pedantic",
-    "-Wall",
-    "-Wextra",
-    "-Werror",
-    "-Wconversion",
-    "-ffp-contract=off",
-]
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "ctcompile/test"))
+from Target.Cpp.harness import FLAGS as GATE_FLAGS, native_link_command
 
 PROGRAMS = ["numeric", "functions", "structs", "arrays"]
 
@@ -119,9 +109,9 @@ def without_pins(text):
     return "".join(out)
 
 
-def compile_once(cxx, src, exe, defines):
+def compile_once(cxx, src, exe, defines, build):
     """Compile `src` to `exe` under GATE_FLAGS; return wall seconds, exit on failure."""
-    cmd = [cxx] + GATE_FLAGS + list(defines) + [str(src), "-o", str(exe)]
+    cmd = native_link_command([cxx, *GATE_FLAGS, *defines, str(src), "-o", str(exe)], build)
     start = time.perf_counter()
     got = subprocess.run(cmd, capture_output=True, text=True)
     elapsed = time.perf_counter() - start
@@ -137,9 +127,9 @@ def compile_once(cxx, src, exe, defines):
     return elapsed
 
 
-def time_compiles(cxx, src, exe, defines, reps):
-    compile_once(cxx, src, exe, defines)  # warm the cache; untimed on purpose
-    return [compile_once(cxx, src, exe, defines) for _ in range(reps)]
+def time_compiles(cxx, src, exe, defines, reps, build):
+    compile_once(cxx, src, exe, defines, build)  # warm the cache; untimed on purpose
+    return [compile_once(cxx, src, exe, defines, build) for _ in range(reps)]
 
 
 def stripped_bytes(exe, workdir):
@@ -222,7 +212,7 @@ def measure(rows, floor, name, label, src, defines, bytes_, cxx, workdir, args):
     append it to `rows` and print it."""
     tag = re.sub(r"[^A-Za-z0-9]+", "_", "%s.%s.%s" % (name, label, cxx))
     exe = Path(workdir) / tag
-    compiles = time_compiles(cxx, src, exe, defines, args.reps)
+    compiles = time_compiles(cxx, src, exe, defines, args.reps, args.build)
     runs = time_runs(exe, args.run_reps)
     binary = stripped_bytes(exe, workdir)
     ir = None if args.no_callgrind else callgrind_ir(exe, workdir, False)
@@ -334,7 +324,7 @@ def main():
     ap.add_argument("--no-callgrind", action="store_true")
     args = ap.parse_args()
 
-    build = args.build.resolve()
+    args.build = build = args.build.resolve()
     translate = args.translate or find_translate(build)
     tests = build / "ctcompile" / "test"
     provenance = {
@@ -364,7 +354,7 @@ def main():
     empty.write_text("int main() { return 0; }\n")
     for cxx in compilers:
         exe = workdir / ("empty_" + re.sub(r"[^A-Za-z0-9]+", "_", cxx))
-        compiles = time_compiles(cxx, empty, exe, [], args.reps)
+        compiles = time_compiles(cxx, empty, exe, [], args.reps, build)
         runs = time_runs(exe, args.run_reps)
         floor[cxx] = {
             "compile": spread(compiles),

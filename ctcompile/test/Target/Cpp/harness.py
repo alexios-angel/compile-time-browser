@@ -16,6 +16,7 @@ import random
 import re
 import shutil
 import subprocess
+from types import SimpleNamespace
 
 # Include directories for generated programs: ctcompile/include for
 # ctcompile/CTNative/Runtime/ctnative.hpp, and ctbrowser/include for the core
@@ -71,10 +72,34 @@ def job_slot():
         return
 
 
-def slotted_run(*args, **kwargs):
-    """subprocess.run inside a job_slot()."""
+def native_link_command(command, build=None):
+    """Link native test programs with public Core unless explicitly Core-free."""
+    command = [os.fspath(arg) for arg in command]
+    if not command or not re.fullmatch(
+        r"(?:g\+\+|clang\+\+|c\+\+)(?:-\d+)?", Path(command[0]).name
+    ):
+        return command
+    core_free = "--core-free" in command
+    command = [arg for arg in command if arg != "--core-free"]
+    if core_free or any(arg in command for arg in ("-c", "-S", "-E", "-fsyntax-only", "--version")):
+        return command
+    if any("ctbrowser-core" in arg or arg == "-nostdlib" for arg in command[1:]):
+        return command
+    build = build or os.environ.get("CTCOMPILE_BUILD")
+    if not build or not any(arg.endswith((".cpp", ".cc", ".cxx", ".o")) for arg in command[1:]):
+        return command
+    from CTNative.Browser.dom.dom import link_options
+
+    _, libraries = link_options(
+        SimpleNamespace(build=Path(build), include=Path(CORE_INCLUDE[2:])), core_only=True
+    )
+    return [*command, *libraries]
+
+
+def slotted_run(command, *args, **kwargs):
+    """subprocess.run inside a job_slot(), with the native test link contract."""
     with job_slot():
-        return subprocess.run(*args, **kwargs)
+        return subprocess.run(native_link_command(command), *args, **kwargs)
 
 
 def find_compilers():

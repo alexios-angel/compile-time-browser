@@ -95,7 +95,7 @@ execute_process(
   # prune for the variables nothing reads (the emitted file must compile
   # cleanly under -Wall -Wextra -Werror), and a canonicalize for what the
   # prune left dead.
-  COMMAND "${OPT}" "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ${_precompute_pass}${_specialize_pass}${_supercompile_pass}${_partial_pass}${_prune_pass}${_native_lower}, ${_deforest_pass}emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))"
+  COMMAND "${OPT}" "--pass-pipeline=builtin.module(ctjs-fold-dynamic-code, ctjs-resolve-globals, ctjs-lift-to-scf, ${_precompute_pass}${_specialize_pass}${_supercompile_pass}${_partial_pass}${_prune_pass}${_native_lower}, ${_deforest_pass}emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))"
           --mlir-print-debuginfo --mlir-print-op-on-diagnostic=false
   OUTPUT_VARIABLE module
   ERROR_VARIABLE complaints

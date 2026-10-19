@@ -52,7 +52,8 @@ emitc.func @slot(%a: f64) -> f64 {
 // CHECK: return
 
 // Number extraction is pure. Erasing it exposes the conversion's unused result
-// to statement marking; arbitrary receivers or methods retain their effects.
+// to statement marking; arbitrary receivers or methods retain their effects,
+// and an unread one is marked a statement too.
 emitc.func @number_extraction(%value: !emitc.opaque<"ctnative::nullable_scalar">) {
   %number = emitc.call_opaque "ctnative::to_number"(%value) : (!emitc.opaque<"ctnative::nullable_scalar">) -> !emitc.opaque<"ctnative::js_num">
   %dead = emitc.member_call_opaque %number "value"() : !emitc.opaque<"ctnative::js_num">, () -> f64
@@ -69,6 +70,6 @@ emitc.func @unknown_members(%number: !emitc.opaque<"ctnative::js_num">, %unknown
 // CHECK-SAME: ctnative.statement
 // CHECK-NEXT: return
 // CHECK-LABEL: emitc.func @unknown_members
-// CHECK: member_call_opaque {{.*}} "value"() : !emitc.opaque<"Unknown">
-// CHECK: member_call_opaque {{.*}} "other"() : !emitc.opaque<"ctnative::js_num">
-// REPORT: remark: pruned 2 variable(s) and 3 operation(s), marked 1 call(s) as statements
+// CHECK: member_call_opaque {{.*}} "value"() {ctnative.statement} : !emitc.opaque<"Unknown">
+// CHECK: member_call_opaque {{.*}} "other"() {ctnative.statement} : !emitc.opaque<"ctnative::js_num">
+// REPORT: remark: pruned 2 variable(s) and 3 operation(s), marked 3 call(s) as statements

@@ -10,9 +10,8 @@ lit runs them.
 
 from pathlib import Path
 
-import pytest
-
 import lit_lines
+import pytest
 
 HERE = Path(__file__).resolve().parent
 MAINS = {}
@@ -27,6 +26,7 @@ CASES = {
         "%clangxx -std=c++20 %S/../../../probes/deduction.cpp -o %t.clangxx && %t.clangxx",
         "%host_cxx -std=c++20 -pedantic -Wall -Wextra -Werror -Wconversion %S/../../../probes/deduction.cpp -o %t.host && %t.host",
     ],
+    # The shared driver also checks diagnostic reentry and stranded const writes.
     "page-scripts": [
         "split-file %s %t",
         "not %native_reference --page %t/throw.html > %t/throw.out 2> %t/throw.err",

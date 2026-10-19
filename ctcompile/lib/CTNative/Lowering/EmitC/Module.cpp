@@ -193,11 +193,12 @@ bool lowering::usesPageViews() {
 void lowering::declareGlobals() {
     // Presentation policies for the C++ printer only: keep typed constants
     // through every optimization and let the printer choose their literal
-    // spelling, declare bindings const where the operands allow it, and spell
-    // double as js_num.
+    // spelling, declare bindings const where the operands allow it, spell
+    // double as js_num, and spell every cast static_cast.
     module->setAttr("ctnative.readable_literals", mlir::UnitAttr::get(context));
     module->setAttr("ctnative.const_bindings", mlir::UnitAttr::get(context));
     module->setAttr("ctnative.numeric_alias", mlir::UnitAttr::get(context));
+    module->setAttr("ctnative.named_casts", mlir::UnitAttr::get(context));
     needsObjectIdentity |= needsObjectValue;
     // Snapshot projections remain ordered even after their producer has
     // been deforested. The choice only becomes more conservative here.
@@ -210,7 +211,12 @@ void lowering::declareGlobals() {
     bool needsTimers = false;
     bool needsPromises = false;
     bool needsCells = false;
+    // Only programs that format text (a template literal, console.log)
+    // parse <format>, which costs every translation unit that includes it.
+    bool needsFormat = false;
     module.walk([&](ec::CallOpaqueOp call) {
+        needsFormat |=
+            call.getCallee() == "ctnative::format" || call.getCallee() == "ctnative::println";
         needsEvents |= call.getCallee().starts_with("ctnative::EventTarget.");
         needsDictionaries |= call.getCallee().starts_with("ctnative::make_dictionary<");
         needsTimers |= llvm::is_contained({"ctnative::setTimeout", "ctnative::setInterval",
@@ -240,6 +246,11 @@ void lowering::declareGlobals() {
     if (needsDOM) { verbatim(b, kDOMDefine); }
     if (pageReads) { verbatim(b, ("#ifndef CTNATIVE_DOM\n" + kDOMDefine + "\n#endif").str()); }
     ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(kRuntimeHeader), mlir::UnitAttr{});
+    if (needsFormat) {
+        ec::IncludeOp::create(b, module.getLoc(),
+                              b.getStringAttr("ctcompile/CTNative/Runtime/Format.hpp"),
+                              mlir::UnitAttr{});
+    }
     if (needsDictionaries) {
         ec::IncludeOp::create(b, module.getLoc(),
                               b.getStringAttr("ctcompile/CTNative/Runtime/Dictionary.hpp"),

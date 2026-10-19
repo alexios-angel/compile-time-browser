@@ -388,12 +388,12 @@ void install_boolean(context & cx) {
         return value::boolean(b);
     });
     cx.set_prototype(context::proto_kind::boolean, boolean_proto);
-    // 20.3.1.1: a call converts, `new` wraps; see detail::wrap_primitive.
+    // 20.3.1.1: a call converts, `new` wraps; see context::wrap_primitive.
     auto * boolean_ctor =
         cx.allocate<native_object>("Boolean", [](context & c, std::span<value> a) {
             const value made = value::boolean(!a.empty() && context::truthy(a[0]));
             const value self = c.current_this();
-            return detail::constructing_this(self) ? detail::wrap_primitive(c, self, made) : made;
+            return detail::constructing_this(self) ? c.wrap_primitive(self, made) : made;
         });
     detail::constant(boolean_ctor, "prototype", value::object(boolean_proto));
     link_constructor(cx, boolean_proto, "Boolean", 1, value::object(boolean_ctor));
@@ -423,9 +423,9 @@ void install_number(context & cx) {
             if (c.throw_pending()) { return value::undefined(); }
         }
         // 21.1.1.1 step 3: a call converts, `new` wraps; see
-        // detail::wrap_primitive.
+        // context::wrap_primitive.
         const value self = c.current_this();
-        return detail::constructing_this(self) ? detail::wrap_primitive(c, self, made) : made;
+        return detail::constructing_this(self) ? c.wrap_primitive(self, made) : made;
     });
     const auto constant = [&](const char * name, double v) {
         detail::constant(number_ctor, name, value::number(v));

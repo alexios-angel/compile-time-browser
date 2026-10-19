@@ -27,6 +27,36 @@ inline ctjs::CompareOp truthyComparison(mlir::Value flag) {
     return truth ? truth.getValue().getDefiningOp<ctjs::CompareOp>() : ctjs::CompareOp{};
 }
 
+/// Matches the fixed test and body of an index-copy loop after its caller has
+/// checked the single blocks, arguments and operation counts. Does not charge work.
+inline std::pair<ctjs::CompareOp, ctjs::GetPropertyOp> matchIndexCopyLoop(mlir::scf::WhileOp loop,
+                                                                          ctjs::AppendOp append) {
+    auto & before = loop.getBefore().front();
+    auto & after = loop.getAfter().front();
+    auto compare = llvm::dyn_cast<ctjs::CompareOp>(before.front());
+    auto truth = llvm::dyn_cast<ctjs::TruthyOp>(before.front().getNextNode());
+    auto condition = llvm::dyn_cast<mlir::scf::ConditionOp>(before.back());
+    auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(after.front());
+    auto advance = llvm::dyn_cast<ctjs::BinaryStaticOp>(append->getNextNode());
+    auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(after.back());
+    const auto numberIsOne = [](mlir::Value value) {
+        auto number = ctjs::constantAttr<ctjs::NumberAttr>(value);
+        return number && number.getDouble() == 1;
+    };
+    if (!compare || compare.getKind() != ctjs::CompareKind::Lt ||
+        compare.getLhs() != before.getArgument(0) || !truth ||
+        truth.getValue() != compare.getResult() || !condition ||
+        condition.getCondition() != truth.getResult() || condition.getArgs().size() != 1 ||
+        condition.getArgs()[0] != before.getArgument(0) || !read || read->getNextNode() != append ||
+        read.getKey() != after.getArgument(0) || append.getElement() != read.getResult() ||
+        !advance || advance.getKind() != ctjs::BinaryKind::Add ||
+        advance.getLhs() != after.getArgument(0) || !numberIsOne(advance.getRhs()) || !yield ||
+        yield.getNumOperands() != 1 || yield.getOperand(0) != advance.getResult()) {
+        return {};
+    }
+    return {compare, read};
+}
+
 /// Whether `compare` is `subject === undefined`, either way round.
 inline bool strictUndefinedTest(ctjs::CompareOp compare, mlir::Value subject) {
     return compare && compare.getKind() == ctjs::CompareKind::StrictEq &&

@@ -138,6 +138,9 @@ public:
 
     bool dispatch_error(std::string_view message);
     bool dispatch_error(std::string_view message, std::string_view script_src);
+    /// Reports an exception without losing its JavaScript value or identity.
+    bool dispatch_error_value(std::string_view message, value error,
+                              std::string_view script_src = {});
 
     bool dispatch_mouse(std::string_view type, node_id target, const input_event & input);
     bool dispatch_wheel(node_id target, const input_event & input);
@@ -967,8 +970,6 @@ private:
     [[nodiscard]] value make_event_object(context & cx, std::string_view type, bool bubbles,
                                           bool cancelable);
     [[nodiscard]] bool default_passive_value(std::string_view type, const path_step & target);
-    bool dispatch_error_value(std::string_view message, value error,
-                              std::string_view script_src = {});
     bool error_reporting_ = false; // HTML 8.1.3.3 "in error reporting mode".
     [[nodiscard]] value make_mouse_event(context & cx, std::string_view type, node_id target,
                                          const input_event & input, bool pointer);

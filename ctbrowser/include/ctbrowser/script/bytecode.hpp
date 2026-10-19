@@ -56,7 +56,8 @@ enum class op : std::uint8_t {
     // --- Globals and locals.
     get_global,        // a = globals[k[bx]], unresolved names throw
     get_global_typeof, // same lookup, unresolved names yield undefined
-    set_global,        // globals[k[bx]] = a
+    set_global,        // globals[k[bx]] = a; rejects an uninitialized lexical
+    init_global,       // InitializeBinding of a global lexical
 
     // --- Captured variables. A local that some nested function refers to is
     // stored in a heap cell rather than directly in its register, and every

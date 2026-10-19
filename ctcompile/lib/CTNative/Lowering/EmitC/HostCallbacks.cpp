@@ -202,9 +202,17 @@ bool replaceEvent(lowering & lower, mlir::Operation * o, llvm::StringRef kind) {
             for (mlir::Operation * user : literal->getUsers()) {
                 auto action = user->getAttrOfType<mlir::StringAttr>(kAction);
                 if (!action || user == o) { continue; }
-                // Program order: the last definition of a key is the value.
-                fields[action.getValue() == "event_init:bubbles" ? 0 : 1] = user->getOperand(2);
                 parts.push_back(user);
+            }
+            mlir::DominanceInfo order(o->getParentOp());
+            // Analysis proves every definition dominates construction, so their order is total.
+            llvm::sort(parts, [&](mlir::Operation * a, mlir::Operation * b) {
+                return order.properlyDominates(a, b);
+            });
+            // Program order: the last definition of a key is the value.
+            for (mlir::Operation * part : parts) {
+                auto action = part->getAttrOfType<mlir::StringAttr>(kAction);
+                fields[action.getValue() == "event_init:bubbles" ? 0 : 1] = part->getOperand(2);
             }
             parts.push_back(literal);
         }

@@ -10,10 +10,10 @@
 # A `not ... --mutate G` line corrupts global G and requires the comparison to
 # fail naming G, which proves the comparison can catch a wrong value.
 
-# RUN: %compilation_unit --module %{obj}/strings.pipeline.emitc.mlir --js %S/string.js --work %t --name strings
-# RUN: not %compilation_unit --module %{obj}/strings.pipeline.emitc.mlir --js %S/string.js --work %t --name strings_off_by_one --mutate startup42 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE
+# RUN: %compilation_unit --module %{obj}/strings.pipeline.emitc.mlir --js %S/string.js --work %t --name strings --core-build %build
+# RUN: not %compilation_unit --module %{obj}/strings.pipeline.emitc.mlir --js %S/string.js --work %t --name strings_off_by_one --mutate startup42 --core-build %build 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE
 # OFF-BY-ONE: global 'startup42' differs
-# RUN: %compilation_unit --module %{obj}/strings.pipeline.deduced.emitc.mlir --js %S/string.js --work %t --name strings_deduced
+# RUN: %compilation_unit --module %{obj}/strings.pipeline.deduced.emitc.mlir --js %S/string.js --work %t --name strings_deduced --core-build %build
 # RUN: %compile_clean --module %{obj}/strings.pipeline.emitc.mlir --work %t --name strings
 # RUN: %compile_clean --module %{obj}/strings.pipeline.deduced.emitc.mlir --work %t --name strings_deduced
 # RUN: %print_deduced --plain %{obj}/strings.pipeline.emitc.mlir --deduced %{obj}/strings.pipeline.deduced.emitc.mlir --mutated %{obj}/strings.pipeline.mutated.emitc.mlir --work %t --name strings

@@ -249,7 +249,7 @@ constexpr spec kinds[] = {
         if (items.is_undefined()) { return items; }
         len = static_cast<double>(static_cast<array_object *>(items.as_heap())->items.size());
     } else {
-        items = detail::box_primitive(c, source);
+        items = c.box_primitive(source);
         len = detail::array_like_length(c, items);
         if (c.throw_pending()) { return value::undefined(); }
     }

@@ -74,16 +74,6 @@ bool TypeInference::isNumberElementVector(mlir::Value array) {
     });
 }
 
-bool TypeInference::isArrayCallbackParameter(mlir::Value value) {
-    auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
-    if (!argument || !argument.getOwner()->isEntryBlock() ||
-        argument.getArgNumber() < ctjs::implicit_arguments) {
-        return false;
-    }
-    auto function = llvm::dyn_cast<ctjs::FuncOp>(argument.getOwner()->getParentOp());
-    return function && function->hasAttr(kNativeArrayCallback);
-}
-
 mlir::Type TypeInference::arrayCallbackType(mlir::Operation * op,
                                             llvm::ArrayRef<const TypeLattice *> operands,
                                             bool & pending) {

@@ -34,7 +34,7 @@
 # CPP: .to_number()
 # MUTATION: global 'banana' differs
 # ADD: call_opaque "ctnative::add"
-# EQUALITY: call_opaque "ctnative::primitive_equal"
+# EQUALITY: call_opaque "ctnative::loose_equals"
 # REFUSED: ctjs.func private @convert$1
 # REFUSED-SAME: ctnative.not_native =
 

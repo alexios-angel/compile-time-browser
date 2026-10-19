@@ -1,6 +1,7 @@
 // Equality on an optional Number or Boolean keeps the runtime tag, so an
 // undefined value is never confused with NaN or false. Both programs lower
-// through the same tagged strict comparison, ctnative::scalar_strict_equal.
+// through the same tagged strict comparison, nullable_scalar's `==`, whose
+// left operand keeps the tag.
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/undefined.js 2>/dev/null \
@@ -11,10 +12,10 @@
 // RUN:   | FileCheck %s --check-prefix=NAN
 
 // UNDEF: emitc.func @eqnum_1({{.*}}) -> !emitc.opaque<"ctnative::js_num">
-// UNDEF: call_opaque "ctnative::scalar_strict_equal"
+// UNDEF: cmp eq, {{.*}} : (!emitc.opaque<"ctnative::nullable_scalar">, !emitc.opaque<"ctnative::js_num">) -> i1
 // UNDEF-NOT: ctnative.not_native
 // NAN: emitc.func @eqbool_1({{.*}}) -> !emitc.opaque<"ctnative::js_num">
-// NAN: call_opaque "ctnative::scalar_strict_equal"
+// NAN: cmp eq, {{.*}} : (!emitc.opaque<"ctnative::nullable_scalar">, !emitc.opaque<"ctnative::js_boolean_t">) -> i1
 // NAN-NOT: ctnative.not_native
 
 //--- undefined.js

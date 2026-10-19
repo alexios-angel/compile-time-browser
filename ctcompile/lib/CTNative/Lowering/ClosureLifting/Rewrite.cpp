@@ -632,8 +632,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             }
             // All actuals are already evaluated SSA values. Only their unused
             // argument slots go; their effects and exceptions stay before new.
-            const auto actuals =
-                built.getArgs().take_front(std::min<size_t>(built.getArgs().size(), parameters));
+            const auto actuals = built.getArgs().take_front(parameters);
             auto direct = directCall(at, built.getLoc(), target,
                                      carriesReceiver ? instance.getResult() : undefined,
                                      preserveReceiver ? built.getCallee() : undefined, undefined,
@@ -643,8 +642,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             // callee, like the receiver mark: replace() reads it once per
             // operand, and a symbol lookup there would cost one lookup per
             // argument per call.
-            if (!cellArgs.empty()) { direct->setAttr(kNativeCellArgs, cellSlots); }
-            if (!sharedArgs.empty()) { direct->setAttr(kNativeSharedCellArgs, sharedSlots); }
+            tagSlots(direct);
             // `new` evaluates to the instance, not to the call's result. The
             // interpreter's context::construct ends with
             // `produced.is_object_like() ? produced : self`, and

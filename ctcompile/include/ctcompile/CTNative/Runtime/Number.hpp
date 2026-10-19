@@ -23,6 +23,10 @@ namespace ctnative {
 /// JavaScript Number, not an absence marker.
 struct js_nan_t {};
 
+template <class T>
+requires std::is_same_v<T, char>
+class js_basic_string;
+
 /// A JavaScript Number in generated native code, backed by double. Bitwise
 /// operators and shifts convert through ToInt32/ToUint32 and mask shift
 /// counts to five bits, as JavaScript does.
@@ -39,6 +43,15 @@ public:
     explicit constexpr operator double() const { return number; }
     explicit constexpr operator bool() const { return number != 0.0 && !std::isnan(number); }
     constexpr double value() const { return number; }
+    /// Number.prototype.toString with no radix (ECMA-262 21.1.3.6):
+    /// Number::toString, so 1e21, "0" for -0, "NaN" and "Infinity". Defined
+    /// in String.hpp.
+    js_basic_string<char> toString() const;
+    /// Number.prototype.toFixed (ECMA-262 21.1.3.3): `digits` after
+    /// ToIntegerOrInfinity must be 0..100, else a RangeError. Defined in
+    /// ctnative.hpp, since it throws: the compiler folds constants with this
+    /// header and String.hpp, and builds without exceptions.
+    js_basic_string<char> toFixed(js_num digits) const;
     std::int32_t to_int32() const { return ctbrowser::number_to_int32(number); }
     std::uint32_t to_uint32() const { return ctbrowser::number_to_uint32(number); }
 
@@ -55,6 +68,13 @@ public:
     }
     friend constexpr js_num operator/(js_num left, js_num right) {
         return js_num{left.number / right.number};
+    }
+    /// `left % right` (ECMA-262 6.1.6.1.6, Number::remainder): the remainder
+    /// with the dividend's sign, which is C's fmod. A zero divisor or an
+    /// infinite dividend gives NaN, an infinite divisor leaves a finite
+    /// dividend unchanged, and a -0 dividend stays -0.
+    friend js_num operator%(js_num left, js_num right) {
+        return js_num{std::fmod(left.number, right.number)};
     }
     js_num operator~() const { return js_num{static_cast<double>(~to_int32())}; }
     friend js_num operator&(js_num left, js_num right) {
@@ -116,5 +136,10 @@ struct number_constructor {
     static constexpr parse_float_function parseFloat{};
 };
 inline constexpr number_constructor Number{};
+
+/// The global parseInt and parseFloat (ECMA-262 19.2.5 and 19.2.4), the same
+/// functions as Number.parseInt and Number.parseFloat.
+inline constexpr parse_int_function parseInt{};
+inline constexpr parse_float_function parseFloat{};
 
 } // namespace ctnative

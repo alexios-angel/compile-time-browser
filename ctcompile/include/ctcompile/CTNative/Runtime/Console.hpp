@@ -16,7 +16,8 @@
 
 #pragma once
 
-#include <cstdio>
+#include "Output.hpp"
+
 #include <string>
 #include <type_traits>
 
@@ -24,38 +25,18 @@ namespace ctnative {
 
 namespace console_detail {
 
-/// ToString (ECMA-262 7.1.17) of each argument kind console.log can hold, as
-/// the VM's context::to_string writes it.
-inline void append(std::string & line, const js_string & value) {
-    line += value.value();
-}
-inline void append(std::string & line, js_num value) {
-    line += ctbrowser::number_to_string(static_cast<double>(value.value()));
-}
+/// ToString (ECMA-262 7.1.17) of one argument, as the VM's context::to_string
+/// writes it: to_js_string for a carrier, the same text String(x) and `{}`
+/// give, and Number::toString for a C++ number. A C++ bool is not a
+/// JavaScript value, so it has none.
 template <class T>
-requires(std::is_arithmetic_v<T> && !std::is_same_v<T, bool>)
-void append(std::string & line, T value) {
-    line += ctbrowser::number_to_string(static_cast<double>(value));
-}
-inline void append(std::string & line, js_boolean_t value) {
-    line += value ? "true" : "false";
-}
-inline void append(std::string & line, undefined_t) {
-    line += "undefined";
-}
-inline void append(std::string & line, js_null_t) {
-    line += "null";
-}
-inline void append(std::string & line, const nullable_scalar & value) {
-    line += value.to_string().value();
-}
-inline void append(std::string & line, const nullable_string & value) {
-    switch (value.tag) {
-    case nullable_string::kind::undefined: line += "undefined"; return;
-    case nullable_string::kind::null_value: line += "null"; return;
-    case nullable_string::kind::string: line += value.value; return;
+requires(!std::is_same_v<T, bool>)
+void append(std::string & line, const T & value) {
+    if constexpr (std::is_arithmetic_v<T>) {
+        line += ctbrowser::number_to_string(static_cast<double>(value));
+    } else {
+        line += to_js_string(value).value();
     }
-    std::terminate();
 }
 
 /// The line console.log prints for `args`: their strings joined by spaces.
@@ -72,12 +53,11 @@ template <class... Args> std::string line(const Args &... args) {
 /// The console object's methods native code calls.
 struct console_object {
     /// console.log (WHATWG Console Standard 1.1.6, Logger with "log"): one
-    /// line of the arguments' strings joined by spaces. It is printed with
-    /// `%s`, as ctcompile-test-native-reference prints the VM's lines, so the
-    /// two agree byte for byte. Returns undefined.
+    /// line of the arguments' strings joined by spaces, through print_line,
+    /// the stream every native line uses. Returns undefined.
     struct log_method {
         template <class... Args> nullable_scalar operator()(const Args &... args) const {
-            std::printf("%s\n", console_detail::line(args...).c_str());
+            print_line(console_detail::line(args...));
             return undefined_t{};
         }
     };

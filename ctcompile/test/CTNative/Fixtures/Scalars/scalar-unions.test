@@ -12,10 +12,10 @@
 
 # A closed scalar union preserves boolean/number identity, including Data's
 # short-circuit getter and its retained nested Map environment.
-# RUN: %compilation_unit --module %{obj}/scalar_unions.pipeline.emitc.mlir --js %S/scalar-unions.js --work %t --name scalar_unions
-# RUN: not %compilation_unit --module %{obj}/scalar_unions.pipeline.emitc.mlir --js %S/scalar-unions.js --work %t --name scalar_unions_off_by_one --mutate zz_lifetime 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE
+# RUN: %compilation_unit --module %{obj}/scalar_unions.pipeline.emitc.mlir --js %S/scalar-unions.js --work %t --name scalar_unions --core-build %build
+# RUN: not %compilation_unit --module %{obj}/scalar_unions.pipeline.emitc.mlir --js %S/scalar-unions.js --work %t --name scalar_unions_off_by_one --mutate zz_lifetime --core-build %build 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE
 # OFF-BY-ONE: global 'zz_lifetime' differs
-# RUN: %compilation_unit --module %{obj}/scalar_unions.pipeline.deduced.emitc.mlir --js %S/scalar-unions.js --work %t --name scalar_unions_deduced
+# RUN: %compilation_unit --module %{obj}/scalar_unions.pipeline.deduced.emitc.mlir --js %S/scalar-unions.js --work %t --name scalar_unions_deduced --core-build %build
 # RUN: %compile_clean --module %{obj}/scalar_unions.pipeline.emitc.mlir --work %t --name scalar_unions
 # RUN: %compile_clean --module %{obj}/scalar_unions.pipeline.deduced.emitc.mlir --work %t --name scalar_unions_deduced
 # RUN: %print_deduced --plain %{obj}/scalar_unions.pipeline.emitc.mlir --deduced %{obj}/scalar_unions.pipeline.deduced.emitc.mlir --mutated %{obj}/scalar_unions.pipeline.mutated.emitc.mlir --work %t --name scalar_unions

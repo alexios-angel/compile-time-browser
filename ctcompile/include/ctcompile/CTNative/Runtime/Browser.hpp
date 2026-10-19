@@ -27,6 +27,43 @@
 
 namespace ctnative {
 
+/// Element.classList (DOM §4.9, a DOMTokenList over the `class` attribute):
+/// a borrowed view of one element's class tokens, which checks the element
+/// is still valid on every call, like js_element_t.
+class js_dom_token_list {
+    ctbrowser::element_ref element;
+
+public:
+    explicit js_dom_token_list(ctbrowser::element_ref borrowed) : element(borrowed) {}
+
+    /// DOMTokenList.contains (DOM §7.1): whether `token` is one of the tokens.
+    js_boolean_t contains(const js_string & token) const {
+        require_element(element);
+        return contains_class(element, token.value());
+    }
+    /// DOMTokenList.add (DOM §7.1): appends each token not already present.
+    template <class... Tokens> void add(const Tokens &... tokens) const {
+        require_element(element);
+        add_class(element, tokens.value()...);
+    }
+    /// DOMTokenList.remove (DOM §7.1): removes each token present.
+    template <class... Tokens> void remove(const Tokens &... tokens) const {
+        require_element(element);
+        remove_class(element, tokens.value()...);
+    }
+    /// DOMTokenList.toggle (DOM §7.1): removes `token` when present, else
+    /// adds it; returns whether it is present afterwards.
+    js_boolean_t toggle(const js_string & token) const {
+        require_element(element);
+        return toggle_class(element, token.value());
+    }
+    /// The same with `force`: adds when true and removes when false.
+    js_boolean_t toggle(const js_string & token, js_boolean_t force) const {
+        require_element(element);
+        return toggle_class(element, token.value(), force);
+    }
+};
+
 /// A borrowed view of one element and the style engine used for selector
 /// matching. Views own nothing: the document, atom table and style engine must
 /// stay alive at stable addresses, as for element_ref and std::span. Copies keep
@@ -145,6 +182,23 @@ public:
     /// Element.removeAttribute (DOM §4.9): removes the first attribute with
     /// that qualified name; an absent one is not an error.
     void removeAttribute(const js_string & name) const { remove_attribute(value(), name.value()); }
+    /// Element.hasAttribute (DOM §4.9): whether an attribute with that
+    /// qualified name exists.
+    js_boolean_t hasAttribute(const js_string & name) const {
+        return has_attribute(value(), name.value());
+    }
+    /// Element.toggleAttribute (DOM §4.9): removes the attribute when it is
+    /// present, else adds it with an empty value; returns whether it is
+    /// present afterwards.
+    js_boolean_t toggleAttribute(const js_string & name) const {
+        return toggle_attribute(value(), name.value());
+    }
+    /// The same with `force`: adds when true and removes when false.
+    js_boolean_t toggleAttribute(const js_string & name, js_boolean_t force) const {
+        return toggle_attribute(value(), name.value(), force);
+    }
+    /// Element.classList (DOM §4.9): the element's class tokens.
+    js_dom_token_list classList() const { return js_dom_token_list{value()}; }
 
 private:
     /// The nearest element sibling after (`forward`) or before this element,

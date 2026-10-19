@@ -95,46 +95,12 @@ template <class T> const T & vec_element(std::span<const T> values, js_num index
 }
 
 namespace detail {
-/// The UTF-16 code units of WTF-8 text, one at a time, without converting the
-/// whole string.
-class utf16_units {
-    std::string_view text;
-    std::size_t at = 0;
-    char16_t pending = 0;
-
-public:
-    explicit utf16_units(std::string_view wtf8) : text(wtf8) {}
-    /// The next unit, or false at the end.
-    bool next(char16_t & unit) {
-        if (pending != 0) {
-            unit = std::exchange(pending, char16_t{0});
-            return true;
-        }
-        if (at >= text.size()) { return false; }
-        char32_t cp = ctbrowser::decode_utf8(text, at);
-        if (cp >= 0x10000) {
-            cp -= 0x10000;
-            unit = static_cast<char16_t>(0xD800 + (cp >> 10));
-            pending = static_cast<char16_t>(0xDC00 + (cp & 0x3FF));
-        } else {
-            unit = static_cast<char16_t>(cp);
-        }
-        return true;
-    }
-};
-
-/// IsLessThan on two Strings (ECMA-262 7.2.13 step 3): code-unit order over
-/// UTF-16, which is not byte order over WTF-8 once a code point above U+FFFF
-/// (high surrogate D800-DBFF) meets one in U+E000-U+FFFF.
+/// IsLessThan on two Strings (ECMA-262 7.2.13 step 3), in UTF-16 code-unit
+/// order; see js_string's operator<=>.
 inline bool string_less(const js_string & left, const js_string & right) {
-    utf16_units a{left.value()}, b{right.value()};
-    for (;;) {
-        char16_t x = 0, y = 0;
-        const bool hasX = a.next(x), hasY = b.next(y);
-        if (!hasX || !hasY) { return !hasX && hasY; }
-        if (x != y) { return x < y; }
-    }
+    return left < right;
 }
+
 /// The receivers the Array methods take: an owned array, or one borrowed as a
 /// read-only span (a parameter the callee only reads).
 template <class Self> struct is_native_array : std::false_type {};

@@ -73,14 +73,8 @@ struct PageNamedElements {
 /// Native admission refuses the function holding it with that reason.
 inline constexpr llvm::StringLiteral kRuntimeCode = "ctjs.runtime_code";
 
-/// An operation that may create code at run time, and why.
-struct RuntimeCodeSite {
-    mlir::Operation * op;
-    std::string why;
-};
-
-/// Finds every operation in `module` that may create code at run time, marks
-/// it kRuntimeCode, and returns them in walk order:
+/// Finds every operation in `module` that may create code at run time and
+/// marks it kRuntimeCode in walk order:
 ///  - a load of `eval` or `Function`, and `import()`;
 ///  - `setTimeout` or `setInterval` whose first argument may be a String (a
 ///    constant one, or a value ClosureValues cannot prove is a function),
@@ -100,6 +94,6 @@ struct RuntimeCodeSite {
 ///
 /// Marks nothing on a module that is not its whole page: the model's promise
 /// (and the ClosureValues query behind the timer check) holds only there.
-llvm::SmallVector<RuntimeCodeSite> markRuntimeCode(mlir::ModuleOp module);
+void markRuntimeCode(mlir::ModuleOp module);
 
 } // namespace ctcompile::ctjs

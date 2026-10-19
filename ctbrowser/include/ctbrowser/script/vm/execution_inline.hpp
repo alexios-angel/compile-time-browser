@@ -131,6 +131,14 @@ inline auto context::declare_global_var(std::string name, bool configurable) -> 
 /// its interpreted run cannot disagree about where a global assignment lands.
 inline auto context::assign_global(realm_record & realm, const std::string & name, value v,
                                    bool strict) -> void {
+    if (const auto binding = realm.lexical.find(name); binding != realm.lexical.end()) {
+        if (!binding->second) {
+            throw_error("ReferenceError", "Cannot access '" + name + "' before initialization");
+            return;
+        }
+        realm.globals[name] = v;
+        return;
+    }
     if (immutable_global(name)) [[unlikely]] {
         if (strict) {
             throw_error("TypeError",
@@ -159,6 +167,14 @@ inline auto context::assign_global(realm_record & realm, const std::string & nam
         }
     }
     realm.globals[name] = v;
+}
+
+inline auto context::initialize_global(realm_record & realm, const std::string & name, value v)
+    -> void {
+    realm.globals[name] = v;
+    if (const auto binding = realm.lexical.find(name); binding != realm.lexical.end()) {
+        binding->second = true;
+    }
 }
 
 inline auto context::declare_global_function(std::string name, bool configurable) -> void {
@@ -257,6 +273,12 @@ inline auto context::set_undeclared_name_hook(std::function<value(std::string_vi
     if (internal_global(name)) [[unlikely]] {
         const auto it = realm.internals.find(name);
         return it == realm.internals.end() ? value::undefined() : it->second;
+    }
+    if (const auto binding = realm.lexical.find(name);
+        binding != realm.lexical.end() && !binding->second) {
+        throw_error("ReferenceError",
+                    "Cannot access '" + std::string{name} + "' before initialization");
+        return value::undefined();
     }
     const auto it = realm.globals.find(name);
     if (it != realm.globals.end()) { return it->second; }

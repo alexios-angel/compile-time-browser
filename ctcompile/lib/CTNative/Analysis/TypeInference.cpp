@@ -657,6 +657,16 @@ mlir::Type TypeInference::mapTypeOf(mlir::Operation * op, mlir::Value map) {
     return MapType::get(op->getContext(), key, value);
 }
 
+bool TypeInference::isCallbackParameter(mlir::Value value, llvm::StringRef attr) {
+    auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
+    if (!argument || !argument.getOwner()->isEntryBlock() ||
+        argument.getArgNumber() < ctjs::implicit_arguments) {
+        return false;
+    }
+    auto function = llvm::dyn_cast<ctjs::FuncOp>(argument.getOwner()->getParentOp());
+    return function && function->hasAttr(attr);
+}
+
 void TypeInference::setToEntryState(TypeLattice * lattice) {
     auto value = lattice->getAnchor();
     // The receiver of a proved registry class's method that no call resolved,
@@ -674,10 +684,13 @@ void TypeInference::setToEntryState(TypeLattice * lattice) {
             return;
         }
     }
-    if (isArrayCallbackParameter(value) || isHostCallbackParameter(value)) { return; }
-    if (isPromiseCallbackParameter(value)) { return; }
+    if (isCallbackParameter(value, kNativeArrayCallback) ||
+        isCallbackParameter(value, kNativeHostCallback)) {
+        return;
+    }
+    if (isCallbackParameter(value, kNativePromiseParameter)) { return; }
     // A specialised replace callback's parameters come from its call.
-    if (isStringCallbackParameter(value)) { return; }
+    if (isCallbackParameter(value, kNativeStringCallback)) { return; }
     const bool domInput =
         ownedRoots_ && ownedRoots_->proved() && llvm::is_contained(ownedRoots_->domInputs(), value);
     mlir::Type type = domInput || (domEntry_ && domEntry_->isElement(value))
@@ -708,7 +721,7 @@ void TypeInference::setToEntryState(TypeLattice * lattice) {
         }
     }
     // A borrowed callback's parameters are joined from its closure and calls.
-    if (isBorrowedCallbackParameter(value)) { return; }
+    if (isCallbackParameter(value, kNativeBorrowedCallback)) { return; }
     propagateIfChanged(lattice, lattice->join(TypeValue{type}));
 }
 
@@ -1085,7 +1098,7 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
             // this key on this object comes before the read on every path.
             // `var p = { n: 8 }; return p.n;` is then `num` rather than
             // `opt<num>`, which lets a `ctjs.store_global` of it through (a
-            // global is printed as `%.17g` and cannot spell `undefined`). The
+            // global is printed as a Number and cannot spell `undefined`). The
             // join below still covers the whole alias group: this removes only
             // the value the field cannot hold, not any value it can.
             field = fieldIsAssignedBefore(get.getObject(), key, op) ? mlir::Type{} : absentType(c);

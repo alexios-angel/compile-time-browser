@@ -58,9 +58,7 @@ bool neverStored(mlir::Operation * at, llvm::StringRef name) {
 /// True when --ctjs-resolve-globals found that the program never binds
 /// global `name`: its `ctjs.globals` row carries kGlobalsHostBinding.
 bool hostBinding(mlir::Operation * at, llvm::StringRef name) {
-    auto rows =
-        at->getParentOfType<mlir::ModuleOp>()->getAttrOfType<mlir::ArrayAttr>("ctjs.globals");
-    return realmBinding(rows, name);
+    return realmBinding(at->getParentOfType<mlir::ModuleOp>(), name);
 }
 
 /// True when the program writes no property of the global `Object` that

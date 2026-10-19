@@ -361,10 +361,10 @@ def check_scalar_global_emission(args, ir, name):
             ):
                 numbers.add(result)
                 values[result] = values.get(match[1], "unknown")
-            elif match := re.fullmatch(r"\(ctnative::js_num\) (\w+)", expression):
+            elif match := re.fullmatch(r"static_cast<ctnative::js_num>\((\w+)\)", expression):
                 numbers.add(result)
                 values[result] = values.get(match[1], "unknown")
-            elif match := re.fullmatch(r"\(ctnative::js_string\) (\w+)", expression):
+            elif match := re.fullmatch(r"static_cast<ctnative::js_string>\((\w+)\)", expression):
                 strings.add(result)
                 values[result] = values.get(match[1], "unknown")
             elif match := re.fullmatch(r"(\w+)\.value\(\)", expression):
@@ -388,7 +388,9 @@ def check_scalar_global_emission(args, ir, name):
                 values[result] = ("boolean", expression)
             elif match := re.fullmatch(r"ctnative::js_boolean_t\{(true|false)\}", expression):
                 values[result] = ("boolean", match[1])
-            elif match := re.fullmatch(r"\((?:ctnative::js_boolean_t|bool)\) (\w+)", expression):
+            elif match := re.fullmatch(
+                r"static_cast<(?:ctnative::js_boolean_t|bool)>\((\w+)\)", expression
+            ):
                 values[result] = values.get(match[1], "unknown")
             elif re.fullmatch(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?", expression):
                 values[result] = float(expression)

@@ -763,6 +763,81 @@ void test_each_classic_script_is_its_own_program() {
           "while inside one script the handler still waits for its last statement");
 }
 
+void test_script_error_payload_survives_listener_reentry() {
+    browser page{browser_options{200, 100}};
+    page.define_native("collectNow", [](script::context & cx, std::span<script::value>) {
+        (void)cx.collect();
+        return script::value::undefined();
+    });
+    page.load_html(
+        "<body><script>"
+        "var fifth = false, payload = false, count = 0;"
+        "window.onerror = function(m,u,l,c,e) { collectNow(); fifth = e.payload === 73; };"
+        "window.addEventListener('error', function(e) {"
+        "collectNow(); payload = e.error.payload === 73; count++; });"
+        "throw {payload: 73};</script>"
+        "<script>alert(fifth + ',' + payload + ',' + count);</script>");
+    check(page.alerts() == std::vector<std::string>{"true,true,1"},
+          "an otherwise unreferenced exception stays rooted across error callbacks");
+    check(!page.script_error().empty(), "reporting leaves the original diagnostic visible");
+
+    browser diagnostic_page{browser_options{200, 100}};
+    diagnostic_page.define_native("collectNow", [](script::context & cx, std::span<script::value>) {
+        (void)cx.collect();
+        return script::value::undefined();
+    });
+    diagnostic_page.load_html(
+        "<body><script>var same = false, fifth = false;"
+        "var token = {get name() { try { throw 7; } catch(e) {}"
+        "collectNow(); return 'Token'; }, message: 'original'};"
+        "window.onerror = function(m,u,l,c,e) { fifth = e === token; };"
+        "window.addEventListener('error', function(e) { same = e.error === token; });"
+        "throw token;</script><script>alert(same + ',' + fifth);</script>");
+    check(diagnostic_page.alerts() == std::vector<std::string>{"true,true"},
+          "diagnostic reentry cannot replace the original exception payload");
+    check(diagnostic_page.script_error().find("Token: original") != std::string::npos,
+          "the diagnostic describes the original exception after caught getter throws");
+
+    browser collected_page{browser_options{200, 100}};
+    collected_page.define_native("collectNow", [](script::context & cx, std::span<script::value>) {
+        (void)cx.collect();
+        return script::value::undefined();
+    });
+    collected_page.load_html(
+        "<body><script>var payload = false;"
+        "window.addEventListener('error', function(e) { payload = e.error.payload === 73; });"
+        "throw {get name() { try { throw 7; } catch(e) {} collectNow(); return 'Token'; },"
+        "message: 'original', payload: 73};</script><script>alert(payload);</script>");
+    check(collected_page.alerts() == std::vector<std::string>{"true"},
+          "an otherwise unreferenced exception stays rooted during diagnostic collection");
+
+    browser nested_page{browser_options{200, 100}};
+    nested_page.load_html(
+        "<body><script>var same = false, fifth = false;"
+        "var token = {get name() { throw 7; }, message: 'original'};"
+        "window.onerror = function(m,u,l,c,e) { fifth = e === token; };"
+        "window.addEventListener('error', function(e) { same = e.error === token; });"
+        "try { document.write('<script>throw token;<' + '/script>'); alert('writer'); }"
+        "catch(e) { alert('escaped ' + e); }"
+        "alert(same + ',' + fifth);</script><script>alert('next');</script>");
+    check(nested_page.alerts() == std::vector<std::string>{"writer", "true,true", "next"},
+          "a throwing diagnostic getter stays inside the nested script boundary");
+    check(!nested_page.script_error().empty(), "a throwing diagnostic getter still reports");
+
+    browser fault_page{browser_options{200, 100}};
+    fault_page.define_native("vmFault", [](script::context & cx, std::span<script::value>) {
+        cx.refuse("test fault", "not a JavaScript exception");
+        return script::value::undefined();
+    });
+    fault_page.load_html(
+        "<body><script>var errors = [];"
+        "window.addEventListener('error', function(e) { errors.push(e.error === undefined); });"
+        "</script><script>throw {old: true};</script><script>vmFault();</script>"
+        "<script>alert(errors.join(','));</script>");
+    check(fault_page.alerts() == std::vector<std::string>{"false,true"},
+          "a VM fault is not mislabeled as an exception or given a stale thrown object");
+}
+
 void test_wheel_and_keys_scroll() {
     browser page{browser_options{400, 200}};
     page.load_html(demo_page);
@@ -881,6 +956,7 @@ int main() {
     test_hit_testing_respects_escaped_context_clips();
     test_a_page_can_load_its_scripts_from_an_image();
     test_each_classic_script_is_its_own_program();
+    test_script_error_payload_survives_listener_reentry();
     test_a_dead_script_cannot_catch_the_next_scripts_throw();
     test_what_the_split_got_wrong_the_first_time();
     test_nothing_leaks_from_one_script_into_the_next();

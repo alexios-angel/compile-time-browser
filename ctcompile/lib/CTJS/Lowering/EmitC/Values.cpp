@@ -265,8 +265,12 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
     }
     if (auto global = mlir::dyn_cast<StoreGlobalOp>(op)) {
         const auto [text, length] = bytes_and_length(build, where, global.getName());
-        opaque_call(build, where, {}, "ct_aot_global_set",
+        const bool initialize = global->hasAttr("ctjs.initialize");
+        opaque_call(build, where, {}, initialize ? "ct_aot_global_init" : "ct_aot_global_set",
                     {scope.frame, text, length, mapping.lookup(global.getValue())});
+        if (!initialize) {
+            status_call_void(scope, build, where, callee("ct_aot_check"), {scope.frame});
+        }
         return true;
     }
 

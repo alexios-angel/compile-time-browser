@@ -127,16 +127,7 @@ std::optional<mlir::Attribute> evaluate(classInitialization & proof, ctjs::FuncO
         }
     }
     if (!proof.reason.empty()) { return std::nullopt; }
-    const auto get = [&](mlir::Value input) {
-        if (auto found = values.find(input); found != values.end()) { return found->second; }
-        if (auto constant = input.getDefiningOp<ctjs::ConstantOp>()) {
-            return value::primitive(constant.getValue());
-        }
-        if (auto constant = input.getDefiningOp<mlir::arith::ConstantOp>()) {
-            return value::primitive(constant.getValue());
-        }
-        return value{};
-    };
+    const auto get = [&](mlir::Value input) { return boundOrLiteral(input, values); };
     const auto is = [](value input, unsigned token) {
         return input.tag == value::kind::reference && input.node == token;
     };
@@ -146,15 +137,20 @@ std::optional<mlir::Attribute> evaluate(classInitialization & proof, ctjs::FuncO
     const auto absent = [&](value input) {
         return input.tag == value::kind::constant && input.constant == undefined.constant;
     };
+    enum class flow {
+        failed,
+        returned,
+        yielded
+    };
     // Refuses at `op`. If `op` sees the fresh object or its entries array, it
     // could add, keep or observe a property (freshObject); otherwise the path
     // simply could not be decided (closedPath).
-    const auto fail = [&](mlir::Operation & op) -> std::optional<mlir::Attribute> {
+    const auto fail = [&](mlir::Operation & op) {
         const bool touched = llvm::any_of(op.getOperands(), [&](mlir::Value operand) {
             return in(get(operand), fresh) || in(get(operand), arrays);
         });
         proof.refuse(touched ? freshObject : closedPath);
-        return std::nullopt;
+        return flow::failed;
     };
     const bool iterators = llvm::all_of(
         std::initializer_list<llvm::StringRef>{"Array", "__ctbrowser_for_of_open",
@@ -163,11 +159,6 @@ std::optional<mlir::Attribute> evaluate(classInitialization & proof, ctjs::FuncO
     // Runs `block` from its first operation. A ctjs.return ends the method
     // (`answer`); an scf.yield or scf.condition hands its operands back to the
     // structured operation that ran the block (`yielded`).
-    enum class flow {
-        failed,
-        returned,
-        yielded
-    };
     std::optional<mlir::Attribute> answer;
     llvm::SmallVector<value> yielded;
     // A ub.poison placeholder: carried through loop arguments, never read.
@@ -192,10 +183,6 @@ std::optional<mlir::Attribute> evaluate(classInitialization & proof, ctjs::FuncO
                 }
                 following = &target->front();
             };
-            const auto failAt = [&](mlir::Operation & at) {
-                (void)fail(at);
-                return flow::failed;
-            };
             const auto bitOf = [&](mlir::Value condition) {
                 return llvm::dyn_cast_if_present<mlir::IntegerAttr>(get(condition).constant);
             };
@@ -217,7 +204,7 @@ std::optional<mlir::Attribute> evaluate(classInitialization & proof, ctjs::FuncO
             }
             if (auto branch = llvm::dyn_cast<mlir::cf::CondBranchOp>(op)) {
                 auto bit = bitOf(branch.getCondition());
-                if (!bit) { return failAt(*op); }
+                if (!bit) { return fail(*op); }
                 if (bit.getValue().isZero()) {
                     jump(branch.getFalseDest(), branch.getFalseDestOperands());
                 } else {
@@ -228,7 +215,7 @@ std::optional<mlir::Attribute> evaluate(classInitialization & proof, ctjs::FuncO
             }
             if (auto choice = llvm::dyn_cast<mlir::cf::SwitchOp>(op)) {
                 auto flag = bitOf(choice.getFlag());
-                if (!flag) { return failAt(*op); }
+                if (!flag) { return fail(*op); }
                 mlir::Block * target = choice.getDefaultDestination();
                 mlir::ValueRange operands = choice.getDefaultOperands();
                 if (auto cases = choice.getCaseValues()) {
@@ -247,7 +234,7 @@ std::optional<mlir::Attribute> evaluate(classInitialization & proof, ctjs::FuncO
                 auto constant = get(returned.getValue());
                 if (constant.tag != value::kind::constant ||
                     llvm::isa<mlir::TypedAttr>(constant.constant)) {
-                    return failAt(*op);
+                    return fail(*op);
                 }
                 answer = constant.constant;
                 return flow::returned;
@@ -261,7 +248,7 @@ std::optional<mlir::Attribute> evaluate(classInitialization & proof, ctjs::FuncO
             // takes what that region yields as its results.
             if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op)) {
                 auto bit = bitOf(branch.getCondition());
-                if (!bit) { return failAt(*op); }
+                if (!bit) { return fail(*op); }
                 mlir::Region & taken =
                     bit.getValue().isZero() ? branch.getElseRegion() : branch.getThenRegion();
                 if (taken.empty()) {
@@ -285,7 +272,7 @@ std::optional<mlir::Attribute> evaluate(classInitialization & proof, ctjs::FuncO
                 }
                 if (const flow inner = run(before); inner != flow::yielded) { return inner; }
                 auto bit = llvm::dyn_cast_if_present<mlir::IntegerAttr>(yielded.front().constant);
-                if (!bit || !bit.getValue().isZero()) { return failAt(*op); }
+                if (!bit || !bit.getValue().isZero()) { return fail(*op); }
                 for (auto [output, input] :
                      llvm::zip(op->getResults(), llvm::ArrayRef(yielded).drop_front())) {
                     values[output] = input;
@@ -295,7 +282,7 @@ std::optional<mlir::Attribute> evaluate(classInitialization & proof, ctjs::FuncO
             }
             if (auto narrow = llvm::dyn_cast<mlir::arith::TruncIOp>(op)) {
                 auto bit = bitOf(narrow.getIn());
-                if (!bit) { return failAt(*op); }
+                if (!bit) { return fail(*op); }
                 const auto width = narrow.getType().getIntOrFloatBitWidth();
                 values[op->getResult(0)] = value::primitive(
                     mlir::IntegerAttr::get(narrow.getType(), bit.getValue().trunc(width)));
@@ -336,7 +323,7 @@ std::optional<mlir::Attribute> evaluate(classInitialization & proof, ctjs::FuncO
                 bool getter = false, empty = true;
                 for (auto [site, callee] : proof.getterReads) {
                     if (site != read) { continue; }
-                    if (proof.throwingGetters.contains(callee)) { return failAt(*op); }
+                    if (proof.throwingGetters.contains(callee)) { return fail(*op); }
                     getter = true;
                     empty &= freshEmptyGetter(callee);
                 }
@@ -383,7 +370,7 @@ std::optional<mlir::Attribute> evaluate(classInitialization & proof, ctjs::FuncO
             if (result.tag == value::kind::unknown ||
                 (result.tag == value::kind::reference && result.node == 0) ||
                 op->getNumResults() != 1) {
-                return failAt(*op);
+                return fail(*op);
             }
             values[op->getResult(0)] = result;
             op = following;

@@ -403,8 +403,18 @@ immutability compiler_impl::binding_immutability(std::string_view name) {
                                                             : immutability::none;
 }
 
-bool compiler_impl::refuse_immutable_write(immutability readonly) {
+bool compiler_impl::refuse_immutable_write(immutability readonly, std::string_view global_name) {
     if (readonly == immutability::none) { return false; }
+    if (!global_name.empty() && binding_position(global_name).first == no_binding &&
+        std::ranges::find(eval_outer_names_, global_name) == eval_outer_names_.end()) {
+        // SetMutableBinding checks initialization before immutability, even
+        // for a closure compiled with its global const declaration.
+        const std::uint32_t mark = reg_mark();
+        const std::uint16_t ready = alloc_reg();
+        const std::string name{global_name};
+        proto().emit(instruction::with_bx(op::get_global, ready, name_operand(name)));
+        release_to(mark);
+    }
     if (readonly == immutability::strict || fn().is_strict) {
         emit_throw("TypeError", "Assignment to constant variable.");
     }

@@ -290,12 +290,19 @@ std::uint64_t ct_aot_global_get_soft(ct_aot_frame * f, const char * name, std::u
     return cx.global_or_named(std::string_view{name, name_len}, true).bits();
 }
 
+/// InitializeBinding of a global lexical declaration, after its initializer ran.
+void ct_aot_global_init(ct_aot_frame * f, const char * name, std::uint32_t name_len,
+                        std::uint64_t v) {
+    context & cx = *aot_bridge::frame_of(f).ctx;
+    cx.initialize_global(cx.current_realm(), std::string{name, name_len}, value::from_bits(v));
+}
+
 /// ct_aot_global_set. VM_CASE(set_global) is context::assign_global, and so is
 /// this, so a global written by compiled code and one written by the
 /// interpreter land in the same place: the table's binding, a data property
 /// the global object owns, or a new table entry. The store is sloppy (`strict`
-/// false), which is all compiled code supports here: a read-only global
-/// refuses the store silently, so nothing can throw.
+/// false), so a read-only global refuses silently. An uninitialized lexical
+/// throws ReferenceError; generated code checks ct_aot_check after this call.
 ///
 /// The name is copied because the map owns its keys. The caller's characters
 /// point into a generated translation unit's rodata and would outlive

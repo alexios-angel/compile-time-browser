@@ -167,7 +167,7 @@ namespace detail {
     const value self = cx.current_this();
     if (self.is_number()) { return self.as_number(); }
     // A wrapper (`new Number(5)`) carries its [[NumberData]] in the slot - see
-    // primitive_slot in value.hpp and box_primitive below.
+    // primitive_slot in value.hpp and context::box_primitive.
     if (value * slot = primitive_slot(self); slot != nullptr && slot->is_number()) {
         return slot->as_number();
     }
@@ -180,21 +180,6 @@ namespace detail {
 
 // --- Primitive wrappers, 7.1.18 ToObject --------------------------------------
 
-/// Turns the fresh object `self` into the wrapper of `primitive`: an ordinary
-/// object on the prototype its kind names, with the primitive in the
-/// private-keyed slot `primitive_slot_key` (value.hpp says why a private key is
-/// an internal slot here). `typeof` says "object", `==` and arithmetic reach the
-/// primitive through valueOf, and Number.prototype's, Boolean.prototype's and
-/// String.prototype's own methods read the slot. A prototype `self` already has
-/// (a subclass instance) is kept.
-[[nodiscard]] inline value wrap_primitive(context & cx, value self, value primitive) {
-    return cx.wrap_primitive(self, primitive);
-}
-/// ToObject of a primitive. An object passes through; null and undefined are
-/// returned unchanged for the caller to refuse.
-[[nodiscard]] inline value box_primitive(context & cx, value v) {
-    return cx.box_primitive(v);
-}
 /// Whether a native constructor is being run under `new`. A native has no
 /// new.target: what it has is `this`, which context::construct makes as a
 /// fresh, empty instance before the call, and which a plain call never
@@ -521,13 +506,13 @@ struct generic_walk {
 };
 
 /// ToObject(this value), 23.1.3's first step in every method: a primitive is
-/// boxed (detail::box_primitive) so that `Array.prototype.push.call(true)` sets
+/// boxed (context::box_primitive) so that `Array.prototype.push.call(true)` sets
 /// `length` on a Boolean wrapper and answers 0 rather than refusing a write to
 /// a primitive, and a String receiver's non-writable indices refuse through
 /// the wrapper as 10.4.3 says. null and undefined pass through to
 /// coercible_this, which is step 1's TypeError.
 [[nodiscard]] inline value array_this(context & cx) {
-    return box_primitive(cx, cx.current_this());
+    return cx.box_primitive(cx.current_this());
 }
 
 /// RequireObjectCoercible on `this` (7.1.18 step 1), the first check in every

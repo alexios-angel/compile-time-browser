@@ -110,6 +110,7 @@ struct realm_record {
     /// (context::global_declaration_instantiation), and a lexical name is not a
     /// property of the global object, though its value lives in `globals`.
     string_flat_map<bool> var_names;
+    /// Presence means declared; the boolean means InitializeBinding has run.
     string_flat_map<bool> lexical;
     /// The platform's names: every intrinsic (clause 19) and every interface
     /// object or namespace a binding installed (WebIDL 3.7.1), which are
@@ -438,8 +439,8 @@ inline constexpr std::string_view template_object_name = "__ctbrowser_template_o
 /// compiler calls this with the name before a set_global that is an
 /// assignment (never a declaration's own write), and it throws the
 /// ReferenceError when the name is neither a global nor on the global object.
-/// A call rather than a check inside op::set_global, whose contract says it
-/// cannot throw.
+/// The unresolved-reference check is separate from set_global, which also
+/// refuses writes to an uninitialized lexical in sloppy code.
 inline constexpr std::string_view strict_assign_check_name = "__ctbrowser_strict_assign";
 /// PrivateFieldAdd / PrivateMethodOrAccessorAdd (7.3.28, 7.3.29):
 /// `(obj, key, v)` defines the private element (a field's value, or the class

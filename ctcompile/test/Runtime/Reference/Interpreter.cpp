@@ -16,23 +16,25 @@
 // The shape: one line per global the program created or changed, ascending
 // bytewise by name, `<name>=<value>`, with the value one of:
 //
-//     Number      printf("%.17g", d)          1   -0   2.5   inf   -inf   nan
+//     Number      Number::toString, -0 kept   1   -0   2.5   Infinity   NaN
 //     Boolean     true | false
 //     undefined   undefined
 //     null        null
 //     String      "<percent-encoded bytes>"   "text"   ""   "a%3D1"
 //
-// Numbers print with %.17g, which round-trips a double exactly, so the
-// comparison is on the double's value rather than on JavaScript's
-// Number-to-String text.
+// Numbers print as JavaScript's Number::toString writes them (ECMA-262
+// 6.1.6.1.20, core's number_to_string, which the native side's String(x)
+// also calls), the shortest digits that round-trip, so the comparison is still
+// on the double's value. The one change is -0, which prints as `-0`, as
+// JavaScript's own console prints it: ToString would make it `0`, and a
+// native program that loses the sign of a zero would then compare equal.
 //
 // The five forms are pairwise disjoint, which is what makes the line
-// unambiguous without tagging the number. Every %.17g output is a digit
-// string, `inf`, `-inf`, `nan` or `-nan`; none of those is `true`, `false`,
-// `undefined` or `null`, and none of them contains a `"`. So the kind of a
-// value is recoverable from its text, and a Number still prints as bare digits.
-// (`nan` and `null` are a one-glyph pair to a reader but they are different
-// tokens, and no %.17g output spells `null`.)
+// unambiguous without tagging the number. Every Number prints as a digit
+// string, `Infinity`, `-Infinity` or `NaN`; none of those is `true`,
+// `false`, `undefined` or `null`, and none of them contains a `"`. So the kind
+// of a value is recoverable from its text, and a Number still prints as bare
+// digits.
 //
 // Why percent-encoding for strings, and not a naive print:
 //
@@ -77,6 +79,7 @@
 // since its value changed.
 //
 //===----------------------------------------------------------------------===//
+#include <ctbrowser/core/number_format.hpp>
 #include <ctbrowser/script/builtins.hpp>
 #include <ctbrowser/script/compile.hpp>
 #include <ctbrowser/script/value.hpp>
@@ -85,6 +88,7 @@
 #include <ctbrowser/shell/browser.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
@@ -124,6 +128,13 @@ struct printed_global {
 /// global that differs. Written with putchar, not printf, so a `%` in the data
 /// is never a conversion and so the emitted C++'s first printf( in `main` stays
 /// the line compilation-unit.py --mutate anchors its off-by-one edit on.
+/// A Number as the convention spells it: Number::toString, except -0. The
+/// native side's print helpers (ctnative.hpp) spell it the same way.
+std::string number_text(double d) {
+    if (d == 0.0 && std::signbit(d)) { return "-0"; }
+    return ctbrowser::number_to_string(d);
+}
+
 void write_percent_encoded(const std::string & s) {
     static constexpr char hex[] = "0123456789ABCDEF";
     for (const char raw : s) {
@@ -277,7 +288,9 @@ int main(int argc, char ** argv) {
     for (const printed_global & g : printed) {
         switch (g.k) {
         // Keep this exact format: existing expected outputs depend on it.
-        case kind::number: std::printf("%s=%.17g\n", g.name.c_str(), g.number); break;
+        case kind::number:
+            std::printf("%s=%s\n", g.name.c_str(), number_text(g.number).c_str());
+            break;
         case kind::boolean:
             std::printf("%s=%s\n", g.name.c_str(), g.boolean ? "true" : "false");
             break;

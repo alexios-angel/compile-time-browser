@@ -279,7 +279,7 @@ def run(argv: argparse.Namespace) -> dict:
     # ctjs.call_direct into an emitc call, so counting them in the final module
     # would report a number that falls as the backend improves.
     closed = subprocess.run(
-        [argv.opt, "--ctjs-resolve-globals=report=true"],
+        [argv.opt, "--ctjs-fold-dynamic-code", "--ctjs-resolve-globals=report=true"],
         input=translate.stdout,
         capture_output=True,
         timeout=argv.timeout,

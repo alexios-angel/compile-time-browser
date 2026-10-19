@@ -48,6 +48,13 @@ ctcompile_unit_test(native-handlers LIBS ctbrowser::ctbrowser)
 # is added by Runtime/CMakeLists.txt.
 ctcompile_unit_test(native-json LIBS ctbrowser::ctbrowser)
 
+# The operators and JavaScript-named members of the runtime's carriers
+# (ctnative.hpp, Number.hpp, String.hpp, Browser.hpp): `%` and `<=>`, a
+# String's members and order, `===` and ToBoolean on every carrier,
+# loose_equals, js_array, and an element's attribute and classList members.
+# Its source is added by Runtime/CMakeLists.txt.
+ctcompile_unit_test(native-members LIBS ctbrowser::ctbrowser)
+
 # A VM-linked negative control: the C++ of <name>-fixture.emitc.mlir, emitted at
 # build time by the same emitter the native check uses, plus one object that
 # reaches the interpreter, linked against the engine; it must fail the
@@ -177,6 +184,8 @@ endfunction()
 ctcompile_native_fixture(numeric ControlFlow/globals.js)
 # Eight functions: recursion, loops, a boolean predicate.
 ctcompile_native_fixture(functions ControlFlow/functions.js)
+# Constant code-creation strings, imported ahead of global resolution.
+ctcompile_native_fixture(constant_code Closures/constant-code.js)
 # Object literals with closed shapes, lowered to stack structs.
 ctcompile_native_fixture(structs Objects/struct.js)
 # Object spread of literals whose keys are known, written out key by key.

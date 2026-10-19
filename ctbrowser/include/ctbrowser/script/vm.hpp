@@ -42,8 +42,16 @@ public:
 
     [[nodiscard]] value make_array();
 
+    /// Turns the fresh object `self` into the wrapper of `primitive`: an ordinary
+    /// object on the prototype its kind names, with the primitive in the
+    /// private-keyed slot `primitive_slot_key` (value.hpp says why a private key is
+    /// an internal slot here). `typeof` says "object", `==` and arithmetic reach the
+    /// primitive through valueOf, and Number.prototype's, Boolean.prototype's and
+    /// String.prototype's own methods read the slot. A prototype `self` already has
+    /// (a subclass instance) is kept.
     [[nodiscard]] value wrap_primitive(value self, value primitive);
-    /// Boxes a primitive; objects and nullish values pass through unchanged.
+    /// ToObject of a primitive. An object passes through; null and undefined are
+    /// returned unchanged for the caller to refuse.
     [[nodiscard]] value box_primitive(value v);
 
     [[nodiscard]] value iter_result(value v, bool done);
@@ -52,9 +60,11 @@ public:
     /// An assignment to a global name: op::set_global, and the AOT helper
     /// ct_aot_global_set, which is this with `strict` false. One store, so the
     /// interpreter and compiled code cannot disagree about where a global's
-    /// value went (see the definition). A strict store to a read-only global
-    /// throws.
+    /// value went (see the definition). An uninitialized lexical throws in
+    /// either mode; a strict store to a read-only global throws too.
     void assign_global(realm_record & realm, const std::string & name, value v, bool strict);
+    /// InitializeBinding after a global lexical declaration's initializer completes.
+    void initialize_global(realm_record & realm, const std::string & name, value v);
     /// Defines a platform name (an interface object, a namespace, an alias of
     /// one): { writable, !enumerable, configurable } (realm_record::builtin).
     void define_builtin_global(std::string name, value v);
@@ -216,6 +226,9 @@ public:
     };
 
     run_result run(const program & prog);
+    /// Runs a nested classic script with its own exception boundary, including
+    /// declaration instantiation, without resetting the caller's live frames.
+    run_result run_script_fenced(const program & prog, value & thrown);
 
     void instantiate_module(const program & prog, module_record & into);
     /// The namespace object for a module, live and cached. See the definition.

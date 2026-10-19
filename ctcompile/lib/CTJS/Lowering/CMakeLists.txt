@@ -5,6 +5,7 @@ add_library(ctcompile-ctjs-lowering
   CTJSToEmitC.cpp
   DropUncompiled.cpp
   EmitCBlockArguments.cpp
+  FoldDynamicCode.cpp
   LiftToSCF.cpp
   ResolveGlobals.cpp
   Spreads.cpp
@@ -16,6 +17,7 @@ target_link_libraries(ctcompile-ctjs-lowering
   PUBLIC
     CTJSDialect
     ctbrowser::script
+    ctcompile::ctjs-import
     MLIRIR
     MLIRPass
     MLIRFuncDialect

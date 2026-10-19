@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../../PartialEvaluation/Heap.h"
+#include "../DOM/Snapshot/Bounds.h"
 #include "Proof.hpp"
 
 namespace ctcompile::ctnative::class_detail {
@@ -221,35 +222,21 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
             before.getOperations().size() != 3 || after.getOperations().size() != 4) {
             return false;
         }
-        auto compare = llvm::dyn_cast<ctjs::CompareOp>(before.front());
-        auto truth = llvm::dyn_cast<ctjs::TruthyOp>(before.front().getNextNode());
-        auto condition = llvm::dyn_cast<mlir::scf::ConditionOp>(before.back());
-        auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(after.front());
-        auto advance = llvm::dyn_cast<ctjs::BinaryStaticOp>(append->getNextNode());
-        auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(after.back());
+        auto [compare, read] = matchIndexCopyLoop(loop, append);
         auto length =
             compare ? compare.getRhs().getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
         auto items =
             length ? length.getObject().getDefiningOp<ctjs::IterableOp>() : ctjs::IterableOp{};
         auto rest =
             items ? items.getSource().getDefiningOp<ctjs::GatherRestOp>() : ctjs::GatherRestOp{};
-        if (!compare || compare.getKind() != ctjs::CompareKind::Lt ||
-            compare.getLhs() != before.getArgument(0) || !truth ||
-            truth.getValue() != compare.getResult() || !condition ||
-            condition.getCondition() != truth.getResult() || condition.getArgs().size() != 1 ||
-            condition.getArgs()[0] != before.getArgument(0) || !read ||
-            read->getNextNode() != append || read.getKey() != after.getArgument(0) ||
-            append.getElement() != read.getResult() || !advance ||
-            advance.getKind() != ctjs::BinaryKind::Add ||
-            advance.getLhs() != after.getArgument(0) || !numberIs(advance.getRhs(), 1) || !yield ||
-            yield.getNumOperands() != 1 || yield.getOperand(0) != advance.getResult() ||
-            ctjs::constantKey(length.getKey()) != "length" || !rest || rest.getFrom() != 0 ||
-            read.getObject() != items.getResult() || rest->getBlock() != &original ||
-            items->getBlock() != &original || length->getBlock() != &original ||
-            !rest->isBeforeInBlock(items) || !items->isBeforeInBlock(length) ||
-            !length->isBeforeInBlock(loop) || !array->isBeforeInBlock(loop) ||
-            !loop->isBeforeInBlock(spread) || !usesOnly(rest, {items}) ||
-            !usesOnly(items, {length, read}) || !usesOnly(length, {compare})) {
+        if (!compare || ctjs::constantKey(length.getKey()) != "length" || !rest ||
+            rest.getFrom() != 0 || read.getObject() != items.getResult() ||
+            rest->getBlock() != &original || items->getBlock() != &original ||
+            length->getBlock() != &original || !rest->isBeforeInBlock(items) ||
+            !items->isBeforeInBlock(length) || !length->isBeforeInBlock(loop) ||
+            !array->isBeforeInBlock(loop) || !loop->isBeforeInBlock(spread) ||
+            !usesOnly(rest, {items}) || !usesOnly(items, {length, read}) ||
+            !usesOnly(length, {compare})) {
             return false;
         }
         for (mlir::Operation * op :
@@ -807,9 +794,6 @@ std::optional<partial_eval::value> classInitialization::evaluateHelper(
     if (depth == 16 || !fn || !fn.getBody().hasOneBlock()) { return std::nullopt; }
     auto * context = module.getContext();
     using partial_eval::value;
-    const auto known = [](const value & data) {
-        return data.tag == value::kind::constant || data.tag == value::kind::reference;
-    };
     llvm::DenseMap<mlir::Value, value> values;
     llvm::DenseMap<mlir::Value, ctjs::FuncOp> callees;
     auto & entry = fn.getBody().front();
@@ -842,7 +826,7 @@ std::optional<partial_eval::value> classInitialization::evaluateHelper(
             }
             if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(op)) {
                 auto data = values.lookup(result.getValue());
-                if (!known(data)) { return false; }
+                if (!data.known()) { return false; }
                 returned = data;
                 return true;
             }
@@ -882,7 +866,7 @@ std::optional<partial_eval::value> classInitialization::evaluateHelper(
                 llvm::SmallVector<value> arguments;
                 for (mlir::Value argument : call.getArgs()) {
                     arguments.push_back(values.lookup(argument));
-                    if (!known(arguments.back())) { return false; }
+                    if (!arguments.back().known()) { return false; }
                 }
                 auto answer = helper && undefined(call.getReceiver())
                                   ? evaluateHelper(helper, arguments, depth + 1)
@@ -942,7 +926,7 @@ std::optional<partial_eval::value> classInitialization::evaluateHelper(
             } else if (auto boxed = llvm::dyn_cast<ctjs::FromBoolOp>(op)) {
                 data = values.lookup(boxed.getOperand());
             }
-            if (!known(data) || op.getNumResults() != 1) { return false; }
+            if (!data.known() || op.getNumResults() != 1) { return false; }
             values[op.getResult(0)] = data;
         }
         return false;
@@ -1383,7 +1367,7 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         if (!methodHome || !block.getArgument(ctjs::arg_new_target).use_empty() ||
             (!isStatic &&
              (!normalizeSuperMethods(fn, baseDefinitions) ||
-              !fieldsOnly(block.getArgument(ctjs::arg_receiver), methodKeys, staticReads, true)))) {
+              !fieldsOnly(block.getArgument(ctjs::arg_receiver), methodKeys, staticReads)))) {
             return refuse("class method observes its identity, home or an unproved receiver");
         }
         if (isStatic) {
@@ -1453,7 +1437,7 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         }
     }
     for (ctjs::ConstructOp made : instances) {
-        if (!fieldsOnly(made.getResult(), methodKeys, staticReads, true)) { return false; }
+        if (!fieldsOnly(made.getResult(), methodKeys, staticReads)) { return false; }
         for (ctjs::SetPropertyOp definition : definitions) {
             if (!step()) { return false; }
             methodProbes.emplace_back(made, definition);
@@ -1473,7 +1457,7 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
             auto fn = target(definition.getValue().getDefiningOp<ctjs::CreateClosureOp>());
             llvm::SmallVector<ctjs::GetPropertyOp> receiverReads;
             if (!step() || !fieldsOnly(fn.getBody().front().getArgument(ctjs::arg_receiver),
-                                       methodKeys, receiverReads, true)) {
+                                       methodKeys, receiverReads)) {
                 return false;
             }
             // A shared inherited body resolves each read once, for every class.
@@ -1513,7 +1497,7 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
     if (leafConstructed) { leafBuilt.insert(function); }
     if (!entry.getArgument(ctjs::arg_new_target).use_empty() ||
         (closure.getUpvalues().empty() && !entry.getArgument(ctjs::arg_callee).use_empty()) ||
-        !fieldsOnly(entry.getArgument(ctjs::arg_receiver), methodKeys, staticReads, true,
+        !fieldsOnly(entry.getArgument(ctjs::arg_receiver), methodKeys, staticReads,
                     leafConstructed)) {
         return refuse("class constructor observes new.target, lexical home or receiver identity");
     }

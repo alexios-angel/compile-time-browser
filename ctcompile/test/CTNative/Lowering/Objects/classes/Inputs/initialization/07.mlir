@@ -112,7 +112,8 @@ function inherited_helper_newtarget() {
 var a = inherited_helper_newtarget();
 //--- inherited-helper-order-values.js
 // Value dependencies retain before-super, base and post-super call order.
-// The object-mutating original above keeps its separate ownership refusal.
+// The object-mutating original above lowers too: the constructors and the
+// helpers borrow the caller's literal through a pointer.
 function inherited_helper_order_values() {
     const before = n => n + 1;
     const base = n => n * 10;

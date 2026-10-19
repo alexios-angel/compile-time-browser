@@ -743,7 +743,7 @@ value dom_bindings::make_window_view(context & cx, value target, script::realm_r
                    // A global, the main reason this proxy exists: from this
                    // window's realm, whichever realm is asking.
                    if (const auto it = realm_of->globals.find(name);
-                       it != realm_of->globals.end()) {
+                       it != realm_of->globals.end() && !realm_of->lexical.contains(name)) {
                        return it->second;
                    }
                    // Then a named element, which comes before the prototype chain and
@@ -770,7 +770,8 @@ value dom_bindings::make_window_view(context & cx, value target, script::realm_r
         // would leave a read seeing the stale one.
         if (realm_of->declared.contains(name)) {
             realm_of->globals[name] = args[2];
-        } else if (target->find(name) != nullptr || target->find_accessor(name) != nullptr) {
+        } else if (realm_of->lexical.contains(name) || target->find(name) != nullptr ||
+                   target->find_accessor(name) != nullptr) {
             c.store_property(args[0], name, args[2]);
         } else {
             realm_of->globals[name] = args[2];
@@ -788,7 +789,8 @@ value dom_bindings::make_window_view(context & cx, value target, script::realm_r
                    // Object.prototype's, `addEventListener` is on the interface), and
                    // a named frame is a window property too.
                    return value::boolean(
-                       c.has_property(args[0], args[1]) || realm_of->globals.contains(name) ||
+                       c.has_property(args[0], args[1]) ||
+                       (realm_of->globals.contains(name) && !realm_of->lexical.contains(name)) ||
                        !frame_at(c, name).is_undefined() || !named_element(name).empty());
                });
     // A descriptor for each, so `Object.getOwnPropertyDescriptor(window, 'x')`
@@ -812,7 +814,8 @@ value dom_bindings::make_window_view(context & cx, value target, script::realm_r
             // An interface object or an intrinsic is not enumerable; the
             // Window's own members and a page's assignments are
             // (realm_record::builtin).
-            if (const auto it = realm_of->globals.find(name); it != realm_of->globals.end()) {
+            if (const auto it = realm_of->globals.find(name);
+                it != realm_of->globals.end() && !realm_of->lexical.contains(name)) {
                 return c.from_property_descriptor(context::property_descriptor::data(
                     it->second, realm_of->builtin.contains(name)
                                     ? script::attr_writable | script::attr_configurable
@@ -836,8 +839,10 @@ value dom_bindings::make_window_view(context & cx, value target, script::realm_r
                    if (c.own_property(args[0], name, own)) {
                        return value::boolean(c.delete_own_property(args[0], name));
                    }
-                   (void)realm_of->globals.erase(name);
-                   (void)realm_of->builtin.erase(name);
+                   if (!realm_of->lexical.contains(name)) {
+                       (void)realm_of->globals.erase(name);
+                       (void)realm_of->builtin.erase(name);
+                   }
                    return value::boolean(true);
                });
     return value::object(

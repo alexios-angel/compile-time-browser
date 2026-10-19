@@ -32,7 +32,7 @@
 # RUNTIME-DAG: mul {{.*}} : (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 # RUNTIME-DAG: div {{.*}} : (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 # RUNTIME-DAG: call_opaque "ctnative::to_number"{{.*}}!emitc.opaque<"ctnative::boolean_string">{{.*}} -> !emitc.opaque<"ctnative::js_num">
-# RUNTIME-DAG: call_opaque "std::fmod"
+# RUNTIME-DAG: rem {{.*}} : (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 # RUNTIME-DAG: call_opaque "std::pow"
 # RUNTIME-DAG: call_opaque "ctnative::boolean_string_text"{{.*}}!emitc.opaque<"ctnative::boolean_string">{{.*}} -> !emitc.opaque<"ctnative::js_string">
 # RUNTIME-DAG: add {{.*}} : (!emitc.opaque<"ctnative::js_string">, !emitc.opaque<"ctnative::js_string">) -> !emitc.opaque<"ctnative::js_string">

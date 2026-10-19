@@ -2,10 +2,9 @@
 //
 // Lowers arrays of Strings to `std::vector<ctnative::js_string>` and the
 // runtime's built-in objects: a literal is a local vector its appends fill,
-// `length` is vec_length, `a[i]` is vec_at, and push, join, sort and split
-// are called with their JavaScript spelling,
-// `ctnative::Array.prototype.push.call(a, x)` and
-// `ctnative::String.prototype.split.call(s, sep)`.
+// `length` is vec_length, `a[i]` is vec_at, push, join and sort are called
+// with their JavaScript spelling, `ctnative::Array.prototype.push.call(a, x)`,
+// and split is js_string's member, `s.split(sep)`.
 // Everything decided here was decided by the proof and by admission; this
 // file only spells it.
 //
@@ -701,6 +700,26 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
             swap(local);
             return true;
         }
+        // console.log of Strings and scalars nothing reads the result of is
+        // `ctnative::println("{} {}", a, b)`: one `{}` per argument, joined by
+        // one space as console.log joins them.
+        if (callee == "ctnative::console.log" && o->getResult(0).use_empty() &&
+            llvm::all_of(operands,
+                         [](mlir::Value v) { return isFormattableCarrier(v.getType()); })) {
+            std::string text;
+            for (std::size_t index = 0; index < operands.size(); ++index) {
+                text += index == 0 ? "{}" : " {}";
+            }
+            operands.insert(operands.begin(),
+                            ec::LiteralOp::create(
+                                b, where,
+                                ec::PointerType::get(ec::OpaqueType::get(context, "const char")),
+                                "\"" + text + "\""));
+            callWithConstValueOperands(b, where, mlir::TypeRange{},
+                                       b.getStringAttr("ctnative::println"), operands);
+            lowering::eraseIfUnused(o);
+            return true;
+        }
         swap(callValue(b, where, o->getResult(0).getType(), callee, operands));
         return true;
     }
@@ -730,8 +749,7 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
                       b, where, ec::OpaqueType::get(context, "ctnative::whitespace_run_t"),
                       "ctnative::whitespace_run"));
         const mlir::Value pieces =
-            callValue(b, where, vectorValue, "ctnative::String.prototype.split.call",
-                      mlir::ValueRange{call.getReceiver(), separator});
+            methodCall(b, where, vectorValue, call.getReceiver(), "split", separator);
         ec::AssignOp::create(b, where, local, pieces);
         swap(local);
         return true;
