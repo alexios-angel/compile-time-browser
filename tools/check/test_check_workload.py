@@ -203,6 +203,51 @@ def test_join_refuses_hoisted_probe_declaration():
     assert problem and "later" in problem and "hoist" in problem
 
 
+def test_join_refuses_comma_list_declaration():
+    library = "later();\n"
+    probe = "var a = 1, later = 2;\n"
+    problem = workload.join_problem(library, probe)
+    assert problem and "later" in problem
+
+
+def test_join_refuses_class_declaration():
+    library = "later();\n"
+    probe = "class later {}\n"
+    problem = workload.join_problem(library, probe)
+    assert problem and "later" in problem
+
+
+def test_join_refuses_generator_declaration():
+    library = "later();\n"
+    probe = "function* later() { yield 1; }\n"
+    problem = workload.join_problem(library, probe)
+    assert problem and "later" in problem
+
+
+def test_join_refuses_destructuring_declaration():
+    library = "later();\n"
+    probe = "let {later} = o;\n"
+    problem = workload.join_problem(library, probe)
+    assert problem and "later" in problem
+
+
+def test_join_refuses_dollar_named_declaration():
+    # `$` is an identifier character: `\b` never matches next to it.
+    library = "$later();\n"
+    probe = "var $later = 1;\n"
+    problem = workload.join_problem(library, probe)
+    assert problem and "later" in problem
+
+
+def test_join_refuses_probe_with_regex_literal():
+    # A quote inside a regex literal would blank the rest of the probe as a
+    # string and hide the declaration, so the scan refuses instead.
+    library = "later();\n"
+    probe = 'var r = /["\']/; var later = 1;\n'
+    problem = workload.join_problem(library, probe)
+    assert problem and "regular expression" in problem
+
+
 def test_join_refuses_strictness_mismatch():
     # Only the library says "use strict": one joined script would keep the
     # library's prologue and make the probe strict too.
