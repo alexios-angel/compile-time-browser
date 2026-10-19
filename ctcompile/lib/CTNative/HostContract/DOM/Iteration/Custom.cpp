@@ -143,7 +143,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 return mlir::WalkResult::interrupt();
             }
             auto call = invokedCall(invocation);
-            const auto arity = call ? host_detail::iteratorIntrinsicArity(ctjs::calleeGlobalName(call)) : 0;
+            const auto arity =
+                call ? host_detail::iteratorIntrinsicArity(ctjs::calleeGlobalName(call)) : 0;
             if (!call || !arity || !undefined(call.getReceiver()) ||
                 call.getArgs().size() != arity) {
                 return mlir::WalkResult::interrupt();
@@ -415,8 +416,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     ctjs::SetPropertyOp iteratorSlot;
     ctjs::CallOp iteratorKey, iteratorName;
     const auto setupCall = [&](ctjs::CallOp call, llvm::StringRef name, unsigned arity) {
-        return spend() && call && ctjs::calleeGlobalName(call) == name && undefined(call.getReceiver()) &&
-               call.getArgs().size() == arity &&
+        return spend() && call && ctjs::calleeGlobalName(call) == name &&
+               undefined(call.getReceiver()) && call.getArgs().size() == arity &&
                llvm::is_contained(contract.initialIntrinsics, name);
     };
     for (mlir::Operation * user : llvm::make_early_inc_range(object->getUsers())) {
@@ -1169,7 +1170,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 }
                 if (!undefined(call->receiver) ||
                     (call->direct && (call->direct.getTarget() != target.body ||
-                                      !undefined(call->direct.getNewTarget())))) {
+                                       !undefined(call->direct.getNewTarget())))) {
                     return work.refuse(
                         "DOM iterator sibling helper has an unsupported call target");
                 }
@@ -1793,9 +1794,11 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             call.getArgs()[0] != open.getResult()) {
             return error("DOM iterator record has an unsupported observer");
         }
-        if (ctjs::calleeGlobalName(call) == "__ctbrowser_iter_next" && call.getArgs().size() == 1 && !next) {
+        if (ctjs::calleeGlobalName(call) == "__ctbrowser_iter_next" && call.getArgs().size() == 1 &&
+            !next) {
             next = call;
-        } else if (ctjs::calleeGlobalName(call) == "__ctbrowser_iter_close" && call.getArgs().size() == 2) {
+        } else if (ctjs::calleeGlobalName(call) == "__ctbrowser_iter_close" &&
+                   call.getArgs().size() == 2) {
             auto boolean = ctjs::constantAttr<ctjs::BooleanAttr>(call.getArgs()[1]);
             const bool protectedClose = protectedCloses.lookup(call->getParentOp()) == call;
             if (!boolean || boolean.getValue() != protectedClose) {
