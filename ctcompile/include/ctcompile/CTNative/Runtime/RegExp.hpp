@@ -161,6 +161,25 @@ inline void append_substitution(std::string & out, std::string_view replacement,
         }
     }
 }
+
+/// Keeps unmatched text around each replacement, checking the global flag
+/// after the appender runs so a callback observes the same sequence.
+template <class Appender>
+js_string replace_matches(const js_string & self, const reg_exp & pattern, Appender & append) {
+    const std::string & text = self.value();
+    std::string out;
+    auto kept = text.cbegin();
+    for (std::sregex_iterator it{text.cbegin(), text.cend(), pattern.engine()}, end; it != end;
+         ++it) {
+        const std::smatch & match = *it;
+        out.append(kept, match[0].first);
+        append(out, match, text);
+        kept = match[0].second;
+        if (!pattern.global()) { break; }
+    }
+    out.append(kept, text.cend());
+    return js_string{std::move(out)};
+}
 } // namespace detail
 
 /// String.prototype.match (ECMA-262 22.1.3.13) with a RegExp without `g`:
@@ -181,19 +200,10 @@ inline match_result match_method::call(const js_string & self, const reg_exp & p
 /// the replacement, and the text between matches is kept.
 inline js_string replace_method::call(const js_string & self, const reg_exp & pattern,
                                       const js_string & replacement) const {
-    const std::string & text = self.value();
-    std::string out;
-    auto kept = text.cbegin();
-    for (std::sregex_iterator it{text.cbegin(), text.cend(), pattern.engine()}, end; it != end;
-         ++it) {
-        const std::smatch & match = *it;
-        out.append(kept, match[0].first);
+    auto append = [&](std::string & out, const std::smatch & match, const std::string & text) {
         detail::append_substitution(out, replacement.value(), match, text);
-        kept = match[0].second;
-        if (!pattern.global()) { break; }
-    }
-    out.append(kept, text.cend());
-    return js_string{std::move(out)};
+    };
+    return detail::replace_matches(self, pattern, append);
 }
 
 /// String.prototype.replace (ECMA-262 22.1.3.19) with a RegExp and a function
@@ -204,19 +214,10 @@ inline js_string replace_method::call(const js_string & self, const reg_exp & pa
 template <class Callback>
 js_string replace_method::call(const js_string & self, const reg_exp & pattern,
                                Callback callback) const {
-    const std::string & text = self.value();
-    std::string out;
-    auto kept = text.cbegin();
-    for (std::sregex_iterator it{text.cbegin(), text.cend(), pattern.engine()}, end; it != end;
-         ++it) {
-        const std::smatch & match = *it;
-        out.append(kept, match[0].first);
+    auto append = [&](std::string & out, const std::smatch & match, const std::string &) {
         out += (js_string{} + detail::call_replacer(callback, match)).value();
-        kept = match[0].second;
-        if (!pattern.global()) { break; }
-    }
-    out.append(kept, text.cend());
-    return js_string{std::move(out)};
+    };
+    return detail::replace_matches(self, pattern, append);
 }
 
 } // namespace ctnative

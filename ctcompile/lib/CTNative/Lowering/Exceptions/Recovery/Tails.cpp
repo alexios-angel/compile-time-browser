@@ -12,8 +12,8 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
-bool recovery::collect(tail & result, mlir::Block * start, bool initiallyActive, bool isCatch) {
-    llvm::SmallVector<std::pair<mlir::Block *, bool>> pending{{start, initiallyActive}};
+bool recovery::collect(tail & result, mlir::Block * start, bool isCatch) {
+    llvm::SmallVector<std::pair<mlir::Block *, bool>> pending{{start, !isCatch}};
     while (!pending.empty()) {
         if (!spend()) { return false; }
         auto [block, active] = pending.pop_back_val();

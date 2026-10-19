@@ -13,6 +13,7 @@
 
 #include <cmath>
 #include <compare>
+#include <concepts>
 #include <limits>
 #include <type_traits>
 
@@ -26,25 +27,22 @@ template <class T>
 requires std::is_same_v<T, char>
 class js_basic_string;
 
-/// A JavaScript Number in generated native code. Only `double` is allowed for
-/// now: any other representation would need a proof that it preserves Number
-/// semantics. Bitwise operators and shifts convert through ToInt32/ToUint32
-/// and mask shift counts to five bits, as JavaScript does.
-template <class T>
-requires std::is_same_v<T, double>
-class js_basic_num {
-    T number = 0.0;
+/// A JavaScript Number in generated native code, backed by double. Bitwise
+/// operators and shifts convert through ToInt32/ToUint32 and mask shift
+/// counts to five bits, as JavaScript does.
+class js_num {
+    double number = 0.0;
 
 public:
-    constexpr js_basic_num() = default;
-    explicit constexpr js_basic_num(js_nan_t) : number(std::numeric_limits<T>::quiet_NaN()) {}
-    template <class U>
-    requires std::is_same_v<U, T>
-    explicit constexpr js_basic_num(U value) : number(value) {}
+    constexpr js_num() = default;
+    explicit constexpr js_num(js_nan_t) : number(std::numeric_limits<double>::quiet_NaN()) {}
+    template <class T>
+    requires std::same_as<T, double>
+    explicit constexpr js_num(T value) : number(value) {}
 
-    explicit constexpr operator T() const { return number; }
+    explicit constexpr operator double() const { return number; }
     explicit constexpr operator bool() const { return number != 0.0 && !std::isnan(number); }
-    constexpr T value() const { return number; }
+    constexpr double value() const { return number; }
     /// Number.prototype.toString with no radix (ECMA-262 21.1.3.6):
     /// Number::toString, so 1e21, "0" for -0, "NaN" and "Infinity". Defined
     /// in String.hpp.
@@ -53,56 +51,58 @@ public:
     /// ToIntegerOrInfinity must be 0..100, else a RangeError. Defined in
     /// ctnative.hpp, since it throws: the compiler folds constants with this
     /// header and String.hpp, and builds without exceptions.
-    js_basic_string<char> toFixed(js_basic_num digits) const;
+    js_basic_string<char> toFixed(js_num digits) const;
     std::int32_t to_int32() const { return ctbrowser::number_to_int32(number); }
     std::uint32_t to_uint32() const { return ctbrowser::number_to_uint32(number); }
 
-    constexpr js_basic_num operator+() const { return *this; }
-    constexpr js_basic_num operator-() const { return js_basic_num{-number}; }
-    friend constexpr js_basic_num operator+(js_basic_num left, js_basic_num right) {
-        return js_basic_num{left.number + right.number};
+    constexpr js_num operator+() const { return *this; }
+    constexpr js_num operator-() const { return js_num{-number}; }
+    friend constexpr js_num operator+(js_num left, js_num right) {
+        return js_num{left.number + right.number};
     }
-    friend constexpr js_basic_num operator-(js_basic_num left, js_basic_num right) {
-        return js_basic_num{left.number - right.number};
+    friend constexpr js_num operator-(js_num left, js_num right) {
+        return js_num{left.number - right.number};
     }
-    friend constexpr js_basic_num operator*(js_basic_num left, js_basic_num right) {
-        return js_basic_num{left.number * right.number};
+    friend constexpr js_num operator*(js_num left, js_num right) {
+        return js_num{left.number * right.number};
     }
-    friend constexpr js_basic_num operator/(js_basic_num left, js_basic_num right) {
-        return js_basic_num{left.number / right.number};
+    friend constexpr js_num operator/(js_num left, js_num right) {
+        return js_num{left.number / right.number};
     }
     /// `left % right` (ECMA-262 6.1.6.1.6, Number::remainder): the remainder
     /// with the dividend's sign, which is C's fmod. A zero divisor or an
     /// infinite dividend gives NaN, an infinite divisor leaves a finite
     /// dividend unchanged, and a -0 dividend stays -0.
-    friend js_basic_num operator%(js_basic_num left, js_basic_num right) {
-        return js_basic_num{std::fmod(left.number, right.number)};
+    friend js_num operator%(js_num left, js_num right) {
+        return js_num{std::fmod(left.number, right.number)};
     }
-    js_basic_num operator~() const { return js_basic_num{static_cast<T>(~to_int32())}; }
-    friend js_basic_num operator&(js_basic_num left, js_basic_num right) {
-        return js_basic_num{static_cast<T>(left.to_int32() & right.to_int32())};
+    js_num operator~() const { return js_num{static_cast<double>(~to_int32())}; }
+    friend js_num operator&(js_num left, js_num right) {
+        return js_num{static_cast<double>(left.to_int32() & right.to_int32())};
     }
-    friend js_basic_num operator|(js_basic_num left, js_basic_num right) {
-        return js_basic_num{static_cast<T>(left.to_int32() | right.to_int32())};
+    friend js_num operator|(js_num left, js_num right) {
+        return js_num{static_cast<double>(left.to_int32() | right.to_int32())};
     }
-    friend js_basic_num operator^(js_basic_num left, js_basic_num right) {
-        return js_basic_num{static_cast<T>(left.to_int32() ^ right.to_int32())};
+    friend js_num operator^(js_num left, js_num right) {
+        return js_num{static_cast<double>(left.to_int32() ^ right.to_int32())};
     }
-    friend js_basic_num operator<<(js_basic_num left, js_basic_num right) {
+    friend js_num operator<<(js_num left, js_num right) {
         const auto bits = left.to_uint32() << (right.to_uint32() & 31u);
-        return js_basic_num{static_cast<T>(static_cast<std::int32_t>(bits))};
+        return js_num{static_cast<double>(static_cast<std::int32_t>(bits))};
     }
-    friend js_basic_num operator>>(js_basic_num left, js_basic_num right) {
-        return js_basic_num{static_cast<T>(left.to_int32() >> (right.to_uint32() & 31u))};
+    friend js_num operator>>(js_num left, js_num right) {
+        return js_num{static_cast<double>(left.to_int32() >> (right.to_uint32() & 31u))};
     }
-    js_basic_num unsigned_shift_right(js_basic_num right) const {
-        return js_basic_num{static_cast<T>(to_uint32() >> (right.to_uint32() & 31u))};
+    js_num unsigned_shift_right(js_num right) const {
+        return js_num{static_cast<double>(to_uint32() >> (right.to_uint32() & 31u))};
     }
-    friend constexpr bool operator==(js_basic_num, js_basic_num) = default;
-    friend constexpr auto operator<=>(js_basic_num, js_basic_num) = default;
+    friend constexpr bool operator==(js_num, js_num) = default;
+    friend constexpr auto operator<=>(js_num, js_num) = default;
 };
 
-using js_num = js_basic_num<double>;
+template <class T>
+requires std::same_as<T, double>
+using js_basic_num = js_num;
 
 /// Number.parseInt (ECMA-262 21.1.2.13), the same function as the global
 /// parseInt (19.2.5): `text` is a String carrier (its `value()` is the text)

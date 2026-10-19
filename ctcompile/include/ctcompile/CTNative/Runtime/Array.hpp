@@ -39,10 +39,13 @@ inline void vec_push(std::vector<js_string> & v, js_string x) {
 
 /// `a[i]` (ECMA-262 10.4.2, an Array's [[Get]] of an array index): the element
 /// at an integral index below the length, else undefined.
-inline nullable_string vec_at(const std::vector<js_string> & values, nullable_scalar key) {
+inline nullable_string vec_at(std::span<const js_string> values, nullable_scalar key) {
     std::size_t index = 0;
     if (!element_index(key, values.size(), index)) { return {}; }
     return values[index].value();
+}
+inline nullable_string vec_at(const std::vector<js_string> & values, nullable_scalar key) {
+    return vec_at(std::span<const js_string>{values}, key);
 }
 
 /// `a[i]` of an array of Numbers (a map result): the element, else undefined.
@@ -84,13 +87,6 @@ template <class T> const T & vec_row(const std::vector<T> & values, js_num key, 
 /// `a.length` of a borrowed array.
 template <class T> js_num vec_length(std::span<const T> values) {
     return js_num{static_cast<double>(values.size())};
-}
-
-/// `a[i]` of a borrowed String array; see vec_at above.
-inline nullable_string vec_at(std::span<const js_string> values, nullable_scalar key) {
-    std::size_t index = 0;
-    if (!element_index(key, values.size(), index)) { return {}; }
-    return values[index].value();
 }
 
 /// `a[i]` of a borrowed array at a proved index; see vec_element above.

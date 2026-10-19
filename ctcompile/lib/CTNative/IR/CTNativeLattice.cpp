@@ -321,12 +321,6 @@ Type meet(Type a, Type b) {
     return finishUnion(context, parts);
 }
 
-Type meet(MLIRContext * context, llvm::ArrayRef<Type> types) {
-    Type accumulated = BottomType::get(context);
-    for (Type type : types) { accumulated = meet(accumulated, type); }
-    return accumulated;
-}
-
 StrType defaultStringType(MLIRContext * context) {
     return StrType::get(context, kDefaultStringEncoding);
 }

@@ -169,13 +169,7 @@ bool isExecuteHelper(ctjs::FuncOp fn) {
 void closureLifter::callExecutedFunctions() {
     if (!executeCallsRewritable()) { return; }
     // The one closure that makes each function, for reads of its captures.
-    llvm::DenseMap<mlir::Operation *, ctjs::CreateClosureOp> makers;
-    module.walk([&](ctjs::CreateClosureOp c) {
-        if (ctjs::FuncOp target = targetOf(c)) {
-            auto [found, fresh] = makers.try_emplace(target.getOperation(), c);
-            if (!fresh) { found->second = {}; }
-        }
-    });
+    auto makers = oneClosurePerFunction();
     llvm::DenseMap<mlir::Operation *, bool> helpers;
     const auto isHelper = [&](ctjs::FuncOp fn) {
         auto [found, fresh] = helpers.try_emplace(fn.getOperation(), false);

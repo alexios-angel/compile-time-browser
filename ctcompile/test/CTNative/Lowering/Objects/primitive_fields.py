@@ -6,16 +6,15 @@ lower to native code and print the same value; every other fixture must be
 refused by native lowering under both optimization settings.
 """
 
-from CTNative.harness import native_args, run
+from CTNative.harness import native_args, run, run_parallel
 from CTNative.Lowering.Objects.constructor_refusals import NODE, check_native
 
 
 def main():
     args = native_args(__doc__, "fixtures")
-    checked = refused = 0
     # Fixture name -> the value of `a` that Node and the reference interpreter
     # must both print.
-    for name, expected in {
+    observations = {
         "strings": 375,
         "borrowed": 5,
         "mixed": 15,
@@ -71,25 +70,9 @@ def main():
         "utf8-length": 4,
         "empty-length": 0,
         "unknown-property": 0,
-    }.items():
-        source = args.fixtures / f"{name}.js"
-        if name == "forwarded-depth-limit":
-            # A chain of 64 forwarding functions above the reader, deeper than
-            # native lowering follows, so it must be refused.
-            source = args.work / f"{name}.js"
-            source.write_text(
-                "function forwarded() {\n"
-                "var f0 = function(value) { return value.text.length; };\n"
-                + "".join(
-                    f"var f{i} = function(value) {{ return f{i - 1}(value); }};\n"
-                    for i in range(1, 65)
-                )
-                + 'return f64({text: "owned"});\n}\nvar a = forwarded();\n'
-            )
-        assert run([args.node, "-e", NODE, str(source)]).stdout == f"a={expected}\n", name
-        assert run([args.reference, str(source)]).stdout == f"a={expected}\n", name
-        # NATIVE: the fixtures that must lower and run natively.
-        if name in (
+    }
+    native_fixtures = frozenset(
+        (
             "strings",
             # Fields that are a String or undefined: an optional-String member
             # (Lowering/ObjectValues/VariantFields.cpp).
@@ -129,12 +112,39 @@ def main():
             "borrowed-alias-delete",
             "declared-alias-delete",
             "forwarded-alias-delete",
-        ):
-            checked += check_native(args, source, name, expected)
-            continue
+        )
+    )
+
+    def check(item):
+        """Run one fixture's observations and native/refusal check; return its counts.
+
+        Each fixture writes only files named after itself, so they run side by
+        side (run_parallel).
+        """
+        name, expected = item
+        source = args.fixtures / f"{name}.js"
+        if name == "forwarded-depth-limit":
+            # A chain of 64 forwarding functions above the reader, deeper than
+            # native lowering follows, so it must be refused.
+            source = args.work / f"{name}.js"
+            source.write_text(
+                "function forwarded() {\n"
+                "var f0 = function(value) { return value.text.length; };\n"
+                + "".join(
+                    f"var f{i} = function(value) {{ return f{i - 1}(value); }};\n"
+                    for i in range(1, 65)
+                )
+                + 'return f64({text: "owned"});\n}\nvar a = forwarded();\n'
+            )
+        assert run([args.node, "-e", NODE, str(source)]).stdout == f"a={expected}\n", name
+        assert run([args.reference, str(source)]).stdout == f"a={expected}\n", name
+        # NATIVE: the fixtures that must lower and run natively.
+        if name in native_fixtures:
+            return (check_native(args, source, name, expected), 0)
         raw = args.work / f"{name}.mlir"
         run([args.translate, "--ctbrowser-js-to-ctjs", str(source), "-o", str(raw)])
         assert "ctjs.skipped" not in raw.read_text(), name
+        refused = 0
         for optimize in (False, True):
             text = run(
                 [
@@ -158,6 +168,11 @@ def main():
             if name == "mixed-three":
                 assert "string field requires definite string reads and writes" in text, name
             refused += 1
+        return (0, refused)
+
+    results = run_parallel(observations.items(), check)
+    checked = sum(c for c, _ in results)
+    refused = sum(r for _, r in results)
     print(f"local string fields: {checked} native executions, {refused} refusals")
 
 

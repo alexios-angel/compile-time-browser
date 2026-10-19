@@ -46,22 +46,7 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
     // callee value it kept, exactly as for ctjs.call, and its new.target
     // operand is the undefined constant body_is_supported requires, which is
     // what the runtime gives a plain call anyway.
-    mlir::Value dispatched_callee;
-    mlir::Value dispatched_receiver;
-    mlir::ValueRange dispatched_arguments;
-    mlir::Value dispatched_result;
-    if (auto call = mlir::dyn_cast<CallOp>(op)) {
-        dispatched_callee = call.getCallee();
-        dispatched_receiver = call.getReceiver();
-        dispatched_arguments = call.getArgs();
-        dispatched_result = call.getResult();
-    } else if (auto direct = mlir::dyn_cast<CallDirectOp>(op)) {
-        dispatched_callee = direct.getCalleeValue();
-        dispatched_receiver = direct.getReceiver();
-        dispatched_arguments = direct.getArgs();
-        dispatched_result = direct.getResult();
-    }
-    if (dispatched_result) {
+    if (const auto call = callView(&op)) {
         const unsigned base = park_window(scope, build, where, mapping, op);
         const mlir::Value argv = window_pointer(scope, build, where, base);
 
@@ -70,11 +55,11 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         // message op::call_computed would produce; `site` carries a
         // backwards scan of bytecode that an AOT frame does not have.
         // Passing undefined and nullptr says this code has neither.
-        mapping.map(dispatched_result,
+        mapping.map(op.getResult(0),
                     status_call(scope, build, where, callee("ct_aot_call"),
-                                {scope.frame, mapping.lookup(dispatched_callee),
-                                 mapping.lookup(dispatched_receiver), argv,
-                                 u32_literal(build, where, dispatched_arguments.size()),
+                                {scope.frame, mapping.lookup(call->callee),
+                                 mapping.lookup(call->receiver), argv,
+                                 u32_literal(build, where, call->args.size()),
                                  undefined(build, where, value),
                                  literal(build, where,
                                          pointer_to(build.getContext(),

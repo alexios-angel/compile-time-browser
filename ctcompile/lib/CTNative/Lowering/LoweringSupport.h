@@ -84,7 +84,6 @@ enum class carrier {
     domElement,
     domElementVector,
     json,
-    structure,
     vector,
     stringVector,
     /// A two-position array literal read only at constant indices, as a
@@ -185,7 +184,6 @@ inline constexpr carrierRow kCarriers[] = {
     {carrier::domElement, kDOMElementType},
     {carrier::domElementVector, kDOMElementVectorType},
     {carrier::json, kDOMJSONType},
-    {carrier::structure, ""},
     {carrier::vector, ""},
     {carrier::stringVector, ""},
     {carrier::tuple, ""},
@@ -343,9 +341,6 @@ std::string instanceClassSpelling(llvm::StringRef className);
 llvm::StringRef instanceClassName(mlir::Type type);
 /// `std::shared_ptr<C>`, the carrier of `instance<C>` and `opt<instance<C>>`.
 mlir::Type instanceCarrierType(mlir::Type type);
-bool mapNeedsString(MapType type);
-bool mapNeedsNullableString(MapType type);
-bool mapNeedsNullableStringKey(MapType type);
 bool mapNeedsObjectValues(MapType type);
 mlir::Type mapCarrierType(MapType type);
 /// The C++ type of a table, or of a table that may be undefined (null):

@@ -21,6 +21,21 @@ HERE = Path(__file__).resolve().parent
 MAINS = {}
 
 CASES = {
+    "Closures/table-cross-block": [
+        "ctjs-opt %s --ctjs-resolve-globals --ctnative-lower-to-emitc=optimize=false | FileCheck %s",
+    ],
+    "Objects/json-cross-block": [
+        "split-file %s %t",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/conditional.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s",
+    ],
+    "Objects/regexp-controls": [
+        "split-file %s %t",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/controls.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/native.mlir",
+        "FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/native.mlir",
+        "ctjs-opt %t/native.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/native.cpp",
+        "%gxx -O2 %t/native.cpp -o %t/gcc && %t/gcc | FileCheck %s --check-prefix=OUTPUT",
+        "%clangxx -O2 %t/native.cpp -o %t/clang && %t/clang | FileCheck %s --check-prefix=OUTPUT",
+    ],
     "Admission/divergence-refusals": [
         "split-file %s %t",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/equality.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=EQUALITY",
@@ -677,6 +692,12 @@ CASES = {
         "%compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/shared.js --work %t --name shared_gcc --core-build %build",
         "%compilation_unit --cxx %dom_clang --module %t/runtime.mlir --js %t/shared.js --work %t --name shared_clang --core-build %build",
         "not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/shared.js --work %t --name shared_mutation --mutate seen --mutate-as string --core-build %build 2>&1 | FileCheck %s --check-prefix=MUTATION",
+        "%node %t/expected.cjs %t/recursive.js 4",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/recursive.js -o %t/recursive.mlir",
+        'ctjs-opt %t/recursive.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{observe-globals=true},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/recursive.emitc.mlir',
+        "FileCheck %s --check-prefix=RECURSIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/recursive.emitc.mlir",
+        "%compilation_unit --cxx g++ --module %t/recursive.emitc.mlir --js %t/recursive.js --work %t/recursive-gcc --name recursive_gcc --core-build %build",
+        "%compilation_unit --cxx %dom_clang --module %t/recursive.emitc.mlir --js %t/recursive.js --work %t/recursive-clang --name recursive_clang --core-build %build",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/cycle.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true | FileCheck %s --check-prefix=CYCLE",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/nested.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true | FileCheck %s --check-prefix=NESTED",
     ],
@@ -1866,6 +1887,9 @@ CASES = {
         "ctjs-translate --ctbrowser-js-to-ctjs %t/inherited.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=REFUSED",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/prototype-write.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=REFUSED",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/accessor.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=REFUSED",
+    ],
+    "Objects/for-of-shared-callee": [
+        'ctjs-opt %s --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --implicit-check-not=ctnative.not_native --implicit-check-not=__ctbrowser_iter --implicit-check-not=ctjs.func',
     ],
     "Objects/for-of": [
         "split-file %s %t",

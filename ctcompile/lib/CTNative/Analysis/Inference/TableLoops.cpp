@@ -377,6 +377,11 @@ std::optional<llvm::SmallVector<tableField>> literalTable(
             return std::nullopt;
         }
     }
+    if (llvm::any_of(stores, [&](ctjs::SetPropertyOp store) {
+            return store->getBlock() != before->getBlock();
+        })) {
+        return std::nullopt;
+    }
     llvm::sort(stores,
                [](ctjs::SetPropertyOp a, ctjs::SetPropertyOp b) { return a->isBeforeInBlock(b); });
     llvm::SmallVector<tableField> fields;
@@ -386,8 +391,7 @@ std::optional<llvm::SmallVector<tableField>> literalTable(
         const auto constant = ctjs::constantAttr<mlir::Attribute>(store.getValue());
         const auto number = llvm::dyn_cast_or_null<ctjs::NumberAttr>(constant);
         if (key.empty() || key == "__proto__" || !seen.insert(key).second ||
-            !store->hasAttr(ctjs::defineOwnMarker) || store->getBlock() != before->getBlock() ||
-            !store->isBeforeInBlock(before) ||
+            !store->hasAttr(ctjs::defineOwnMarker) || !store->isBeforeInBlock(before) ||
             !llvm::isa_and_nonnull<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr,
                                    ctjs::NullAttr>(constant) ||
             (number && !std::isfinite(number.getDouble()))) {

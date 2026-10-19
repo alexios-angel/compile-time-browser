@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../../Analysis/OwnedGlobalRoots.h"
+#include "../Admission/Admission.h"
 #include "Emitter.h"
 
 namespace ctcompile::ctnative::lowering_detail {
@@ -314,8 +315,10 @@ void lowering::convertBoundaries(ctjs::FuncOp fn) {
             const auto & params = parameterTypes[call.getCallee()];
             // Operands 0-2 are the importer's three implicit arguments, which
             // have no parameter carrier; convert only the source arguments.
+            // A shared-cell handle forwards storage, not the scalar it holds.
             for (unsigned i = 3; i < params.size() && i < op->getNumOperands(); ++i) {
-                if (!llvm::isa<ec::PointerType, ec::LValueType>(op->getOperand(i).getType())) {
+                if (!admission::isSharedCellArg(op, i) &&
+                    !llvm::isa<ec::PointerType, ec::LValueType>(op->getOperand(i).getType())) {
                     convert(i, params[i]);
                 }
             }

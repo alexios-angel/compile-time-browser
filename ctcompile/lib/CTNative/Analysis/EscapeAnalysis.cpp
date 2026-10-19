@@ -92,10 +92,7 @@ bool AliasValue::onlyTrackedSites() const {
     return llvm::all_of(sites_, [](mlir::Operation * site) { return isTrackedSite(site); });
 }
 
-bool AliasValue::operator==(const AliasValue & other) const {
-    return initialized_ == other.initialized_ && external_ == other.external_ &&
-           sites_ == other.sites_;
-}
+bool AliasValue::operator==(const AliasValue &) const = default;
 
 void AliasValue::print(llvm::raw_ostream & os) const {
     if (!initialized_) {

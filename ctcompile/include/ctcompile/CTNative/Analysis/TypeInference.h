@@ -585,6 +585,9 @@ public:
     static mlir::Type mapTagType(mlir::MLIRContext * c, llvm::StringRef tag);
 
 private:
+    void joinCollected(mlir::ProgramPoint * point, TypeLattice * destination,
+                       mlir::ValueRange values);
+
     /// For the one direct call wrapped in an invoke, the result on the normal
     /// path is the join of the callee's live return operands, found by a
     /// bounded query that does not treat throw exits as returns. Every other

@@ -985,6 +985,36 @@ std::string closureLifter::whyNotAnObjectArgument(mlir::Operation * call, unsign
 /// that resolve (callsOfTarget) and the closures used as methods
 /// (methodClosures).
 void closureLifter::methodCensus() {
+    const auto registries = markInstanceRegistries(module);
+    llvm::DenseMap<mlir::Value, ctjs::FuncOp> registryClass;
+    const auto nameClass = [&](mlir::Value value, ctjs::FuncOp owner) {
+        auto [at, added] = registryClass.try_emplace(value, owner);
+        if (!added && at->second != owner) { at->second = {}; }
+    };
+    for (const InstanceRegistry & registry : registries) {
+        for (mlir::Value instance : registry.classInstances) {
+            nameClass(instance, registry.constructor);
+        }
+        llvm::SmallVector<ctjs::FuncOp> members{registry.constructor};
+        llvm::append_range(members, registry.methods);
+        llvm::append_range(members, registry.constructorCopies);
+        for (ctjs::FuncOp member : members) {
+            if (!member.getBody().empty()) {
+                nameClass(member.getBody().front().getArgument(ctjs::arg_receiver),
+                          registry.constructor);
+            }
+        }
+        for (ctjs::CreateClosureOp closure : closures) {
+            if (targetOf(closure) != registry.constructor) { continue; }
+            for (mlir::Operation * user : closure.getResult().getUsers()) {
+                auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+                if (store && store.getObject() == closure.getResult() &&
+                    ctjs::constantKey(store.getKey()) == "prototype") {
+                    nameClass(store.getValue(), registry.constructor);
+                }
+            }
+        }
+    }
     llvm::DenseSet<mlir::Operation *> instanceStores;
     for (ctjs::ConstructOp built : allConstructs) {
         if (!closedAfterLift(built.getResult())) { continue; }
@@ -1024,6 +1054,12 @@ void closureLifter::methodCensus() {
                 set.getObject() != receiver) {
                 return;
             }
+            // The registry proof permits these receivers only on instances
+            // of their own exact class. Unknown aliases and same-class stores
+            // still count, including an own field shadowing the method.
+            const auto receiverClass = registryClass.lookup(receiver);
+            const auto writerClass = registryClass.lookup(set.getObject());
+            if (receiverClass && writerClass && receiverClass != writerClass) { return; }
             const auto written = ctjs::constantKey(set.getKey());
             if ((computedKeys && written.empty()) || (written == key && !owned(set))) {
                 stable = false;
@@ -1129,7 +1165,7 @@ void closureLifter::methodCensus() {
     }
     // An instance read back from a registry Map names every instance of its
     // class (Analysis/Instances.h), and those share the prototype's methods.
-    for (const InstanceRegistry & registry : markInstanceRegistries(module)) {
+    for (const InstanceRegistry & registry : registries) {
         for (mlir::Value read : registry.readBack) {
             behind[read].assign(registry.instances.begin(), registry.instances.end());
         }
@@ -1148,7 +1184,7 @@ void closureLifter::methodCensus() {
             }
             llvm::SmallVector<mlir::Value, 2> & named =
                 behind[entry.getArgument(ctjs::arg_receiver)];
-            for (mlir::Value instance : registry.instances) {
+            for (mlir::Value instance : registry.classInstances) {
                 if (!llvm::is_contained(named, instance)) { named.push_back(instance); }
             }
         }

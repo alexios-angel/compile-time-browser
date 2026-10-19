@@ -12,11 +12,10 @@ namespace ctcompile::ctnative {
 
 /// Whether \p function's body contains a ctjs.create_closure.
 bool constructsClosures(ctjs::FuncOp function) {
-    bool found = false;
-    if (function) {
-        function.getBody().walk([&](ctjs::CreateClosureOp) { found = true; });
-    }
-    return found;
+    return function &&
+           function.getBody()
+               .walk([](ctjs::CreateClosureOp) { return mlir::WalkResult::interrupt(); })
+               .wasInterrupted();
 }
 
 /// Returns the function \p made creates when that closure's environment is

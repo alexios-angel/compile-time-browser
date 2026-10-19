@@ -85,6 +85,17 @@ struct invokeCompletions {
 
 } // namespace
 
+void TypeInference::joinCollected(mlir::ProgramPoint * point, TypeLattice * destination,
+                                  mlir::ValueRange values) {
+    for (auto value : values) {
+        const auto * source = getLatticeElementFor(point, value);
+        // Querying from the original point subscribes it to pending values.
+        if (!source->getValue().isUninitialized()) {
+            propagateIfChanged(destination, destination->join(source->getValue()));
+        }
+    }
+}
+
 mlir::LogicalResult TypeInference::visitCallOperation(
     mlir::CallOpInterface call,
     llvm::ArrayRef<const mlir::dataflow::AbstractSparseLattice *> operands,
@@ -108,12 +119,7 @@ mlir::LogicalResult TypeInference::visitCallOperation(
     }
     auto * destination = static_cast<TypeLattice *>(results.front());
     auto * point = getProgramPointAfter(call);
-    for (auto value : completions.returned) {
-        const auto * source = getLatticeElementFor(point, value);
-        if (!source->getValue().isUninitialized()) {
-            propagateIfChanged(destination, destination->join(source->getValue()));
-        }
-    }
+    joinCollected(point, destination, completions.returned);
     return mlir::success();
 }
 
@@ -135,15 +141,7 @@ void TypeInference::visitNonControlFlowArguments(
     }
     auto * destination = nonSuccessorInputLattices.front();
     auto * point = getProgramPointBefore(&invocation.getUnwindBody().front());
-    for (auto value : completions.thrown) {
-        const auto * source = getLatticeElementFor(point, value);
-        // An operand the solver has not reached yet is skipped, not widened to
-        // the entry state. Querying it from this block's program point
-        // subscribes the block, so the payload is revisited when it changes.
-        if (!source->getValue().isUninitialized()) {
-            propagateIfChanged(destination, destination->join(source->getValue()));
-        }
-    }
+    joinCollected(point, destination, completions.thrown);
 }
 
 } // namespace ctcompile::ctnative

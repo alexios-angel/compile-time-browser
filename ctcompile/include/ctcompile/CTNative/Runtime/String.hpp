@@ -248,9 +248,7 @@ public:
 
 using js_string = js_basic_string<char>;
 
-template <class T>
-requires std::is_same_v<T, double>
-js_string js_basic_num<T>::toString() const {
+inline js_string js_num::toString() const {
     return js_string{ctbrowser::number_to_string(number)};
 }
 

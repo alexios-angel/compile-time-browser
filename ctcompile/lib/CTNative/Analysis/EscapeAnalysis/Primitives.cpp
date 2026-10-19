@@ -566,9 +566,7 @@ std::pair<mlir::Value, bool> conditionChoiceKey(mlir::Value condition,
         const auto leaf = [&](mlir::Value current) {
             if (auto literal = current.getDefiningOp<ctjs::ConstantOp>()) {
                 auto attribute = literal.getValue();
-                if (identity ||
-                    !llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::BooleanAttr,
-                               ctjs::NumberAttr, ctjs::StringAttr, ctjs::BigIntAttr>(attribute) ||
+                if (identity || !ctjs::isConstantAttr(attribute) ||
                     (common && common != attribute)) {
                     return false;
                 }

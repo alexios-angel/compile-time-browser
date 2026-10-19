@@ -117,10 +117,8 @@ bool lowering::replaceIdentityField(mlir::Operation * op) {
                                         ? mlir::Type(target)
                                         : ec::OpaqueType::get(context, kRawStringType);
             value = callValue(b, where, resultType, helper, value);
-            value = convertScalar(b, where, value, target);
-        } else {
-            value = convertScalar(b, where, value, target);
         }
+        value = convertScalar(b, where, value, target);
         get.getResult().replaceAllUsesWith(value);
     } else {
         auto set = llvm::cast<ctjs::SetPropertyOp>(op);

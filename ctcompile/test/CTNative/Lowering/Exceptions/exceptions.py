@@ -19,6 +19,7 @@ from CTNative.harness import (
     build_and_run,
     native_tools,
     run,
+    run_parallel,
 )
 from CTNative.Browser.dom.dom import link_options
 from CTNative.Exports.boundary import FUNCTION as CTJS_FUNCTION, NATIVE as NATIVE_FUNCTION
@@ -587,8 +588,14 @@ def main():
     reference = args.reference
     compilers, nm = native_tools(reference)
     register_flow_controls(args)
-    report = []
-    for name, (denominator, expected) in PROGRAMS.items():
+
+    def check(item):
+        """Run one program's import, lower and standalone/refusal checks.
+
+        Each program's files are named after it in `args.work`, so the checks
+        run side by side (run_parallel).
+        """
+        name, (denominator, expected) = item
         source = args.fixtures / f"{name}.js"
         compare(
             run([str(reference), str(source)]).stdout,
@@ -625,18 +632,18 @@ def main():
                 standalone(args, defaults, default_name, expected, compilers, nm)
         else:
             refused(prepared, output, imported, name)
-        report.append(
-            {
-                "name": name,
-                "source_functions": denominator,
-                "imported": imported,
-                "native": len(NATIVE_FUNCTION.findall(output.read_text())),
-                "refusals": REFUSAL.findall(output.read_text()),
-                "observations": expected,
-                "interpreter_agrees": True,
-                "interpreter_observations": expected,
-            }
-        )
+        return {
+            "name": name,
+            "source_functions": denominator,
+            "imported": imported,
+            "native": len(NATIVE_FUNCTION.findall(output.read_text())),
+            "refusals": REFUSAL.findall(output.read_text()),
+            "observations": expected,
+            "interpreter_agrees": True,
+            "interpreter_observations": expected,
+        }
+
+    report = run_parallel(PROGRAMS.items(), check)
 
     # This altered guarded.js produces the wrong throw-site state that restoring
     # the try-entry registers would produce. Run its generated C++ too; the same
