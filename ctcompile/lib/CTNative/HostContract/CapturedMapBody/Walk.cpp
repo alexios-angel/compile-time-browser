@@ -36,11 +36,7 @@ bool Walk::walk(mlir::Block & block, unsigned depth) {
             return false;
         }
         if (callbackReads.contains(&operation) || callbackCalls.contains(&operation)) {
-            for (mlir::Value operand : operation.getOperands()) {
-                if (!owner.step() || !owner.dominance.dominates(operand, &operation)) {
-                    return false;
-                }
-            }
+            if (!owner.operandsDominate(&operation)) { return false; }
             if (callbackCalls.contains(&operation)) {
                 auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
                 auto args =
