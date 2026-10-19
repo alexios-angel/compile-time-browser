@@ -30,6 +30,14 @@
 // RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --whole-page 2>/dev/null \
 // RUN:     | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:     | FileCheck %s --check-prefix=CLEAN --implicit-check-not=ctjs.runtime_code; done
+// RUN: for name in timer-local-mixed timer-return-mixed timer-array-mixed timer-cell-mixed timer-interval-mixed; do \
+// RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --whole-page 2>/dev/null \
+// RUN:     | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:     | FileCheck %s --check-prefix=MIXED; done
+// RUN: for name in timer-local-function timer-return-function timer-array-function; do \
+// RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --whole-page 2>/dev/null \
+// RUN:     | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:     | FileCheck %s --check-prefix=CLEAN --implicit-check-not=ctjs.runtime_code; done
 // RUN: FileCheck %s --check-prefix=SCRIPT < %t/script.mlir
 // RUN: FileCheck %s --check-prefix=TIMER < %t/timer.mlir
 // RUN: FileCheck %s --check-prefix=URL < %t/url.mlir
@@ -71,6 +79,11 @@
 // NORMALIZED: ctjs.runtime_code = "`{{.*}}` set to the javascript: URL
 // CLEAN: module
 
+// A mixed parameter, return, captured cell, or destructured element keeps
+// its scalar alternative. The reason itself pins the runtime-code clause.
+// MIXED: ctnative.not_native = "`{{setTimeout|setInterval}}` compiles a String first argument as code at run time
+// MIXED: ctjs.runtime_code = "`{{setTimeout|setInterval}}` compiles a String first argument as code at run time
+
 // Without --whole-page, the String timer marks nothing.
 
 //--- script.js
@@ -80,6 +93,60 @@ load();
 //--- timer.js
 function later(code) { setTimeout(code, 0); }
 later("x = 1");
+
+//--- timer-local-mixed.js
+(function () {
+    function later(code) { setTimeout(code, 0); }
+    later(function () {});
+    later("x = 1");
+})();
+
+//--- timer-return-mixed.js
+(function () {
+    function choose(flag) { if (flag) return function () {}; return "x = 1"; }
+    setTimeout(choose(false), 0);
+})();
+
+//--- timer-array-mixed.js
+(function () {
+    function choose(flag) { if (flag) return [function () {}]; return ["x = 1"]; }
+    var [code] = choose(false);
+    setTimeout(code, 0);
+})();
+
+//--- timer-cell-mixed.js
+(function () {
+    var code = function () {};
+    function change() { code = "x = 1"; }
+    change();
+    setTimeout(code, 0);
+})();
+
+//--- timer-interval-mixed.js
+(function () {
+    function later(code) { setInterval(code, 0); }
+    later(function () {});
+    later("x = 1");
+})();
+
+//--- timer-local-function.js
+(function () {
+    function later(code) { setTimeout(code, 0); }
+    later(function () {});
+})();
+
+//--- timer-return-function.js
+(function () {
+    function choose() { return function () {}; }
+    setTimeout(choose(), 0);
+})();
+
+//--- timer-array-function.js
+(function () {
+    function choose() { return [function () {}]; }
+    var [code] = choose();
+    setTimeout(code, 0);
+})();
 
 //--- url.js
 function link(a) { a.href = "javascript:go()"; }

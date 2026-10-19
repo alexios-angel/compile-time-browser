@@ -152,8 +152,7 @@ std::string handlerMarkup(mlir::Value value, llvm::StringRef api) {
 }
 
 /// Why calling `method` with `call`'s arguments may create code, or empty.
-/// `closures` answers which closures a value can hold (a timer's first
-/// argument that is one of them is a function, never a String).
+/// `closures` follows every possible leaf, not just the closures among them.
 std::string methodCall(llvm::StringRef method, CallOp call,
                        globals_detail::ClosureValues & closures) {
     const auto args = call.getArgs();
@@ -165,12 +164,14 @@ std::string methodCall(llvm::StringRef method, CallOp call,
         if (!first) { return {}; }
         const mlir::Value origin = registerFlowOrigin(first);
         if (origin && origin.getDefiningOp<CreateClosureOp>()) { return {}; }
-        // A String is compiled, so a value that may be one is refused: a
-        // constant String, or a value the query cannot prove is a function.
-        // A value that is one of the closures it names is a function.
-        if (!constantString(first)) {
-            globals_detail::ClosureValues::Answer held = closures.closuresOf(first);
-            if (held.unknown.empty() && !held.closures.empty()) { return {}; }
+        // A closure MAY-set says nothing about the non-callable alternatives.
+        // Every leaf must be a function, including scalar leaves of returns.
+        const auto held = closures.leafValuesOf(first);
+        if (held.unknown.empty() && !held.values.empty() &&
+            llvm::all_of(held.values, [](mlir::Value leaf) {
+                return static_cast<bool>(leaf.getDefiningOp<CreateClosureOp>());
+            })) {
+            return {};
         }
         return "`" + method.str() +
                "` compiles a String first argument as code at run time, "

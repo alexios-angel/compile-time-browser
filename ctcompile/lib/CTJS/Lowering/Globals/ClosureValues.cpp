@@ -161,9 +161,7 @@ ClosureValues::Leaves ClosureValues::leafValuesOf(mlir::Value value) {
     objects found = objectsOf(value);
     Leaves answer;
     answer.unknown = found.unknown;
-    if (answer.unknown.empty()) {
-        answer.values.append(found.leaves.begin(), found.leaves.end());
-    }
+    if (answer.unknown.empty()) { answer.values.append(found.leaves.begin(), found.leaves.end()); }
     return answer;
 }
 
@@ -332,6 +330,9 @@ std::string ClosureValues::inFrame(FuncOp function, mlir::Operation * call,
         objects found;
         if (std::string why = step(value, values, found); !why.empty()) { return why; }
         made.insert(found.made.begin(), found.made.end());
+        for (mlir::Value leaf : found.leaves) {
+            if (!found.made.contains(leaf.getDefiningOp())) { work.push_back(leaf); }
+        }
     }
     return {};
 }
