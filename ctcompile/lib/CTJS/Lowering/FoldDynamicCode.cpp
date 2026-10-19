@@ -258,18 +258,19 @@ std::optional<compiled> compileSource(mlir::ModuleOp module, const std::string &
         clone.setSymName(builder.getStringAttr(
             (name.substr(0, dollar).str() + "$" + std::to_string(base + oldIndex))));
         clone.walk([&](CreateClosureOp made) {
-            if (made.getFunction() >= 0) {
-                made.setFunctionAttr(builder.getI32IntegerAttr(
-                    static_cast<std::int32_t>(base) + made.getFunction()));
-            }
+            const std::uint32_t shifted = base + made.getFunction();
+            made.setFunctionAttr(builder.getI32IntegerAttr(
+                static_cast<std::int32_t>(shifted)));
         });
         out.functions.push_back(clone);
-        if (oldIndex == entryIndex) { out.entry = out.functions.size() - 1; }
+        if (oldIndex == entryIndex) {
+            out.entry = static_cast<unsigned>(out.functions.size() - 1);
+        }
     }
     // The program's refusal rows and hoisted vars merge into the module's
     // attributes. The rows' `program` id keeps the spliced source's name, so
     // a diagnostic names the site that made it.
-    if (auto rows = imported.module->getAttrOfType<mlir::ArrayAttr>("ctjs.skipped")) {
+    if (auto rows = (*imported.module)->getAttrOfType<mlir::ArrayAttr>("ctjs.skipped")) {
         for (const mlir::Attribute row : rows) { out.skipped.push_back(row); }
     }
     out.hoisted.assign(program.hoisted_vars.begin(), program.hoisted_vars.end());
