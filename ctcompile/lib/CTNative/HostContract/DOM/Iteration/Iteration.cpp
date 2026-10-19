@@ -163,9 +163,9 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
             hasLoop |= owner && owner.getSymName() == contract.entry;
         }
         auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
-        auto load =
-            call ? call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>() : ctjs::LoadGlobalOp{};
-        if (load && load.getName() == "__ctbrowser_for_of_open") { opens.push_back(call); }
+        if (call && ctjs::calleeGlobalName(call) == "__ctbrowser_for_of_open") {
+            opens.push_back(call);
+        }
         return mlir::WalkResult::advance();
     });
     if (census.wasInterrupted()) { return error("DOM iteration work budget exhausted"); }
@@ -360,8 +360,7 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
                     break;
                 }
                 if (auto call = llvm::dyn_cast<ctjs::CallOp>(operation)) {
-                    auto load = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-                    if (load && load.getName() == "__ctbrowser_iter_close" &&
+                    if (ctjs::calleeGlobalName(call) == "__ctbrowser_iter_close" &&
                         undefined(call.getReceiver()) && call.getArgs().size() == 2 &&
                         call.getArgs()[0] == empty.getResult()) {
                         auto abrupt = ctjs::constantAttr<ctjs::BooleanAttr>(call.getArgs()[1]);
@@ -399,9 +398,9 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
         const auto scan = entry.walk([&](mlir::Operation * operation) {
             if (!spend()) { return mlir::WalkResult::interrupt(); }
             auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
-            auto load =
-                call ? call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>() : ctjs::LoadGlobalOp{};
-            if (load && load.getName() == "__ctbrowser_for_of_open") { opens.push_back(call); }
+            if (call && ctjs::calleeGlobalName(call) == "__ctbrowser_for_of_open") {
+                opens.push_back(call);
+            }
             return mlir::WalkResult::advance();
         });
         if (scan.wasInterrupted()) { return error("DOM iteration work budget exhausted"); }
