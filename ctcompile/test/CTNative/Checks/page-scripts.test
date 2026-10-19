@@ -32,6 +32,7 @@
 # RUN: FileCheck %s --check-prefix=REDECLARE --match-full-lines --implicit-check-not=second < %t/redeclare.out
 # RUN: FileCheck %s --check-prefix=REDECLAREERR < %t/redeclare.err
 # RUN: %native_reference --page %t/module.html | FileCheck %s --check-prefix=MODULE --match-full-lines
+# RUN: python3 %S/page_scripts.py --reference %native_reference --work %t
 
 # THROW: one
 # THROW-NEXT: two
@@ -104,3 +105,73 @@
 <script type="module">console.log("module " + (document.body ? document.body.tagName : "null"));</script>
 <script>console.log("classic " + String(document.body));</script>
 </head><body><p>x</p></body></html>
+
+#--- listener.html
+<!doctype html><body>
+<script>
+var reported = 0, onerrorCalls = 0;
+window.onerror = function (message, filename) {
+    onerrorCalls++;
+    console.log("onerror", onerrorCalls, filename.endsWith("a.js"));
+};
+window.addEventListener("error", function (event) {
+    reported++;
+    document.body.setAttribute("data-errors", String(reported));
+    console.log("error", reported, event.filename.endsWith("a.js"));
+});
+</script>
+</body>
+
+#--- inline-error.html
+<!doctype html><body>
+<script>
+var reported = 0, onerrorCalls = 0;
+window.onerror = function (message, filename) {
+    onerrorCalls++;
+    console.log("onerror", onerrorCalls, filename.endsWith("a.js"));
+};
+window.addEventListener("error", function (event) {
+    reported++;
+    document.body.setAttribute("data-errors", String(reported));
+    console.log("error", reported, event.filename.endsWith("a.js"));
+});
+</script>
+<script>
+var kept = 17;
+let shared = 19;
+function saved() { return kept + shared; }
+console.log("before", kept, typeof later);
+document.body.setAttribute("data-kept", "kept");
+throw new Error("inline-script");
+console.log("unreachable");
+</script>
+<script>console.log("inline-next", kept);</script>
+</body>
+
+#--- a.js
+"use strict";
+var kept = 17;
+let shared = 19;
+function saved() { return kept + shared; }
+console.log("before", kept, typeof later);
+document.body.setAttribute("data-kept", "kept");
+throw new Error("first-script");
+console.log("unreachable");
+
+#--- b.js
+function later() { return 23; }
+console.log("after", kept, shared, saved(), reported, onerrorCalls, document.body.getAttribute("data-kept"), document.body.getAttribute("data-errors"));
+sloppy = later();
+console.log("sloppy", sloppy);
+
+#--- bad.js
+var broken = ;
+console.log("unreachable");
+
+#--- good.js
+"use strict";
+var kept = 17;
+let shared = 19;
+function saved() { return kept + shared; }
+console.log("before", kept, typeof later);
+document.body.setAttribute("data-kept", "kept");

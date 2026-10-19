@@ -40,6 +40,7 @@ CASES = {
         "FileCheck %s --check-prefix=REDECLARE --match-full-lines --implicit-check-not=second < %t/redeclare.out",
         "FileCheck %s --check-prefix=REDECLAREERR < %t/redeclare.err",
         "%native_reference --page %t/module.html | FileCheck %s --check-prefix=MODULE --match-full-lines",
+        "python3 %S/page_scripts.py --reference %native_reference --work %t",
     ],
 }
 

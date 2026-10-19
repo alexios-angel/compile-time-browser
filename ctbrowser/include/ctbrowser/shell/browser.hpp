@@ -279,6 +279,11 @@ public:
     /// to ask a page a question. Returns whether it ran.
     bool run_script(std::string_view source);
 
+    /// Runs a separate classic script in the loaded page's realm. Unlike a
+    /// devtools evaluation, reports failure through window's error event before
+    /// returning false; script_error() retains the diagnostic for the caller.
+    bool run_page_script(std::string_view source, std::string_view specifier);
+
     /// How many times layout has run. Observable because the dirty-level design
     /// exists to keep this number down: a caret blink or a scroll must not
     /// increment it.
@@ -512,6 +517,7 @@ private:
     // by a script is queued rather than performed under that script's feet.
     void load_one_page(std::string_view html, source_kind kind);
     void run_scripts();
+    void report_script_error(std::string_view error, std::string_view specifier);
 
     // The measure layout uses and the fonts the rasterizer draws with are the
     // same object: text lands where layout placed it only if one thing answers

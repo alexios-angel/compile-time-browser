@@ -188,11 +188,10 @@ int main(int argc, char ** argv) {
             }
         };
         live.load_html(source);
-        if (!live.script_error().empty()) {
-            print_lines();
+        bool had_script_error = !live.script_error().empty();
+        if (had_script_error) {
             std::fprintf(stderr, "native reference: %s threw: %s\n", path.c_str(),
                          live.script_error().c_str());
-            return 1;
         }
         for (const std::string & script : scripts) {
             std::ifstream file{script, std::ios::binary};
@@ -202,15 +201,14 @@ int main(int argc, char ** argv) {
             }
             const std::string text{std::istreambuf_iterator<char>{file},
                                    std::istreambuf_iterator<char>{}};
-            if (!live.run_script(text) || !live.script_error().empty()) {
-                print_lines();
+            if (!live.run_page_script(text, script) || !live.script_error().empty()) {
+                had_script_error = true;
                 std::fprintf(stderr, "native reference: %s threw in %s: %s\n", script.c_str(),
                              path.c_str(), live.script_error().c_str());
-                return 1;
             }
         }
         print_lines();
-        return 0;
+        return had_script_error ? 1 : 0;
     }
 
     // The program outlives the context - vm.hpp's rule, since closures hold
