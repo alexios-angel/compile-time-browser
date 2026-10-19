@@ -48,8 +48,8 @@ bool hands_back_the_compiler(llvm::StringRef key);
 /// inherits from, and which keys it may write onto an object it did not
 /// create. Read once per module.
 struct prototype_writes {
-    /// Why a realm prototype table may be written; empty when no constant-key
-    /// path reaches one other than to read it.
+    /// Why a realm prototype table may be written; empty when no possible
+    /// prototype-table path reaches one other than for constant-key reads.
     std::string prototypes;
     /// Why a computed-key write or spread may write any key onto an object
     /// the program did not create; empty if none.
