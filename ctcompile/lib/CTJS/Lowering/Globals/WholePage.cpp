@@ -709,20 +709,59 @@ GetPropertyOp setReadOf(mlir::Value value, mlir::ModuleOp module, unsigned depth
     return {};
 }
 
-/// Whether `value` is the Reflect global, through registers and the globals
-/// stores write (`var R = Reflect` makes R the same object).
-bool isReflect(mlir::Value value, mlir::ModuleOp module, unsigned depth = 0) {
-    if (!value || depth == 8) { return false; }
+/// Whether `value` may be the Reflect global. A store aliases it (`var R =
+/// Reflect`), and so do a capture (`R` in a nested function) and a literal's
+/// field (`{R: Reflect}.R`); a capture load or a property read not proved to
+/// hold something else fails closed, the way the node rules treat a value
+/// they cannot follow.
+bool isReflect(mlir::Value value, mlir::ModuleOp module,
+               globals_detail::ClosureValues & closures, unsigned depth = 0) {
+    if (!value) { return false; }
+    if (depth == 8) { return true; }
     const mlir::Value origin = registerFlowOrigin(value);
-    auto load = origin ? origin.getDefiningOp<LoadGlobalOp>() : LoadGlobalOp{};
-    if (!load) { return false; }
-    if (load.getName() == "Reflect") { return true; }
-    bool found = false;
-    module.walk([&](StoreGlobalOp store) {
-        if (found || store.getName() != load.getName()) { return; }
-        found = isReflect(store.getValue(), module, depth + 1);
-    });
-    return found;
+    if (auto load = origin ? origin.getDefiningOp<LoadGlobalOp>() : LoadGlobalOp{}) {
+        if (load.getName() == "Reflect") { return true; }
+        bool found = false;
+        module.walk([&](StoreGlobalOp store) {
+            if (found || store.getName() != load.getName()) { return; }
+            found = isReflect(store.getValue(), module, closures, depth + 1);
+        });
+        return found;
+    }
+    if (auto read = origin ? origin.getDefiningOp<GetPropertyOp>() : GetPropertyOp{}) {
+        // A constant-key read off a literal made here resolves to the fields
+        // the literal defines. Any other property read may hold the builtin
+        // (`o.R = Reflect` writes it there) and fails closed.
+        const llvm::StringRef key = constantKey(read.getKey());
+        if (key.empty()) { return true; }
+        const auto leaves = closures.leafValuesOf(read.getObject());
+        if (!leaves.unknown.empty() || leaves.values.empty()) { return true; }
+        bool found = false;
+        for (mlir::Value leaf : leaves.values) {
+            if (!leaf.getDefiningOp<CreateObjectOp>()) { return true; }
+            module.walk([&](SetPropertyOp write) {
+                if (found || write.getObject() != leaf) { return; }
+                if (!constantString(write.getKey())) {
+                    found = true; // a computed write may set `key`
+                    return;
+                }
+                if (constantKey(write.getKey()) == key) {
+                    found = isReflect(write.getValue(), module, closures, depth + 1);
+                }
+            });
+        }
+        return found;
+    }
+    if (mlir::isa_and_present<CellGetOp, LoadUpvalueOp>(
+            origin ? origin.getDefiningOp() : nullptr)) {
+        // A capture load: the cell's stores are the values it can hold.
+        const auto leaves = closures.leafValuesOf(value);
+        if (!leaves.unknown.empty() || leaves.values.empty()) { return true; }
+        return llvm::any_of(leaves.values, [&](mlir::Value leaf) {
+            return isReflect(leaf, module, closures, depth + 1);
+        });
+    }
+    return false;
 }
 
 /// Why the value of `read` (a constant-key read off any object) or of `load` (a
@@ -1132,7 +1171,7 @@ void markRuntimeCode(mlir::ModuleOp module) {
             // global through registers and global stores.
             auto read = setReadOf(call.getCallee(), module, 0);
             const auto args = call.getArgs();
-            if (read && isReflect(read.getObject(), module) && args.size() >= 3) {
+            if (read && isReflect(read.getObject(), module, closures) && args.size() >= 3) {
                 if (std::string why = writeSink(module, args[0], args[1], args[2], closures);
                     !why.empty()) {
                     found.push_back({op, std::move(why)});
