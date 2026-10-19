@@ -9,12 +9,20 @@
 
 #pragma once
 
+#include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTNative/IR/CTNativeAttrNames.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "llvm/ADT/StringRef.h"
 
 namespace ctcompile::ctnative::lowering_detail {
+
+/// Whether `call` calls the engine helper `name`.
+bool callsIntrinsic(ctjs::CallOp call, llvm::StringRef name);
+
+/// The constructor closure a binding read names when every store into the
+/// binding stores that one closure, or null.
+ctjs::CreateClosureOp boundConstructor(mlir::Value read);
 
 /// On the constructor closure of a class that extends another and was left
 /// as it is: why, as a clause that completes "it extends another class: ...".

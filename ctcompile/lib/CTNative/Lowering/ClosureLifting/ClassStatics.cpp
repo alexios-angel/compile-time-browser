@@ -66,11 +66,6 @@
 namespace ctcompile::ctnative::lowering_detail {
 namespace {
 
-/// The number of JavaScript parameters `target`'s entry block takes.
-size_t parametersOf(ctjs::FuncOp target) {
-    return target.getBody().front().getNumArguments() - ctjs::implicit_arguments;
-}
-
 /// Erases `op` and then each constant or global load that only it used.
 void eraseWithFeeders(mlir::Operation * op) {
     for (mlir::Operation * user : llvm::make_early_inc_range(op->getUsers())) {
@@ -111,7 +106,7 @@ bool isGlobalObject(mlir::ModuleOp module, mlir::Value value, unsigned depth = 0
     auto fn = argument ? llvm::dyn_cast<ctjs::FuncOp>(argument.getOwner()->getParentOp())
                        : ctjs::FuncOp{};
     if (!fn || argument.getOwner() != &fn.getBody().front()) { return false; }
-    if (fn.getSymName() == "_script_$0") { return argument.getArgNumber() == ctjs::arg_receiver; }
+    if (isScriptEntry(fn)) { return argument.getArgNumber() == ctjs::arg_receiver; }
     if (argument.getArgNumber() < ctjs::implicit_arguments) { return false; }
     // Every caller is visible: the function is private, or each closure of
     // it is only the callee of direct calls of it.
@@ -269,7 +264,7 @@ bool closureLifter::bindClassStatics(liftReport & out) {
         auto holder = read->getParentOfType<ctjs::FuncOp>();
         // A function nothing creates or names cannot run (flattening's
         // erased subclass sources stay until the unreachable pass).
-        if (holder && holder.getSymName() != "_script_$0") {
+        if (holder && !isScriptEntry(holder)) {
             const auto index = ctjs::functionIndex(holder);
             bool made = false;
             module.walk([&](ctjs::CreateClosureOp c) {
@@ -840,7 +835,6 @@ bool closureLifter::bindClassStatics(liftReport & out) {
             }
             bool other = false;
             std::string misuse;
-            const llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> noFields;
             module.walk([&](mlir::Operation * op) {
                 if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(op);
                     store && store.getName() == global) {
@@ -864,7 +858,7 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                         return;
                     }
                     if (ctjs::constantKey(read.getKey()) != field) { continue; }
-                    if (!runsAfter(read, starts.front(), noFields)) {
+                    if (!runsAfter(read, starts.front())) {
                         misuse = ("is published as global `" + global + "`, which" + where(read) +
                                   " may read before it is written")
                                      .str();
@@ -987,11 +981,11 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                     auto own = call.getCallee().getDefiningOp<ctjs::CreateClosureOp>();
                     ctjs::FuncOp target = own ? targetOf(own) : ctjs::FuncOp{};
                     if (target && !target.getBody().empty() && madeBefore(own, call) &&
-                        call.getArgs().size() <= parametersOf(target)) {
+                        call.getArgs().size() <= ctjs::parameterCount(target.getBody().front())) {
                         mlir::OpBuilder at(call);
                         auto direct = directCall(at, call.getLoc(), target, call.getReceiver(), own,
                                                  undefinedAt(at, call.getLoc()), {}, call.getArgs(),
-                                                 parametersOf(target));
+                                                 ctjs::parameterCount(target.getBody().front()));
                         call.getResult().replaceAllUsesWith(direct.getResult());
                         converted.push_back({call, direct});
                         replacedCalls.insert(call);
@@ -1040,7 +1034,7 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                         }
                         continue;
                     }
-                    if (call.getArgs().size() > parametersOf(m.target)) {
+                    if (call.getArgs().size() > ctjs::parameterCount(m.target.getBody().front())) {
                         if (refuseAt(call, "a call passes its static method `" + field +
                                                "` more arguments than it takes" + where(call))) {
                             break;
@@ -1186,8 +1180,9 @@ bool closureLifter::bindClassStatics(liftReport & out) {
         for (staticCall & s : calls) {
             mlir::OpBuilder at(s.call);
             const mlir::Value undefined = undefinedAt(at, s.call.getLoc());
-            auto direct = directCall(at, s.call.getLoc(), s.target, undefined, undefined, undefined,
-                                     {}, s.call.getArgs(), parametersOf(s.target));
+            auto direct =
+                directCall(at, s.call.getLoc(), s.target, undefined, undefined, undefined, {},
+                           s.call.getArgs(), ctjs::parameterCount(s.target.getBody().front()));
             direct->setAttr(kNativeStaticMemberCall, mlir::UnitAttr::get(context));
             if (exported.contains(s.call.getReceiver())) {
                 direct->setAttr(kNativeExportClass, exportMark);
@@ -1199,8 +1194,9 @@ bool closureLifter::bindClassStatics(liftReport & out) {
         for (auto & [load, target] : getterReads) {
             mlir::OpBuilder at(load);
             const mlir::Value undefined = undefinedAt(at, load.getLoc());
-            auto direct = directCall(at, load.getLoc(), target, undefined, undefined, undefined, {},
-                                     mlir::ValueRange{}, parametersOf(target));
+            auto direct =
+                directCall(at, load.getLoc(), target, undefined, undefined, undefined, {},
+                           mlir::ValueRange{}, ctjs::parameterCount(target.getBody().front()));
             direct->setAttr(kNativeStaticMemberCall, mlir::UnitAttr::get(context));
             if (exported.contains(load.getObject())) {
                 direct->setAttr(kNativeExportClass, exportMark);

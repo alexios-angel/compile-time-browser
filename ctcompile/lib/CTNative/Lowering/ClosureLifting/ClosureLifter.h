@@ -741,9 +741,6 @@ struct closureLifter {
         /// The `prototype` attachment and each member definition, which the
         /// constructor and method rules consume as they do an ES5 prototype.
         llvm::SmallPtrSet<mlir::Operation *, 16> definitions;
-        llvm::SmallVector<ctjs::CellSetOp> bindings;
-        /// Uses of the constructor that are not setup (`new`, static reads).
-        llvm::SmallVector<mlir::OpOperand *> uses;
         std::string reason; ///< Why the class is not proved; empty if it is.
     };
     /// Keyed by the constructor's ctjs.create_closure.
@@ -752,8 +749,6 @@ struct closureLifter {
     static bool isHomeEdge(mlir::Operation * op);
 
     void classCensus();
-
-    ctjs::CreateClosureOp classMethod(const jsClass & cls, llvm::StringRef name);
 
     void eraseClassSetup(jsClass & cls);
 
@@ -821,7 +816,8 @@ struct closureLifter {
     void indexStarters();
     bool runsAfter(
         mlir::Operation * op, mlir::Operation * write,
-        const llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> & startedBy);
+        const llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> & startedBy =
+            llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>>{});
 
     /// Turns reads of a class's static members into direct calls and erases
     /// their definitions (ClassStatics.cpp). Returns whether it changed the
