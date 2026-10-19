@@ -1,8 +1,8 @@
 """Check appended classic-script boundaries through the real page reference."""
 
 import argparse
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 
 def main():
@@ -123,8 +123,10 @@ def main():
             "payload-listener-control",
             [
                 payload_setup,
-                "var t = new EventTarget(); t.addEventListener('go', function() { throw token; });"
-                "t.dispatchEvent(new Event('go')); console.log(seen.join(','), fifth.join(','));",
+                (
+                    "var t = new EventTarget(); t.addEventListener('go', function() { throw token; });"
+                    "t.dispatchEvent(new Event('go')); console.log(seen.join(','), fifth.join(','));"
+                ),
             ],
             [],
             "token true\n",
@@ -171,10 +173,12 @@ def main():
             "payload-inserted",
             [
                 payload_setup,
-                "var at = ''; window.onerror = function() { at = document.currentScript.id; };"
-                "var s = document.createElement('script'); s.id = 'inserted';"
-                "s.textContent = 'throw token;'; document.body.appendChild(s);"
-                "console.log(seen.join(','), at, document.currentScript.id);",
+                (
+                    "var at = ''; window.onerror = function() { at = document.currentScript.id; };"
+                    "var s = document.createElement('script'); s.id = 'inserted';"
+                    "s.textContent = 'throw token;'; document.body.appendChild(s);"
+                    "console.log(seen.join(','), at, document.currentScript.id);"
+                ),
             ],
             [],
             "token inserted s1\n",
@@ -184,10 +188,12 @@ def main():
             "payload-inserted-syntax",
             [
                 payload_setup,
-                "var at = ''; window.onerror = function() { at = document.currentScript.id; };"
-                "var s = document.createElement('script'); s.id = 'inserted';"
-                "s.textContent = 'let broken = ;'; document.body.appendChild(s);"
-                "console.log(seen.join(','), at, document.currentScript.id);",
+                (
+                    "var at = ''; window.onerror = function() { at = document.currentScript.id; };"
+                    "var s = document.createElement('script'); s.id = 'inserted';"
+                    "s.textContent = 'let broken = ;'; document.body.appendChild(s);"
+                    "console.log(seen.join(','), at, document.currentScript.id);"
+                ),
             ],
             [],
             "syntax inserted s1\n",
@@ -210,8 +216,10 @@ def main():
             [
                 "globalThis.pending = 42;",
                 "throw 0; let pending = 1;",
-                "try { console.log(typeof pending); } catch(e) { console.log(e.name); }"
-                "console.log(globalThis.pending);",
+                (
+                    "try { console.log(typeof pending); } catch(e) { console.log(e.name); }"
+                    "console.log(globalThis.pending);"
+                ),
             ],
             [],
             "ReferenceError\n42\n",
@@ -221,9 +229,11 @@ def main():
             "tdz-named-element",
             [
                 "throw 0; let pending = 1;",
-                "var el = document.createElement('div'); el.id = 'pending'; document.body.appendChild(el);"
-                "try { console.log(typeof pending); } catch(e) { console.log(e.name); }"
-                "console.log(window.pending === el);",
+                (
+                    "var el = document.createElement('div'); el.id = 'pending'; document.body.appendChild(el);"
+                    "try { console.log(typeof pending); } catch(e) { console.log(e.name); }"
+                    "console.log(window.pending === el);"
+                ),
             ],
             [],
             "ReferenceError\ntrue\n",
@@ -258,10 +268,14 @@ def main():
                 "tdz-" + kind,
                 [
                     "throw 0; " + declaration,
-                    "try { console.log(typeof pending); } catch(e) { console.log(e.name); }"
-                    "try { pending = 9; console.log('bad assignment'); } catch(e) { console.log(e.name); }",
-                    "try { console.log(typeof pending); } catch(e) { console.log(e.name); }"
-                    "console.log(typeof neverDeclared);",
+                    (
+                        "try { console.log(typeof pending); } catch(e) { console.log(e.name); }"
+                        "try { pending = 9; console.log('bad assignment'); } catch(e) { console.log(e.name); }"
+                    ),
+                    (
+                        "try { console.log(typeof pending); } catch(e) { console.log(e.name); }"
+                        "console.log(typeof neverDeclared);"
+                    ),
                 ],
                 [],
                 "ReferenceError\nReferenceError\nReferenceError\nundefined\n",
