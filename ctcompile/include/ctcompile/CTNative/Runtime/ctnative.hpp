@@ -37,7 +37,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#pragma once
+#ifndef CTCOMPILE_CTNATIVE_RUNTIME_HPP
+#define CTCOMPILE_CTNATIVE_RUNTIME_HPP
 
 #include "ctcompile/CTNative/Runtime/Error.hpp"
 #include "ctcompile/CTNative/Runtime/Math.hpp"
@@ -1919,3 +1920,5 @@ template <> struct map_key_less<ctbrowser::element_ref> {
 
 // Needs the carriers above, so it comes last.
 #include "ctcompile/CTNative/Runtime/Narrowing.hpp"
+
+#endif // CTCOMPILE_CTNATIVE_RUNTIME_HPP

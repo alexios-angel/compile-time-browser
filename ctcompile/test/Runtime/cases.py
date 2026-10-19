@@ -20,7 +20,11 @@ CASES = {
         "%t/number | FileCheck %s --check-prefix=NUMBER --match-full-lines",
         "not %gxx --core-free -O1 -DMUTATE_CORE_LINK %t/number.cpp -o %t/number-mutated 2>&1 | FileCheck %s --check-prefix=LINK",
         "%clangxx --core-free -c %t/number.cpp -o %t/number.o",
-        "python3 %S/native_link_checks.py --build %build",
+        "python3 %S/native_link_checks.py --build %build --inline-runtime %t/main.cpp --output %t/inlined.cpp",
+        "%gxx --core-free -O1 %t/inlined.cpp -o %t/inlined-gcc",
+        "%clangxx --core-free -O1 %t/inlined.cpp -o %t/inlined-clang",
+        "%t/inlined-gcc | FileCheck %s --check-prefix=OUTPUT --match-full-lines",
+        "%t/inlined-clang | FileCheck %s --check-prefix=OUTPUT --match-full-lines",
     ],
 }
 

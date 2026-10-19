@@ -12,7 +12,11 @@
 # RUN: %t/number | FileCheck %s --check-prefix=NUMBER --match-full-lines
 # RUN: not %gxx --core-free -O1 -DMUTATE_CORE_LINK %t/number.cpp -o %t/number-mutated 2>&1 | FileCheck %s --check-prefix=LINK
 # RUN: %clangxx --core-free -c %t/number.cpp -o %t/number.o
-# RUN: python3 %S/native_link_checks.py --build %build
+# RUN: python3 %S/native_link_checks.py --build %build --inline-runtime %t/main.cpp --output %t/inlined.cpp
+# RUN: %gxx --core-free -O1 %t/inlined.cpp -o %t/inlined-gcc
+# RUN: %clangxx --core-free -O1 %t/inlined.cpp -o %t/inlined-clang
+# RUN: %t/inlined-gcc | FileCheck %s --check-prefix=OUTPUT --match-full-lines
+# RUN: %t/inlined-clang | FileCheck %s --check-prefix=OUTPUT --match-full-lines
 # SYMBOLS: main
 # NUMBER: 1e-7
 # LINK: undefined reference to {{.*}}number_to_string

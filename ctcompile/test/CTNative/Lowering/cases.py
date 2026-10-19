@@ -2459,9 +2459,9 @@ CASES = {
         "%compilation_unit --core-free --prebuilt %t/clang --module %t/unused.mlir --js %t/values.js --work %t --name symbol_api_clang",
         "%gxx --core-free -O2 -DSYMBOL_MUTATE_ALIAS %t/main.cpp %t/other.cpp -o %t/mutated",
         "not %compilation_unit --core-free --prebuilt %t/mutated --module %t/unused.mlir --js %t/values.js --work %t --name symbol_api_mutated 2>&1 | FileCheck %s --check-prefix=MUTATED",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/read.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=\"optimize=false\" | FileCheck %s --check-prefix=READ",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/type.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=\"optimize=false\" | FileCheck %s --check-prefix=TYPE",
-        "ctjs-translate --ctbrowser-js-to-ctjs %t/hook.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=\"optimize=false\" | FileCheck %s --check-prefix=HOOK",
+        'ctjs-translate --ctbrowser-js-to-ctjs %t/read.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=READ',
+        'ctjs-translate --ctbrowser-js-to-ctjs %t/type.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=TYPE',
+        'ctjs-translate --ctbrowser-js-to-ctjs %t/hook.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=HOOK',
     ],
     "Scalars/unary-plus": [
         "ctjs-opt %s --ctnative-lower-to-emitc=optimize=false | FileCheck %s",
