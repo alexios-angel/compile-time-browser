@@ -60,6 +60,11 @@ mlir::Value callValue(mlir::OpBuilder & builder, mlir::Location where, mlir::Typ
 mlir::Value memberCall(mlir::OpBuilder & builder, mlir::Location where, mlir::Type result,
                        mlir::Value receiver, const llvm::Twine & name,
                        mlir::ValueRange operands = {});
+/// The same where `receiver` may be a variable or other lvalue: the call is
+/// emitted inside an expression, so it names the variable rather than a copy.
+mlir::Value methodCall(mlir::OpBuilder & builder, mlir::Location where, mlir::Type result,
+                       mlir::Value receiver, const llvm::Twine & name,
+                       mlir::ValueRange operands = {});
 
 /// The CTNative-to-EmitC lowering of one module. Censuses run first, while the
 /// IR is still ctjs, and fill the tables below; lower() then rewrites each

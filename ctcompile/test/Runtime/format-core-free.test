@@ -1,0 +1,57 @@
+# Statically nonnumeric formatters stay Core-free, including both Boolean
+# union carriers. Keep every runtime tag live rather than relying on inlining
+# to remove an unreachable Number arm.
+# RUN: split-file %s %t
+# RUN: %gxx --core-free -O1 %t/main.cpp -o %t/gcc
+# RUN: %clangxx --core-free -O1 %t/main.cpp -o %t/clang
+# RUN: %nm -C %t/gcc | FileCheck %s --check-prefix=SYMBOLS --implicit-check-not=ctbrowser::number_to_string --implicit-check-not=ctbrowser::script:: --implicit-check-not=ctbrowser::aot::
+# RUN: %nm -C %t/clang | FileCheck %s --check-prefix=SYMBOLS --implicit-check-not=ctbrowser::number_to_string --implicit-check-not=ctbrowser::script:: --implicit-check-not=ctbrowser::aot::
+# RUN: %t/gcc | FileCheck %s --check-prefix=OUTPUT --match-full-lines
+# RUN: %t/clang | FileCheck %s --check-prefix=OUTPUT --match-full-lines
+# RUN: %gxx --core-free -O1 %t/number.cpp -o %t/number
+# RUN: %t/number | FileCheck %s --check-prefix=NUMBER --match-full-lines
+# RUN: not %gxx --core-free -O1 -DMUTATE_CORE_LINK %t/number.cpp -o %t/number-mutated 2>&1 | FileCheck %s --check-prefix=LINK
+# RUN: %clangxx --core-free -c %t/number.cpp -o %t/number.o
+# RUN: python3 %S/native_link_checks.py --build %build --inline-runtime %t/main.cpp --output %t/inlined.cpp
+# RUN: %gxx --core-free -O1 %t/inlined.cpp -o %t/inlined-gcc
+# RUN: %clangxx --core-free -O1 %t/inlined.cpp -o %t/inlined-clang
+# RUN: %t/inlined-gcc | FileCheck %s --check-prefix=OUTPUT --match-full-lines
+# RUN: %t/inlined-clang | FileCheck %s --check-prefix=OUTPUT --match-full-lines
+# SYMBOLS: main
+# NUMBER: 1e-7
+# LINK: undefined reference to {{.*}}number_to_string
+# OUTPUT: text true undefined null
+# OUTPUT-NEXT: boolean=true
+# OUTPUT-NEXT: string="text"
+# OUTPUT-NEXT: missing=undefined
+# OUTPUT-NEXT: absent=null
+# OUTPUT-NEXT: true text undefined null
+# OUTPUT-NOT: {{.}}
+
+#--- main.cpp
+#include <ctcompile/CTNative/Runtime/Format.hpp>
+
+int main(int argc, char **) {
+    using namespace ctnative;
+    println("{} {} {} {}", js_string{"text"}, js_boolean_t{argc != 0}, undefined_t{}, js_null_t{});
+    const boolean_string boolean{js_boolean_t{argc != 0}};
+    const boolean_string string{js_string{"text"}};
+    const nullable_boolean_string missing{undefined_t{}};
+    const nullable_boolean_string absent{js_null_t{}};
+    print_boolean_string("boolean", boolean);
+    print_boolean_string("string", string);
+    print_nullable_boolean_string("missing", missing);
+    print_nullable_boolean_string("absent", absent);
+    println("{} {} {} {}", boolean, string, missing, absent);
+}
+
+#--- number.cpp
+#include <ctcompile/CTNative/Runtime/Format.hpp>
+
+int main() {
+#ifdef MUTATE_CORE_LINK
+    ctnative::print_number("number", ctnative::js_num{1e-7});
+#else
+    ctnative::println("{}", ctnative::js_string{"1e-7"});
+#endif
+}

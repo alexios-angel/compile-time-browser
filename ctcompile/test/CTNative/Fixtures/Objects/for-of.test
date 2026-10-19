@@ -15,7 +15,7 @@
 # RUN: not %compilation_unit --module %t/for-of.emitc.mlir --js %S/for-of.js --work %t --name for_of_negative --core-build %build --mutate e --mutate-as string 2>&1 | FileCheck %s --check-prefix=NEGATIVE
 # RUN: %compile_clean --module %t/for-of.emitc.mlir --work %t --name for_of
 
-# CHECK-DAG: ctnative::String.prototype.split.call(
+# CHECK-DAG: .split(
 # CHECK-DAG: ctnative::Array.prototype.map.call(
 # CHECK-NOT: __ctbrowser
 # NEGATIVE: global 'e' differs

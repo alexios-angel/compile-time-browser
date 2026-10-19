@@ -91,6 +91,15 @@ struct reg_exp_constructor {
     reg_exp operator()(std::string_view source, std::string_view flags = {}) const {
         return reg_exp{source, flags};
     }
+    /// Literal bounds retain embedded NULs and exclude only the terminators.
+    template <std::size_t N>
+    reg_exp operator()(const char (&source)[N], std::string_view flags = {}) const {
+        return (*this)(std::string_view{source, N - 1}, flags);
+    }
+    template <std::size_t N, std::size_t M>
+    reg_exp operator()(const char (&source)[N], const char (&flags)[M]) const {
+        return (*this)(std::string_view{source, N - 1}, std::string_view{flags, M - 1});
+    }
 };
 inline constexpr reg_exp_constructor RegExp{};
 

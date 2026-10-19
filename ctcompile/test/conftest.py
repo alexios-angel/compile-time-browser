@@ -172,9 +172,12 @@ def first_found(*candidates):
 
 
 @pytest.fixture(scope="session")
-def lit_site(pytestconfig):
+def lit_site(pytestconfig, request):
     """lit.cfg.py's substitutions and tool paths for the configured build tree."""
     c = read_site(pytestconfig.getoption("ctcompile_build") / "ctcompile/test/lit.site.cfg.py")
+    environment = pytest.MonkeyPatch()
+    environment.setenv("CTCOMPILE_BUILD", c.build_root)
+    request.addfinalizer(environment.undo)
     exec_root = os.path.join(c.ctcompile_obj_root, "test")
     # %{obj} as lit.cfg.py sets it: the native fixture modules' directory, or,
     # while fixture-inputs.stamp is missing or older than ctjs-opt or
@@ -193,7 +196,7 @@ def lit_site(pytestconfig):
     substitutions = {
         "%compilation_unit": f"python3 {checks}/compilation-unit.py --translate ctjs-translate"
         f" --cxx {c.host_cxx} --nm {c.nm} --reference {c.native_reference}"
-        " --vm-linked ctcompile-test-type-oracle",
+        " --vm-linked ctcompile-test-type-oracle --core-build %build",
         "%compile_clean": f"python3 {checks}/compile-clean.py --translate ctjs-translate"
         f" --compilers {c.clean_compilers}",
         "%print_deduced": f"python3 {checks}/print-deduced.py --translate ctjs-translate"
@@ -215,6 +218,9 @@ def lit_site(pytestconfig):
         "%build": c.build_root,
         "%python": sys.executable,
     }
+    native_link = f"python3 {HERE}/native_link.py --build {c.build_root} -- "
+    for name in ("%gxx", "%clangxx", "%cxx_exe"):
+        substitutions[name] = native_link + substitutions[name]
     test_executables = (
         "type-oracle type-claims escape-claims escape-oracle-aot escape-oracle-aot-return "
         "launcher-vm launcher-aot launcher-page-vm launcher-page-aot native-vm-linked "

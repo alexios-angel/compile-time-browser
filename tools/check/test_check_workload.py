@@ -10,6 +10,7 @@ from pathlib import Path
 import tempfile
 import time
 import types
+from unittest import mock
 
 from selftest import load
 
@@ -432,6 +433,63 @@ def test_throwing_library_reference_cannot_report_done():
         assert ctx.results[0]["status"] == "FAIL", ctx.results
         assert "VM reference failed probing" in ctx.results[0]["summary"], ctx.results
         assert "library threw" in ctx.results[0]["details"], ctx.results
+
+
+def test_native_build_links_core_and_still_rejects_vm():
+    with tempfile.TemporaryDirectory() as folder:
+        root = Path(folder)
+        core = root / "lib/Core/libctbrowser-core.a"
+        core.parent.mkdir(parents=True)
+        core.touch()
+        simdutf = root / "libsimdutf.a"
+        simdutf.touch()
+        (root / "CMakeCache.txt").write_text(
+            f"CTBROWSER_SIMDUTF:FILEPATH={simdutf}\nCTBROWSER_USE_MIMALLOC:BOOL=OFF\n"
+        )
+        cpp = root / "number.cpp"
+        cpp.write_text("int main() { return 0; }\n")
+        config = {
+            "name": "native-core",
+            "stages": ["emit-cpp", "build-native", "no-vm-gate"],
+            "timeouts": {"command": 5, "item": 10, "total": 60},
+        }
+        ctx = workload.Context(config, root, time.monotonic() + 60, root)
+        item = "script:number.js"
+        ctx.scripts[item] = {"path": root / "number.js"}
+        ctx.artifacts[item] = {"cpp": cpp}
+        ctx.add("emit-cpp", item, "PASS", "emitted")
+        commands = []
+        vm_linked = False
+
+        def run(command, name, current):
+            assert current == item
+            commands.append(list(map(str, command)))
+            if name == "no-vm-gate":
+                symbols = "00000000 T main\n00000001 T ctbrowser::number_to_string(double)\n"
+                if vm_linked:
+                    symbols += "00000002 T ctbrowser::script::execute()\n"
+                return 0, symbols
+            if str(core) not in map(str, command):
+                return 1, "undefined reference to ctbrowser::number_to_string(double)"
+            return 0, ""
+
+        ctx.run = run
+        cpp_harness = workload.harness("Target.Cpp.harness")
+        with mock.patch.object(
+            cpp_harness, "find_compilers", return_value=["g++-13", "clang++-18"]
+        ):
+            workload.build_native(ctx, "build-native")
+        assert ctx.results[-1]["status"] == "PASS", ctx.results
+        assert [command[0] for command in commands] == ["g++-13", "clang++-18"]
+        assert all(command.index(str(core)) > command.index(str(cpp)) for command in commands)
+        with mock.patch.object(workload.shutil, "which", return_value="nm"):
+            workload.no_vm_gate(ctx, "no-vm-gate")
+            assert ctx.results[-1]["status"] == "PASS", ctx.results
+            ctx.results.pop()
+            vm_linked = True
+            workload.no_vm_gate(ctx, "no-vm-gate")
+        assert ctx.results[-1]["status"] == "FAIL", ctx.results
+        assert any("ctbrowser::script::execute" in line for line in ctx.results[-1]["details"])
 
 
 def test_missing_capability_is_first_gap():

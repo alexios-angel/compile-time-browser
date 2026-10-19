@@ -445,14 +445,12 @@ def check_numeric_entry_calls(cpp, name, mode):
     source_entry = source.rsplit("});\n", 1)[1]
     expressions = re.sub(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'', "", source_entry)
     expected_ops = re.findall(r"\*\*|[+*/%-]", expressions)
-    cpp_ops = re.findall(r"= [^;\n]+? ([+*/-]) [^;\n]+;", entry[1])
-    for symbol in ("+", "-", "*", "/"):
+    cpp_ops = re.findall(r"= [^;\n]+? ([+*/%-]) [^;\n]+;", entry[1])
+    for symbol in ("+", "-", "*", "/", "%"):
         if cpp_ops.count(symbol) < expected_ops.count(symbol):
             raise RuntimeError(f"{name}/{mode}: erased a source numeric {symbol} operand")
-    if entry[1].count("std::fmod(") < expected_ops.count("%") or entry[1].count(
-        "std::pow("
-    ) < expected_ops.count("**"):
-        raise RuntimeError(f"{name}/{mode}: erased evaluated remainder or power operands")
+    if entry[1].count("std::pow(") < expected_ops.count("**"):
+        raise RuntimeError(f"{name}/{mode}: erased evaluated power operands")
 
 
 def numeric_entry_observer_source(source, name):

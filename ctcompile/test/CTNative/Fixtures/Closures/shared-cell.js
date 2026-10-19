@@ -49,13 +49,14 @@
 //
 // NaN stands in for undefined correctly in arithmetic, ordering and
 // truthiness; `defined()` refuses equality, where the two differ. It is wrong
-// when a value is printed: a global prints a Number with `%.17g`, so
-// undefined-as-NaN would print `nan` where the interpreter prints `undefined`.
+// when a value is printed: a global prints a Number with Number::toString,
+// so undefined-as-NaN would print `NaN` where the interpreter prints
+// `undefined`.
 //
 // So `ctjs.store_global` refuses a value whose type may be undefined (an `opt`
 // type, checked by `admission::printable`). Without that,
 // `function pick(k) { var v; if (k > 0) { v = 5; } function get() { return v;
-// } return get(); } var out = pick(-1);` would print `out=nan`. The same leak
+// } return get(); } var out = pick(-1);` would print `out=NaN`. The same leak
 // exists with no closure at all (`var u; var z = u;`).
 // CTNative/Lowering/Admission/global-undefined.mlir tests both programs and
 // the OUTERSTORE shape; its DOMINATES program shows the type narrowing that
@@ -299,7 +300,7 @@ function loop_after(n) {
 // straight out of its frame. The variable is emitted holding the box's hoisted
 // `undefined`, so a flow-insensitive type for the binding would be `opt<num>`
 // ("may be undefined") even at a read that a write dominates. A global prints
-// `%.17g` of the double, which cannot spell `undefined`, so
+// its Number::toString, which cannot spell `undefined`, so
 // `admission::printable` refuses an `opt` there and these three would be
 // refused; a `+ 0` would force a `num`.
 //

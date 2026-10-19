@@ -186,6 +186,7 @@ inline constexpr llvm::StringLiteral kNativePinned = "ctnative.pinned";
 inline constexpr llvm::StringLiteral kNativeConstBindings = "ctnative.const_bindings";
 inline constexpr llvm::StringLiteral kNativeReadableLiterals = "ctnative.readable_literals";
 inline constexpr llvm::StringLiteral kNativeNumericAlias = "ctnative.numeric_alias";
+inline constexpr llvm::StringLiteral kNativeNamedCasts = "ctnative.named_casts";
 inline constexpr llvm::StringLiteral kNativeParameterSuppression = "ctnative.parameter_suppression";
 inline constexpr llvm::StringLiteral kNativeConstOperands = "ctnative.const_operands";
 inline constexpr llvm::StringLiteral kNativeTemplateParams = "ctnative.template_params";

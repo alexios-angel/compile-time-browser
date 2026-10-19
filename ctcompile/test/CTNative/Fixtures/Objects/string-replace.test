@@ -27,4 +27,4 @@
 # CHECK-DAG: ctnative::RegExp("[A-Z]", "g")
 # CHECK-DAG: ctnative::RegExp("o", "")
 # CHECK-DAG: std::bind_front(
-# CHECK-DAG: ctnative::String.prototype.toLowerCase.call(
+# CHECK-DAG: .toLowerCase()

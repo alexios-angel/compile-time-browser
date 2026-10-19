@@ -3,13 +3,55 @@
 // lowering::replaceStringValue: lowers ctjs operations on native String
 // carriers (`length`, `text[i]`, concatenation, `typeof` of String unions, and loose or
 // strict equality involving a String) to EmitC calls of ctnative runtime
-// helpers.
+// helpers. A template literal, `a${x}b`, is one
+// `ctnative::format("a{}b", x)` (Runtime/Format.hpp).
 //
 //===----------------------------------------------------------------------===//
 
 #include "../EmitC/Emitter.h"
 
+#include "ctcompile/Support/CppLiterals.hpp"
+#include "llvm/ADT/SetVector.h"
+
 namespace ctcompile::ctnative::lowering_detail {
+
+namespace {
+/// On a ctnative::format call a template literal made, its format text, so
+/// the literal's next piece extends the call instead of starting another.
+constexpr llvm::StringLiteral kTemplateText = "ctnative.template_text";
+constexpr llvm::StringLiteral kTemplateConcatenation = "ctnative.template_concatenation";
+
+/// Appends one piece of a template literal to `text` and `arguments`: a String
+/// constant's bytes, with braces doubled for std::format, or `{}` and a value
+/// whose carrier the formatter prints as ToString. Embedded NULs keep `+`.
+bool appendTemplatePiece(mlir::Value piece, std::string & text,
+                         llvm::SmallVectorImpl<mlir::Value> & arguments) {
+    if (auto constant = piece.getDefiningOp<ec::ConstantOp>()) {
+        auto initializer = llvm::dyn_cast<ec::OpaqueAttr>(constant.getValue());
+        llvm::StringRef spelled = initializer ? initializer.getValue() : llvm::StringRef{};
+        // stringConstant's spelling: `ctnative::js_string(<literal>, <size>)`.
+        if (!spelled.consume_front("ctnative::js_string(") || !spelled.consume_back(")")) {
+            return false;
+        }
+        spelled = spelled.rsplit(", ").first;
+        std::string bytes;
+        if (!cpp::parse_c_string_literal(spelled, bytes) || bytes.find('\0') != std::string::npos) {
+            return false;
+        }
+        for (const char c : bytes) {
+            text += c;
+            if (c == '{' || c == '}') { text += c; }
+        }
+        return true;
+    }
+    if (isFormattableCarrier(piece.getType())) {
+        text += "{}";
+        arguments.push_back(piece);
+        return true;
+    }
+    return false;
+}
+} // namespace
 
 bool lowering::replaceStringValue(mlir::Operation * op) {
     mlir::OpBuilder b(op);
@@ -34,14 +76,11 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
         read && read.getObject().getType() == string) {
         // Admission proved the key is `length` before key constants were
-        // lowered. `length` counts UTF-16 code units over the stored WTF-8
-        // bytes, not bytes (divergence ND-1 in ctcompile/docs/native-divergences.md).
-        auto size = callValue(b, where, ec::OpaqueType::get(context, "std::size_t"),
-                              "ctnative::string_length",
-                              convertScalar(b, where, read.getObject(),
-                                            ec::OpaqueType::get(context, kRawStringType)));
-        auto count = ec::CastOp::create(b, where, b.getF64Type(), size);
-        swap(convertScalar(b, where, count, carrierType(context, carrier::number)));
+        // lowered. js_string's length() counts UTF-16 code units over the
+        // stored WTF-8 bytes, not bytes (divergence ND-1 in
+        // ctcompile/docs/native-divergences.md).
+        swap(methodCall(b, where, carrierType(context, carrier::number),
+                        convertScalar(b, where, read.getObject(), string), "length"));
         return true;
     }
     if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(op);
@@ -49,6 +88,64 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
         (binary.getKind() == ctjs::BinaryKind::Add ||
          binary.getKind() == ctjs::BinaryKind::Concat) &&
         binary.getResult().getType() == string) {
+        // A template literal's concatenations become one ctnative::format call:
+        // the first makes it, each later one extends the call its left side
+        // is, and a piece the formatter cannot print keeps `+`.
+        if (binary.getKind() == ctjs::BinaryKind::Concat) {
+            // Check the pending tail before fusing a prefix: a later NUL must
+            // keep the whole chain length-aware, not just its final addition.
+            llvm::SetVector<ctjs::BinaryOp> chain;
+            chain.insert(binary);
+            bool concatenate = binary->hasAttr(kTemplateConcatenation);
+            for (std::size_t index = 0; index < chain.size(); ++index) {
+                auto part = chain[index];
+                for (mlir::Value operand : part.getOperands()) {
+                    if (auto literal = ctjs::constantAttr<ctjs::StringAttr>(operand)) {
+                        concatenate |= literal.getValue().contains('\0');
+                    } else if (operand.getType() == string &&
+                               operand.getDefiningOp<ec::ConstantOp>()) {
+                        std::string literal;
+                        llvm::SmallVector<mlir::Value> unused;
+                        concatenate |= !appendTemplatePiece(operand, literal, unused);
+                    }
+                    if (auto producer = operand.getDefiningOp<ctjs::BinaryOp>();
+                        producer && producer.getKind() == ctjs::BinaryKind::Concat) {
+                        chain.insert(producer);
+                    }
+                }
+                for (mlir::Operation * user : part.getResult().getUsers()) {
+                    if (auto next = llvm::dyn_cast<ctjs::BinaryOp>(user);
+                        next && next.getKind() == ctjs::BinaryKind::Concat) {
+                        chain.insert(next);
+                    }
+                }
+            }
+            if (concatenate) {
+                for (auto part : chain) { part->setAttr(kTemplateConcatenation, b.getUnitAttr()); }
+            }
+            std::string text;
+            llvm::SmallVector<mlir::Value> arguments;
+            auto previous = binary.getLhs().getDefiningOp<ec::CallOpaqueOp>();
+            const bool extends =
+                previous && previous->hasAttr(kTemplateText) && binary.getLhs().hasOneUse();
+            if (extends) {
+                text = previous->getAttrOfType<mlir::StringAttr>(kTemplateText).getValue();
+                llvm::append_range(arguments, previous.getOperands().drop_front());
+            }
+            if (!concatenate &&
+                (extends || appendTemplatePiece(binary.getLhs(), text, arguments)) &&
+                appendTemplatePiece(binary.getRhs(), text, arguments) && !arguments.empty()) {
+                llvm::SmallVector<mlir::Value> operands{ec::LiteralOp::create(
+                    b, where, ec::PointerType::get(ec::OpaqueType::get(context, "const char")),
+                    cpp::c_string_literal(text))};
+                operands.append(arguments);
+                mlir::Value formatted = callValue(b, where, string, "ctnative::format", operands);
+                formatted.getDefiningOp()->setAttr(kTemplateText, b.getStringAttr(text));
+                swap(formatted);
+                if (extends) { eraseIfUnused(previous); }
+                return true;
+            }
+        }
         const auto operand = [&](mlir::Value value) {
             // A definite Number or Boolean selects its typed `+` overload. Any
             // other operand (a tagged or optional String) is converted to a
@@ -104,11 +201,19 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
     if (compare.getLhs().getType() == string && compare.getRhs().getType() == string) {
         return false;
     }
+    // The same optional or union carrier compares its tags and values directly.
+    if (compare.getKind() == ctjs::CompareKind::StrictEq &&
+        compare.getLhs().getType() == compare.getRhs().getType()) {
+        auto same = ec::CmpOp::create(b, where, b.getI1Type(), ec::CmpPredicate::eq,
+                                      compare.getLhs(), compare.getRhs());
+        swap(convertScalar(b, where, same, op->getResult(0).getType()));
+        return true;
+    }
     const auto helper = compare.getKind() == ctjs::CompareKind::Eq
-                            ? "ctnative::primitive_equal"
+                            ? "ctnative::loose_equals"
                             : "ctnative::primitive_strict_equal";
     auto value = callValue(b, where, carrierType(context, carrier::boolean), helper,
-                          mlir::ValueRange{compare.getLhs(), compare.getRhs()});
+                           mlir::ValueRange{compare.getLhs(), compare.getRhs()});
     swap(convertScalar(b, where, value, op->getResult(0).getType()));
     return true;
 }

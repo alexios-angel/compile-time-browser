@@ -34,11 +34,11 @@
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/broad-union.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false observe-globals=true" | FileCheck %s --check-prefix=REFUSED
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ordering.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false observe-globals=true" | FileCheck %s --check-prefix=REFUSED
 
-# RUNTIME-DAG: call_opaque "ctnative::primitive_equal"
+# RUNTIME-DAG: call_opaque "ctnative::loose_equals"
 # RUNTIME-DAG: call_opaque "ctnative::primitive_strict_equal"
 # RUNTIME-DAG: !emitc.opaque<"ctnative::nullable_number_string">
 # RUNTIME-DAG: !emitc.opaque<"ctnative::nullable_boolean_string">
-# CPP-DAG: ctnative::primitive_equal(
+# CPP-DAG: ctnative::loose_equals(
 # CPP-DAG: ctnative::primitive_strict_equal(
 # NUMERIC-MUTATION: global 'zLoose' differs
 # STRICT-MUTATION: global 'zStrict' differs
