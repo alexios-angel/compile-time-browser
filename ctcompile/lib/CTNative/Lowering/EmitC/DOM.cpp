@@ -148,8 +148,7 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
     for (mlir::BlockArgument parameter : entry.parameters()) {
         if (parameter == domDocumentParameter || llvm::any_of(domCalls, [&](const auto & item) {
                 return item.second.usesStyle() &&
-                       (item.second.styleParameter == parameter ||
-                        llvm::is_contained(item.second.styleParameters, parameter));
+                       llvm::is_contained(item.second.styleParameters, parameter);
             })) {
             domStyleParameters.push_back(parameter);
         }
@@ -839,7 +838,9 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         }
         arguments.push_back(element);
         if (edge.usesStyle()) {
-            auto style = domStyles.lookup(edge.styleParameter);
+            auto style = edge.styleParameters.size() == 1
+                             ? domStyles.lookup(edge.styleParameters.front())
+                             : mlir::Value{};
             if (!style) {
                 auto pointer = domStylePointers.lookup(element);
                 assert(pointer && "proved mixed receiver must retain its Style pointer");

@@ -300,11 +300,9 @@ struct HostDOMCall {
     ctjs::FuncOp callback{};
     /// True when Function.prototype.call supplies the receiver as argument zero.
     bool explicitReceiver = false;
-    /// The single original document/style input, once the analysis has proved
-    /// how it reaches this call.
-    mlir::BlockArgument styleParameter{};
-    /// When several inputs can reach the call, each keeps its association
-    /// through the same SSA edges.
+    /// Every original document/style input that can reach this call, including
+    /// a singleton root. Multiple inputs keep their associations through the
+    /// same SSA edges.
     llvm::SmallVector<mlir::BlockArgument> styleParameters{};
     /// What this call produces. Every method is listed so a new one is
     /// a -Wswitch error instead of a silent Boolean.

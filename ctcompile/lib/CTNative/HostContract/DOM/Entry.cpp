@@ -344,10 +344,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             refusal = "DOM selector requires complete original Style associations";
             return;
         }
-        if (roots.size() == 1) {
-            call.styleParameter = roots.front();
-        } else {
-            call.styleParameters = std::move(roots);
+        call.styleParameters = std::move(roots);
+        if (call.styleParameters.size() > 1) {
             for (auto value : values) {
                 if (!spend()) { return; }
                 if (seenStyleValues.insert(value).second) { proved.styles.push_back(value); }
