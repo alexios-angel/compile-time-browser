@@ -792,6 +792,17 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals,
     }
     map_detail::snapshotCopies copies;
     std::string copied = map_detail::collectSnapshotCopies(module, calls, copies);
+    const auto provedOwnedLoad = [&](ctjs::LoadGlobalOp load) {
+        if (globals && globals->proved()) {
+            if (globals->lookup(load) || globals->objectGlobal(load) ||
+                globals->mutableScalarRead(load)) {
+                return true;
+            }
+            const auto * scalar = globals->scalarRead(load);
+            if (scalar && !mapScalarTag(scalar->alternatives).empty()) { return true; }
+        }
+        return false;
+    };
     // A read of a global the program itself binds keeps the whole-module
     // walk's condition below: OwnedGlobalRoots must prove the value it reads
     // (a scalar global written twice is refused there). A realm binding
@@ -811,14 +822,7 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals,
                  (ctjs::realmBinding(module, name) || name.starts_with("__ctbrowser_")))) {
                 return;
             }
-            if (globals && globals->proved()) {
-                if (globals->lookup(load) || globals->objectGlobal(load) ||
-                    globals->mutableScalarRead(load)) {
-                    return;
-                }
-                const auto * scalar = globals->scalarRead(load);
-                if (scalar && !mapScalarTag(scalar->alternatives).empty()) { return; }
-            }
+            if (provedOwnedLoad(load)) { return; }
             proved = calleeSlotOnly(load);
         });
         return proved;
@@ -860,13 +864,7 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals,
                 // Allowed only when OwnedGlobalRoots proved this load reads an
                 // owned global root or a global holding a proved Number or
                 // Boolean. Names and native attributes never authorize a read.
-                if (globals && globals->proved()) {
-                    if (globals->lookup(load)) { return; }
-                    if (globals->objectGlobal(load)) { return; }
-                    if (globals->mutableScalarRead(load)) { return; }
-                    const auto * scalar = globals->scalarRead(load);
-                    if (scalar && !mapScalarTag(scalar->alternatives).empty()) { return; }
-                }
+                if (provedOwnedLoad(load)) { return; }
                 if (!calleeSlotOnly(load)) {
                     reason = "standard Map identity is unproved with other host/global value reads";
                 }
