@@ -53,10 +53,7 @@ std::optional<std::string> constantString(mlir::Value value) {
 
 /// One past every index already in this module, including refused functions.
 unsigned nextIndex(mlir::ModuleOp module) {
-    unsigned next = 0;
-    module.walk([&](FuncOp function) {
-        if (auto index = functionIndex(function)) { next = std::max(next, *index + 1); }
-    });
+    unsigned next = nextFunctionIndex(module);
     if (auto skipped = module->getAttrOfType<mlir::ArrayAttr>("ctjs.skipped")) {
         for (mlir::Attribute row : skipped) {
             auto fields = mlir::dyn_cast<mlir::DictionaryAttr>(row);
@@ -267,11 +264,9 @@ unsigned splice(mlir::ModuleOp module) {
         ++count;
     }
     dropUnusedCompilerLoads(module);
-    llvm::SmallVector<ConstantOp> unused;
-    module.walk([&](ConstantOp constant) {
-        if (constant->use_empty()) { unused.push_back(constant); }
+    module.walk([](ConstantOp constant) {
+        if (constant->use_empty()) { constant.erase(); }
     });
-    for (ConstantOp constant : unused) { constant.erase(); }
     return count;
 }
 
