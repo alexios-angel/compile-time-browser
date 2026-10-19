@@ -1214,22 +1214,19 @@ template <class T> T map_payload_as(const boolean_or_string & value) {
 /// the call terminates otherwise. Returns by value so an owned string survives
 /// overwrite, deletion and the Map's lifetime.
 template <class T, class Map, class K> T map_get_present_as(const Map & map, const K & key) {
-    auto * storage = std::to_address(map);
-    return map_payload_as<T>(present_entry(storage, key));
+    return map_payload_as<T>(present_entry(map, key));
 }
 /// Like map_get_present_as for nullable payloads: the compiler supplies T only
 /// from a separate proof about this payload; the storage schema alone never
 /// selects a narrower alternative.
 template <class T, class Map, class K>
 T map_get_present_nullable_as(const Map & map, const K & key) {
-    auto * storage = std::to_address(map);
-    return map_nullable_payload_as<T>(present_entry(storage, key));
+    return map_nullable_payload_as<T>(present_entry(map, key));
 }
 
 template <class Map, class K>
 std::shared_ptr<identity_object> map_get_present_identity(const Map & map, const K & key) {
-    auto * storage = std::to_address(map);
-    const object_value & payload = present_entry(storage, key);
+    const object_value & payload = present_entry(map, key);
     // Both presence and the object result type were independently proved.
     if (!payload.object) { std::terminate(); }
     return payload.object;
