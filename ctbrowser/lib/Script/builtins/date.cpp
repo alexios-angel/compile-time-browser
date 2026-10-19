@@ -430,7 +430,7 @@ void install_date(context & cx) {
     // non-finite one, else Invoke(O, "toISOString").
     method(cx, date_proto, "toJSON", 1, [](context & c, std::span<value>) {
         const value self = c.current_this();
-        const value boxed = detail::box_primitive(c, self);
+        const value boxed = c.box_primitive(self);
         if (boxed.is_nullish()) {
             c.throw_error("TypeError", "Date.prototype.toJSON called on null or undefined");
             return value::undefined();

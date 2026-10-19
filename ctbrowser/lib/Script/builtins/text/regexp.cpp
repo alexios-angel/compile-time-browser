@@ -815,7 +815,7 @@ void install_regexp(context & cx) {
                 if (watch.threw()) { return value::undefined(); }
             } else {
                 if (!named_captures.is_undefined()) {
-                    named_captures = detail::box_primitive(c, named_captures);
+                    named_captures = c.box_primitive(named_captures);
                     if (named_captures.is_nullish()) {
                         c.throw_error("TypeError", "groups is null");
                         return value::undefined();

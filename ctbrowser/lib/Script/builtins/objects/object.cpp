@@ -400,7 +400,7 @@ void install_object(context & cx) {
         if (!object_coercible(c, self, "Object.prototype.valueOf")) { return value::undefined(); }
         // 20.1.3.7: ToObject(this value), so a primitive receiver answers its
         // wrapper - `typeof Object.prototype.valueOf.call(true)` is "object".
-        return detail::box_primitive(c, self);
+        return c.box_primitive(self);
     });
     // 20.1.3.5: Invoke(O, "toString"), not a second copy of the tag logic. A
     // receiver that overrides `toString` must be seen through this too, which
@@ -548,7 +548,7 @@ void install_object(context & cx) {
     auto * object_ctor = cx.allocate<native_object>("Object", [](context & c, std::span<value> a) {
         // 20.1.1.1 Object(value): an object passes through, null and undefined
         // make a fresh object, and a primitive is boxed into its wrapper
-        // (ToObject, see detail::box_primitive).
+        // (ToObject, see context::box_primitive).
         const value v = arg_at(a, 0);
         // 20.1.1.1 step 1: under `new` from a subclass (`class O extends
         // Object`, reached through super(), or Reflect.construct with a
@@ -568,7 +568,7 @@ void install_object(context & cx) {
         if (v.is_nullish()) {
             return detail::constructing_this(c.current_this()) ? c.current_this() : c.make_object();
         }
-        return detail::box_primitive(c, v);
+        return c.box_primitive(v);
     });
     // Expose Object.prototype to script. It is the same table property lookup
     // falls back to, so a page that adds to it is seen by every object.
@@ -875,7 +875,7 @@ void install_object(context & cx) {
         // with the two characters on it, and a String wrapper's read-only
         // indices refuse a source's with the TypeError Set(..., true) owes.
         if (!object_coercible(c, arg_at(a, 0), "Object.assign")) { return value::undefined(); }
-        const value target = detail::box_primitive(c, arg_at(a, 0));
+        const value target = c.box_primitive(arg_at(a, 0));
         const context::rooted keep_target{c, target};
         for (std::size_t i = 1; i < a.size(); ++i) {
             // Step 4.a: a null or undefined source is skipped rather than an
@@ -888,7 +888,7 @@ void install_object(context & cx) {
             // [[Get]] and Set(to, key, v, true). A setter on the target that
             // deletes a later source key therefore stops it being copied, and
             // a source getter sees every earlier write.
-            const value source = detail::box_primitive(c, a[i]);
+            const value source = c.box_primitive(a[i]);
             const context::rooted keep_source{c, source};
             const detail::unwind_watch watch{c};
             const std::vector<std::string> keys = own_property_names(c, source, key_filter::all);

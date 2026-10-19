@@ -230,7 +230,7 @@ value context::construct(value callee, std::span<const value> args, value new_ta
         // A native returning a primitive looks exactly like a constructor
         // that returned nothing: `new Number(5)` evaluates to the receiver,
         // which the three wrapper constructors fill through
-        // detail::wrap_primitive (values.cpp, async.cpp).
+        // context::wrap_primitive (values.cpp, async.cpp).
         return produced.is_object_like() ? produced : self;
     }
     // `new C()` evaluates to the new object unless the body returned one of its

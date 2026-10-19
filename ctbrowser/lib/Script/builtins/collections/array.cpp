@@ -358,7 +358,7 @@ void install_array(context & cx) {
             }
             // Steps 7-12, the array-like path: ToObject, LengthOfArrayLike, then
             // every index through [[Get]].
-            const value array_like = detail::box_primitive(c, items);
+            const value array_like = c.box_primitive(items);
             const double len = detail::array_like_length(c, array_like);
             if (c.throw_pending()) { return value::undefined(); }
             value out = through_constructor(c, c.current_this(), len, true);
