@@ -23,7 +23,7 @@
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/chain.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/chain.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/chain.mlir
 // RUN: FileCheck %s --check-prefix=CHAIN --implicit-check-not=ctnative.not_native < %t/chain.mlir
 // RUN: ctjs-opt %t/chain.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/chain.cpp
 // RUN: FileCheck %s --check-prefix=CHAINCPP --implicit-check-not=std::variant --implicit-check-not=std::visit < %t/chain.cpp
@@ -34,7 +34,7 @@
 // RUN: %native_reference %t/chain.js | FileCheck %s --check-prefix=CHAINOUT
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("result=" + scope.result);' %t/chain.js | FileCheck %s --check-prefix=CHAINOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/copies.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/copies.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/copies.mlir
 // RUN: FileCheck %s --check-prefix=COPIES --implicit-check-not=ctnative.not_native < %t/copies.mlir
 // RUN: ctjs-opt %t/copies.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/copies.cpp
 // RUN: %gxx -O2 %t/copies.cpp -o %t/copies-gcc
