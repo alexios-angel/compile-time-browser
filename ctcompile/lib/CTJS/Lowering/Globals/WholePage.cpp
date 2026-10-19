@@ -184,11 +184,11 @@ std::string codeMarkup(mlir::Value value, llvm::StringRef api) {
 std::optional<llvm::StringRef> elementTag(mlir::Value value,
                                           globals_detail::ClosureValues & closures) {
     const mlir::Value origin = registerFlowOrigin(value);
-    if (auto call = origin ? origin.getDefiningOp<CallOp>() : CallOp{}) {
-        const mlir::Value callee = registerFlowOrigin(call.getCallee());
-        auto read = callee ? callee.getDefiningOp<GetPropertyOp>() : GetPropertyOp{};
-        const llvm::StringRef method = read ? constantKey(read.getKey()) : llvm::StringRef{};
-        auto module = call->getParentOfType<mlir::ModuleOp>();
+    auto call = origin ? origin.getDefiningOp<CallOp>() : CallOp{};
+    const mlir::Value source = call ? registerFlowOrigin(call.getCallee()) : origin;
+    if (auto read = source ? source.getDefiningOp<GetPropertyOp>() : GetPropertyOp{}) {
+        const llvm::StringRef method = constantKey(read.getKey());
+        auto module = read->getParentOfType<mlir::ModuleOp>();
         const mlir::Value owner = read ? registerFlowOrigin(read.getObject()) : mlir::Value{};
         auto document = owner ? owner.getDefiningOp<LoadGlobalOp>() : LoadGlobalOp{};
         const auto writes = globals_detail::read_prototype_writes(module);
@@ -207,6 +207,12 @@ std::optional<llvm::StringRef> elementTag(mlir::Value value,
                         });
         });
         if (!pristine) { return std::nullopt; }
+        if (!call) {
+            if (method == "body") { return "body"; }
+            if (method == "head") { return "head"; }
+            if (method == "documentElement") { return "html"; }
+            return std::nullopt;
+        }
         const bool create = method == "createElement" || method == "createElementNS";
         const bool query = method == "querySelector";
         const std::size_t index = method == "createElementNS" ? 1 : 0;
@@ -239,6 +245,120 @@ std::string scriptWrite(mlir::Value object, llvm::StringRef key,
     if (!possiblyScript(object, closures)) { return {}; }
     return "`" + key.str() +
            "` writes a possibly-script element, whose new code a native program cannot compile";
+}
+
+/// Why writing `api` on `object` to `value` may navigate a frame to a document
+/// that runs scripts, or empty: only a constant `about:blank` is known not to,
+/// and only a receiver proved not to be a frame element is out of reach.
+std::string frameTarget(mlir::Value object, mlir::Value value, llvm::StringRef api,
+                        globals_detail::ClosureValues & closures) {
+    const auto text = constantString(value);
+    if (text && text->equals_insensitive("about:blank")) { return {}; }
+    if (const auto tag = elementTag(object, closures)) {
+        if (!llvm::StringSwitch<bool>(tag->lower())
+                 .Cases({"iframe", "frame", "object", "embed"}, true)
+                 .Default(false)) { return {}; }
+    }
+    return "`" + api.str() +
+           "` navigates a frame to a document that may run scripts, whose code a native program "
+           "cannot compile";
+}
+
+/// A value every leaf of which is a primitive or an owned literal: it cannot
+/// be a DOM node or hold a sink property.
+bool ownedValue(mlir::Value value, globals_detail::ClosureValues & closures) {
+    const auto leaves = closures.leafValuesOf(value);
+    return leaves.unknown.empty() && !leaves.values.empty() &&
+           llvm::all_of(leaves.values, [](mlir::Value leaf) {
+               return mlir::isa_and_present<ConstantOp, CreateObjectOp, CreateArrayOp, CreateClosureOp>(
+                   leaf.getDefiningOp());
+           });
+}
+
+/// Why setting `key` to `value` on `receiver` may run code through a URL, a
+/// frame navigation or a script element's source, or empty. `api` names the
+/// operation in the reason.
+std::string urlWrite(llvm::StringRef key, mlir::Value value, mlir::Value receiver,
+                     llvm::StringRef api, globals_detail::ClosureValues & closures) {
+    const bool source = key.equals_insensitive("src") || key.equals_insensitive("data");
+    const auto tag = source ? elementTag(receiver, closures) : std::nullopt;
+    const bool image = tag && tag->equals_insensitive("img") && key.equals_insensitive("src");
+    std::string why;
+    if (!image &&
+        llvm::StringSwitch<bool>(key.lower())
+            .Cases({"href", "src", "data", "action", "formaction", "xlink:href", "location"}, true)
+            .Default(false)) {
+        why = urlTarget(value, api);
+    }
+    if (why.empty() && key.equals_insensitive("src")) {
+        why = scriptWrite(receiver, api, closures);
+    }
+    if (why.empty() && source && !image) {
+        why = frameTarget(receiver, value, api, closures);
+    }
+    return why;
+}
+
+/// The attribute names `value` was made or fetched with (`createAttribute`,
+/// `getNamedItem` and their NS forms), following a global's stores; a name not
+/// known at build time is the empty StringRef. Empty when `value` is none of
+/// those calls' results.
+void attrNamesOf(mlir::Value value, mlir::ModuleOp module, unsigned depth,
+                 llvm::SmallVectorImpl<llvm::StringRef> & names) {
+    if (!value || depth == 8) { return; }
+    const mlir::Value origin = registerFlowOrigin(value);
+    auto call = origin ? origin.getDefiningOp<CallOp>() : CallOp{};
+    if (call) {
+        const mlir::Value source = registerFlowOrigin(call.getCallee());
+        auto read = source ? source.getDefiningOp<GetPropertyOp>() : GetPropertyOp{};
+        if (!read) { return; }
+        const llvm::StringRef method = constantKey(read.getKey());
+        const bool named = llvm::StringSwitch<bool>(method)
+                               .Cases({"createAttribute", "createAttributeNS", "getNamedItem",
+                                       "getNamedItemNS", "getAttributeNode", "getAttributeNodeNS"},
+                                      true)
+                               .Default(false);
+        if (!named) { return; }
+        const auto args = call.getArgs();
+        const std::size_t index = method.ends_with("NS") ? 1 : 0;
+        names.push_back(index < args.size()
+                            ? constantString(args[index]).value_or(llvm::StringRef{})
+                            : llvm::StringRef{});
+        return;
+    }
+    if (auto load = origin ? origin.getDefiningOp<LoadGlobalOp>() : LoadGlobalOp{}) {
+        module.walk([&](StoreGlobalOp store) {
+            if (store.getName() == load.getName()) {
+                attrNamesOf(store.getValue(), module, depth + 1, names);
+            }
+        });
+    }
+}
+
+/// Why writing `write`'s value to an attribute object's `value` property may
+/// run code, or empty: the attribute's name names its sink.
+std::string attrValueWrite(SetPropertyOp write, mlir::ModuleOp module,
+                           globals_detail::ClosureValues & closures) {
+    llvm::SmallVector<llvm::StringRef> names;
+    attrNamesOf(write.getObject(), module, 0, names);
+    for (llvm::StringRef name : names) {
+        if (name.empty()) {
+            return "`value` writes an attribute whose name is not known at build time, which may "
+                   "create code";
+        }
+        if (startsWithLower(name, "on")) {
+            return "`value` with the name `" + name.str() +
+                   "` adds an on* event handler, whose code a native program cannot compile";
+        }
+        if (name.equals_insensitive("srcdoc")) {
+            return codeMarkup(write.getValue(), "srcdoc");
+        }
+        if (std::string why = urlWrite(name, write.getValue(), write.getObject(), name, closures);
+            !why.empty()) {
+            return why;
+        }
+    }
+    return {};
 }
 
 /// Why markup `value` written through `api` may add a handler, or empty.
@@ -314,8 +434,9 @@ std::string methodCall(llvm::StringRef method, CallOp call,
     if (method == "appendChild" || method == "insertBefore" || method == "replaceChild" ||
         method == "append" || method == "prepend" || method == "before" || method == "after" ||
         method == "replaceWith" || method == "replaceChildren" ||
-        method == "insertAdjacentElement") {
-        const auto first = method == "insertAdjacentElement" ? 1u : 0u;
+        method == "insertAdjacentElement" || method == "insertAdjacentText") {
+        const auto first =
+            method == "insertAdjacentElement" || method == "insertAdjacentText" ? 1u : 0u;
         const auto count = method == "appendChild" || method == "insertBefore" ||
                                    method == "replaceChild" || method == "insertAdjacentElement"
                                ? std::min<std::size_t>(args.size(), first + 1)
@@ -325,6 +446,22 @@ std::string methodCall(llvm::StringRef method, CallOp call,
                 return "`" + method.str() +
                        "` inserts a possibly-script node, whose code a native program cannot "
                        "compile";
+            }
+        }
+        // Text into a possibly-script element changes the code it will run: a
+        // String argument, and insertAdjacentText's argument in any case.
+        if (possiblyScript(call.getReceiver(), closures)) {
+            const auto text = [&]() {
+                if (method == "insertAdjacentText") { return true; }
+                for (std::size_t index = first; index < count; ++index) {
+                    if (args[index] && constantString(args[index])) { return true; }
+                }
+                return false;
+            }();
+            if (text) {
+                return "`" + method.str() +
+                       "` writes text into a possibly-script element, whose new code a native "
+                       "program cannot compile";
             }
         }
         return {};
@@ -344,18 +481,7 @@ std::string methodCall(llvm::StringRef method, CallOp call,
         const auto check = [&](llvm::StringRef key) -> std::string {
             const std::string api = method.str() + "(\"" + key.str() + "\")";
             if (key.equals_insensitive("srcdoc")) { return codeMarkup(value, api); }
-            const bool target =
-                llvm::StringSwitch<bool>(key.lower())
-                    .Cases({"href", "src", "data", "action", "formaction", "xlink:href"}, true)
-                    .Default(false);
-            const auto tag = elementTag(call.getReceiver(), closures);
-            const bool image =
-                tag && tag->equals_insensitive("img") && key.equals_insensitive("src");
-            if (target && !image) {
-                if (std::string why = urlTarget(value, api); !why.empty()) { return why; }
-            }
-            return key.equals_insensitive("src") ? scriptWrite(call.getReceiver(), api, closures)
-                                                 : std::string{};
+            return urlWrite(key, value, call.getReceiver(), api, closures);
         };
         if (const auto text = constantString(name)) { return check(*text); }
         const auto leaves = closures.leafValuesOf(name);
@@ -372,6 +498,71 @@ std::string methodCall(llvm::StringRef method, CallOp call,
                  {"srcdoc", "href", "src", "data", "action", "formaction", "xlink:href"}) {
                 if (!prefix || key.take_front(prefix->size()).equals_insensitive(*prefix)) {
                     if (std::string why = check(key); !why.empty()) { return why; }
+                }
+            }
+        }
+        return {};
+    }
+    if (method == "setAttributeNode" || method == "setAttributeNodeNS" ||
+        method == "setNamedItem" || method == "setNamedItemNS") {
+        // The attribute carries its own name and value into the element this
+        // call attaches it to; only names that cannot be sinks are safe here.
+        llvm::SmallVector<llvm::StringRef> names;
+        attrNamesOf(arg(0), call->getParentOfType<mlir::ModuleOp>(), 0, names);
+        const auto sink = [](llvm::StringRef name) {
+            return name.empty() || startsWithLower(name, "on") ||
+                   llvm::StringSwitch<bool>(name.lower())
+                       .Cases({"srcdoc", "href", "src", "data", "action", "formaction",
+                               "xlink:href"},
+                              true)
+                       .Default(false);
+        };
+        if (names.empty() || llvm::any_of(names, sink)) {
+            return "`" + method.str() +
+                   "` attaches an attribute that may create code, whose code a native program "
+                   "cannot compile";
+        }
+        return {};
+    }
+    if (method == "defineProperty" || method == "getOwnPropertyDescriptor") {
+        // A sink property's descriptor carries a setter or value that runs
+        // code; the setter read off one is called later, through a value this
+        // census cannot see.
+        const mlir::Value target = arg(0);
+        const mlir::Value name = arg(1);
+        if (!name || (target && ownedValue(target, closures))) { return {}; }
+        if (std::string why = handlerName(name, method, closures); !why.empty()) { return why; }
+        const auto sink = [&](llvm::StringRef key) -> std::string {
+            if (!llvm::StringSwitch<bool>(key.lower())
+                     .Cases({"srcdoc", "innerHTML", "outerHTML", "text", "textContent", "innerText",
+                             "href", "src", "data", "action", "formaction", "xlink:href",
+                             "location"},
+                            true)
+                     .Default(false)) {
+                return std::string{};
+            }
+            return "`" + method.str() + "` of the property `" + key.str() +
+                   "` can reach code a native program cannot compile";
+        };
+        if (const auto text = constantString(name)) { return sink(*text); }
+        const auto leaves = closures.leafValuesOf(name);
+        if (!leaves.unknown.empty() || leaves.values.empty()) {
+            return "`" + method.str() +
+                   "` of a property not known at build time can reach code a native program "
+                   "cannot compile";
+        }
+        for (mlir::Value leaf : leaves.values) {
+            if (const auto text = constantString(leaf)) {
+                if (std::string why = sink(*text); !why.empty()) { return why; }
+                continue;
+            }
+            if (mlir::isa_and_present<ConstantOp>(leaf.getDefiningOp())) { continue; }
+            const auto prefix = leftmostPart(leaf);
+            for (llvm::StringRef key :
+                 {"srcdoc", "innerHTML", "outerHTML", "text", "textContent", "innerText", "href",
+                  "src", "data", "action", "formaction", "xlink:href", "location"}) {
+                if (!prefix || key.take_front(prefix->size()).equals_insensitive(*prefix)) {
+                    if (std::string why = sink(key); !why.empty()) { return why; }
                 }
             }
         }
@@ -406,6 +597,9 @@ bool createsCode(llvm::StringRef key) {
         .Cases({"createAttribute", "createAttributeNS", "assign", "replace", "open"}, true)
         .Cases({"appendChild", "insertBefore", "replaceChild", "append", "prepend"}, true)
         .Cases({"before", "after", "replaceWith", "replaceChildren", "insertAdjacentElement"}, true)
+        .Cases({"insertAdjacentText", "setAttributeNode", "setAttributeNodeNS", "setNamedItem",
+                "setNamedItemNS", "defineProperty", "getOwnPropertyDescriptor"},
+               true)
         .Default(false);
 }
 
@@ -733,41 +927,129 @@ llvm::SmallVector<RuntimeCodeSite> markRuntimeCode(mlir::ModuleOp module) {
                     !why.empty()) {
                     found.push_back({op, std::move(why)});
                 }
+                return;
+            }
+            if (constantString(read.getKey()) ||
+                ownedValue(read.getObject(), closures) /* not a sink element */) {
+                return;
+            }
+            // A computed key may name a code-creating method: follow it the
+            // way the attribute-name flow follows a setAttribute name. A call
+            // through it is checked here; reading it as a value is not, which
+            // would mark every indexed read of an array.
+            const auto leaves = closures.leafValuesOf(read.getKey());
+            const bool unbounded = !leaves.unknown.empty() || leaves.values.empty();
+            llvm::SmallVector<std::string> names;
+            if (!unbounded) {
+                for (mlir::Value leaf : leaves.values) {
+                    if (const auto text = constantString(leaf)) {
+                        if (createsCode(*text)) { names.push_back(text->str()); }
+                        continue;
+                    }
+                    if (mlir::isa_and_present<ConstantOp>(leaf.getDefiningOp())) { continue; }
+                    const auto prefix = leftmostPart(leaf);
+                    for (llvm::StringRef name :
+                         {"setTimeout", "setInterval", "createElement", "createElementNS", "write",
+                          "writeln", "createContextualFragment", "insertAdjacentHTML",
+                          "setHTMLUnsafe", "parseHTMLUnsafe", "parseFromString", "setAttribute",
+                          "setAttributeNS", "createAttribute", "createAttributeNS", "assign",
+                          "replace", "open", "appendChild", "insertBefore", "replaceChild",
+                          "append", "prepend", "before", "after", "replaceWith",
+                          "replaceChildren", "insertAdjacentElement", "insertAdjacentText",
+                          "setAttributeNode", "setAttributeNodeNS", "setNamedItem",
+                          "setNamedItemNS", "defineProperty", "getOwnPropertyDescriptor"}) {
+                        if (!prefix || name.starts_with(*prefix)) {
+                            names.push_back(name.str());
+                        }
+                    }
+                }
+            }
+            if (!unbounded && names.empty()) { return; }
+            auto uses = registerFlowUses(read.getResult());
+            if (!uses) {
+                found.push_back(
+                    {op, "a method name not known at build time moves through too many registers "
+                         "to follow"});
+                return;
+            }
+            for (mlir::OpOperand * use : *uses) {
+                auto call = mlir::dyn_cast<CallOp>(use->getOwner());
+                if (!call || use->getOperandNumber() != 0) { continue; }
+                if (unbounded) {
+                    found.push_back(
+                        {call, "a method name not known at build time may create code when "
+                               "called, whose code a native program cannot compile"});
+                    continue;
+                }
+                for (const std::string & name : names) {
+                    if (std::string why = methodCall(name, call, closures); !why.empty()) {
+                        found.push_back({call, std::move(why)});
+                        break;
+                    }
+                }
             }
             return;
         }
         if (auto write = mlir::dyn_cast<SetPropertyOp>(op)) {
-            const llvm::StringRef key = constantKey(write.getKey());
-            if (key == "innerHTML" || key == "outerHTML") {
-                if (std::string why = handlerMarkup(write.getValue(), key); !why.empty()) {
-                    found.push_back({op, std::move(why)});
-                } else if (std::string why = codeMarkup(write.getValue(), key); !why.empty()) {
+            const auto check = [&](llvm::StringRef key) -> std::string {
+                if (key == "innerHTML" || key == "outerHTML") {
+                    if (std::string why = handlerMarkup(write.getValue(), key); !why.empty()) {
+                        return why;
+                    }
+                    return codeMarkup(write.getValue(), key);
+                }
+                if (key == "srcdoc") { return codeMarkup(write.getValue(), key); }
+                if (llvm::StringSwitch<bool>(key)
+                        .Cases({"href", "src", "data", "action", "formAction", "location"}, true)
+                        .Default(false)) {
+                    return urlWrite(key, write.getValue(), write.getObject(), key, closures);
+                }
+                if (key == "text" || key == "textContent" || key == "innerText") {
+                    return scriptWrite(write.getObject(), key, closures);
+                }
+                if (key == "value") { return attrValueWrite(write, module, closures); }
+                return std::string{};
+            };
+            if (const auto text = constantString(write.getKey())) {
+                if (std::string why = check(*text); !why.empty()) {
                     found.push_back({op, std::move(why)});
                 }
-            } else if (key == "srcdoc") {
-                if (std::string why = codeMarkup(write.getValue(), key); !why.empty()) {
-                    found.push_back({op, std::move(why)});
-                }
-            } else if (llvm::StringSwitch<bool>(key)
-                           .Cases({"href", "src", "data", "action", "formAction", "location"}, true)
-                           .Default(false)) {
-                const auto tag =
-                    key == "src" ? elementTag(write.getObject(), closures) : std::nullopt;
-                const bool image = tag && tag->equals_insensitive("img");
-                if (std::string why = image ? std::string{} : urlTarget(write.getValue(), key);
-                    !why.empty()) {
-                    found.push_back({op, std::move(why)});
-                } else if (key == "src") {
-                    if (std::string why = scriptWrite(write.getObject(), key, closures);
-                        !why.empty()) {
-                        found.push_back({op, std::move(why)});
+                return;
+            }
+            if (ownedValue(write.getObject(), closures)) { return; }
+            // A computed key may write a code sink: follow it the way the
+            // attribute-name flow follows a setAttribute name.
+            const auto leaves = closures.leafValuesOf(write.getKey());
+            std::string why;
+            if (!leaves.unknown.empty() || leaves.values.empty()) {
+                for (llvm::StringRef key :
+                     {"innerHTML", "outerHTML", "srcdoc", "text", "textContent", "innerText",
+                      "href", "src", "data", "action", "formAction", "location"}) {
+                    if (!check(key).empty()) {
+                        why = "a property name not known at build time may write a code sink, "
+                              "whose code a native program cannot compile";
+                        break;
                     }
                 }
-            } else if (key == "text" || key == "textContent" || key == "innerText") {
-                if (std::string why = scriptWrite(write.getObject(), key, closures); !why.empty()) {
-                    found.push_back({op, std::move(why)});
+            } else {
+                for (mlir::Value leaf : leaves.values) {
+                    if (!why.empty()) { break; }
+                    if (const auto text = constantString(leaf)) {
+                        why = check(*text);
+                        continue;
+                    }
+                    if (mlir::isa_and_present<ConstantOp>(leaf.getDefiningOp())) { continue; }
+                    const auto prefix = leftmostPart(leaf);
+                    for (llvm::StringRef key :
+                         {"innerHTML", "outerHTML", "srcdoc", "text", "textContent", "innerText",
+                          "href", "src", "data", "action", "formAction", "location"}) {
+                        if (!prefix || key.starts_with(*prefix)) {
+                            if (why = check(key); !why.empty()) { break; }
+                        }
+                    }
                 }
             }
+            if (!why.empty()) { found.push_back({op, std::move(why)}); }
             return;
         }
         if (auto store = mlir::dyn_cast<StoreGlobalOp>(op);
