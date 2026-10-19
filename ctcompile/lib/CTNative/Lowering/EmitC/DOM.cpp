@@ -854,8 +854,7 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
             llvm::append_range(arguments, call.getArgs().drop_front(edge.explicitReceiver ? 1 : 0));
         }
     }
-    if (edge.kind == HostDOMMethod::matches || edge.returnsElement() ||
-        edge.returnsElementVector()) {
+    if (edge.usesStyle()) {
         auto receiver = callValue(at, where, elementView, "ctnative::js_element_t",
                                   mlir::ValueRange{arguments[0], arguments[1]});
         domStyles[receiver] = arguments[1];
