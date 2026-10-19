@@ -814,11 +814,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 if ((cell || write) && !callableCell(cell)) {
                     return error("DOM iterator sibling callable storage is mutable or escapes");
                 }
-                auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-                auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
-                if (call || direct) {
-                    auto callee = call ? call.getCallee() : direct.getCalleeValue();
-                    auto target = callee.getDefiningOp<ctjs::CreateClosureOp>();
+                if (auto call = host_detail::jsCallOf(use.getOwner())) {
+                    auto target = call->callee.getDefiningOp<ctjs::CreateClosureOp>();
                     if (target && target->getBlock() == &entry.getBody().front()) {
                         siblingHelpers.insert(target);
                     }
@@ -982,12 +979,11 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         } else if (transportInputs(value, inputs)) {
             node.kind = ReturnKind::transport;
         } else {
-            auto call = value.getDefiningOp<ctjs::CallOp>();
-            auto direct = value.getDefiningOp<ctjs::CallDirectOp>();
-            if (call || direct) {
+            auto * producer = value.getDefiningOp();
+            if (auto call = producer ? host_detail::jsCallOf(producer) : std::nullopt) {
                 node.kind = ReturnKind::call;
-                inputs.push_back(call ? call.getCallee() : direct.getCalleeValue());
-                llvm::append_range(inputs, call ? call.getArgs() : direct.getArgs());
+                inputs.push_back(call->callee);
+                llvm::append_range(inputs, call->args);
             }
         }
         for (auto input : inputs) {
@@ -1043,14 +1039,14 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                         }
                         continue;
                     }
-                    auto call = current.source.getDefiningOp<ctjs::CallOp>();
-                    auto direct = current.source.getDefiningOp<ctjs::CallDirectOp>();
-                    if (!call && !direct) {
+                    auto * producer = current.source.getDefiningOp();
+                    auto call = producer ? host_detail::jsCallOf(producer) : std::nullopt;
+                    if (!call) {
                         complete = false;
                         continue;
                     }
-                    inputs.push_back({call ? call.getCallee() : direct.getCalleeValue()});
-                    for (auto argument : call ? call.getArgs() : direct.getArgs()) {
+                    inputs.push_back({call->callee});
+                    for (auto argument : call->args) {
                         if (!spend()) { return false; }
                         inputs.push_back({argument});
                     }
@@ -1146,9 +1142,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 }
                 continue;
             }
-            auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
-            auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
-            auto callee = call ? call.getCallee() : direct.getCalleeValue();
+            auto call = host_detail::jsCallOf(operation);
+            auto callee = call->callee;
             if (!bindTransport(callee)) { return false; }
             auto found = values.find(callee);
             if (found == values.end()) {
@@ -1157,10 +1152,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                         "DOM iterator sibling call requires an immutable local helper");
                 }
                 auto producer = callee.getDefiningOp();
-                auto ordinary = llvm::dyn_cast_or_null<ctjs::CallOp>(producer);
-                auto exact = llvm::dyn_cast_or_null<ctjs::CallDirectOp>(producer);
-                if ((ordinary || exact) &&
-                    values.contains(ordinary ? ordinary.getCallee() : exact.getCalleeValue())) {
+                auto returned = producer ? host_detail::jsCallOf(producer) : std::nullopt;
+                if (returned && values.contains(returned->callee)) {
                     return work.refuse(
                         "DOM iterator sibling call requires a proved returned callable");
                 }
@@ -1173,13 +1166,13 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 if (!spend()) { return false; }
                 auto & target = helpers[index];
                 auto & body = target.body.getBody().front();
-                auto args = call ? call.getArgs() : direct.getArgs();
+                auto args = call->args;
                 if (args.size() + ctjs::implicit_arguments != body.getNumArguments()) {
                     return work.refuse("DOM iterator sibling helper requires exact argument arity");
                 }
-                if (!undefined(call ? call.getReceiver() : direct.getReceiver()) ||
-                    (direct &&
-                     (direct.getTarget() != target.body || !undefined(direct.getNewTarget())))) {
+                if (!undefined(call->receiver) ||
+                    (call->direct && (call->direct.getTarget() != target.body ||
+                                      !undefined(call->direct.getNewTarget())))) {
                     return work.refuse(
                         "DOM iterator sibling helper has an unsupported call target");
                 }
@@ -1279,14 +1272,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     continue;
                 }
             }
-            auto ordinary = llvm::dyn_cast<ctjs::CallOp>(user);
-            auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(user);
-            if (ordinary || direct) {
-                auto args = ordinary ? ordinary.getArgs() : direct.getArgs();
-                const unsigned first = user->getNumOperands() - args.size();
+            if (auto call = host_detail::jsCallOf(user)) {
+                const unsigned first = user->getNumOperands() - call->args.size();
                 if (use.getOperandNumber() >= first) {
-                    auto target = callableValues.find(ordinary ? ordinary.getCallee()
-                                                               : direct.getCalleeValue());
+                    auto target = callableValues.find(call->callee);
                     if (target != callableValues.end() &&
                         user->getParentOfType<ctjs::FuncOp>() == caller) {
                         continue; // proveCalls bound this actual to its formal above.
@@ -1388,11 +1377,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     // Source order keeps the dependency-scan cost independent of SSA hash order.
     for (auto * operation : familyCalls) {
         if (!spend()) { return error("DOM custom iterator budget exhausted"); }
-        auto ordinary = llvm::dyn_cast<ctjs::CallOp>(operation);
-        auto callee = ordinary ? ordinary.getCallee()
-                               : llvm::cast<ctjs::CallDirectOp>(operation).getCalleeValue();
+        auto call = host_detail::jsCallOf(operation);
         if (operation->getParentOfType<ctjs::FuncOp>() == entry &&
-            callableValues.contains(callee)) {
+            callableValues.contains(call->callee)) {
             pending.push_back(operation);
         }
     }
@@ -1423,25 +1410,20 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         auto ready = llvm::find_if(pending, [&](mlir::Operation * operation) {
             if (!spend()) { return false; }
             targets.clear();
-            auto ordinary = llvm::dyn_cast<ctjs::CallOp>(operation);
-            auto callee = ordinary ? ordinary.getCallee()
-                                   : llvm::cast<ctjs::CallDirectOp>(operation).getCalleeValue();
-            return resolveTargets(callee, tagCallables, targets);
+            return resolveTargets(host_detail::jsCallOf(operation)->callee, tagCallables,
+                                  targets);
         });
         if (ready == pending.end() || !work.remaining) {
             return error("DOM iterator sibling call has no proved target");
         }
         auto * call = *ready;
         pending.erase(ready);
-        auto ordinary = llvm::dyn_cast<ctjs::CallOp>(call);
-        auto callee =
-            ordinary ? ordinary.getCallee() : llvm::cast<ctjs::CallDirectOp>(call).getCalleeValue();
-        auto receiver =
-            ordinary ? ordinary.getReceiver() : llvm::cast<ctjs::CallDirectOp>(call).getReceiver();
+        auto invocation = host_detail::jsCallOf(call);
+        auto callee = invocation->callee;
+        auto receiver = invocation->receiver;
         // Copy the already evaluated arguments before the cells are appended;
         // later state writes cannot change these values.
-        llvm::SmallVector<mlir::Value> actuals(
-            ordinary ? ordinary.getArgs() : llvm::cast<ctjs::CallDirectOp>(call).getArgs());
+        llvm::SmallVector<mlir::Value> actuals(invocation->args);
         if (targets.size() > 1) {
             // Several helpers are possible: evaluate the callee and arguments
             // once, then compare the tag in a chain of scf.if to pick one body.
