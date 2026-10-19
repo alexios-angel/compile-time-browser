@@ -243,9 +243,107 @@ def test_join_refuses_probe_with_regex_literal():
     # A quote inside a regex literal would blank the rest of the probe as a
     # string and hide the declaration, so the scan refuses instead.
     library = "later();\n"
-    probe = 'var r = /["\']/; var later = 1;\n'
+    probe = "var r = /[\"']/; var later = 1;\n"
     problem = workload.join_problem(library, probe)
     assert problem and "regular expression" in problem
+
+
+def test_join_refuses_asi_before_a_declaration():
+    library = "console.log(typeof later);\n"
+    probe = "var a = 1\nfunction later() { return 1; }\n"
+    problem = workload.join_problem(library, probe)
+    assert problem and "later" in problem
+
+
+def test_join_refuses_renamed_destructuring():
+    library = "console.log(typeof later);\n"
+    probe = "let {source: later} = {source: 1};\n"
+    assert workload.join_problem(library, probe)
+
+
+def test_join_refuses_nested_destructuring():
+    library = "console.log(typeof later);\n"
+    probe = "let {outer: {later}} = {outer: {later: 1}};\n"
+    assert workload.join_problem(library, probe)
+
+
+def test_join_refuses_block_var():
+    library = "console.log(later);\n"
+    probe = "if (false) { var later = 1; }\n"
+    problem = workload.join_problem(library, probe)
+    assert problem and "later" in problem
+
+
+def test_join_refuses_library_template_reference():
+    library = "console.log(`${later}`);\n"
+    probe = "let later = 1;\n"
+    problem = workload.join_problem(library, probe)
+    assert problem and "later" in problem
+
+
+def test_join_refuses_library_return_regex_hiding_code():
+    library = 'function f() { return /"/.test(""); }\nconsole.log(typeof later);\n'
+    probe = "let later = 1;\n"
+    problem = workload.join_problem(library, probe)
+    assert problem and "later" in problem
+
+
+def test_join_refuses_probe_templates():
+    assert workload.join_problem("var a = 1;", "var b = `${a}`;")
+
+
+def test_join_refuses_escaped_identifiers():
+    library = "console.log(lat" + chr(92) + "u0065r);"
+    probe = "let lat" + chr(92) + "u0065r = 1;"
+    assert workload.join_problem(library, "let later = 1;")
+    assert workload.join_problem("console.log(later);", probe)
+
+
+def test_join_refuses_default_parameter_binding():
+    library = "console.log(typeof later);"
+    probe = "function unrelated(arg = function later() {}) {}"
+    problem = workload.join_problem(library, probe)
+    assert problem and "later" in problem
+
+
+def test_join_refuses_ambiguous_directives():
+    library = '"use strict" + ""; console.log(this);'
+    probe = '"use strict"; console.log(this);'
+    assert workload.join_problem(library, probe)
+    assert workload.join_problem('"use strict"\nvar a = 1;', '"use strict"; var b = 1;')
+
+
+def test_join_refuses_computed_global_properties():
+    for global_object in ("globalThis", "window", "self"):
+        library = f'console.log({global_object}["later"]);'
+        problem = workload.join_problem(library, "var later = 1;")
+        assert problem and "computed global-property" in problem
+    assert workload.join_problem("window[key];", "function later() {}")
+
+
+def test_join_refuses_global_object_keys():
+    problem = workload.join_problem("console.log(Object.keys(globalThis));", "var later = 1;")
+    assert problem and "global reflection" in problem
+
+
+def test_join_refuses_global_own_property_names():
+    problem = workload.join_problem("Object.getOwnPropertyNames(window);", "var later = 1;")
+    assert problem and "global reflection" in problem
+
+
+def test_join_refuses_global_reflect_own_keys():
+    problem = workload.join_problem("Reflect.ownKeys(self);", "var later = 1;")
+    assert problem and "global reflection" in problem
+
+
+def test_join_refuses_global_for_in():
+    library = "for (var key in globalThis) console.log(key);"
+    problem = workload.join_problem(library, "var later = 1;")
+    assert problem and "global reflection" in problem
+
+
+def test_join_refuses_unbalanced_probe():
+    assert workload.join_problem("var a = 1;", "function b() {")
 
 
 def test_join_refuses_strictness_mismatch():
@@ -272,11 +370,31 @@ def test_join_allows_the_bootstrap_probe():
     assert workload.join_problem(library, probe) is None
 
 
-def test_join_ignores_declarations_inside_blocks():
-    # A declaration inside a block or a function body does not hoist into a
-    # joined program, so it cannot change the library.
+def test_join_allows_the_fixture_with_the_bootstrap_probe():
+    root = Path(__file__).resolve().parents[2]
+    library = (root / "ctcompile/test/CTNative/Fixtures/ControlFlow/functions.js").read_text()
+    probe = (root / "tools/check/workloads/bootstrap-probe.js").read_text()
+    assert workload.join_problem(library, probe) is None
+
+
+def test_join_refuses_sloppy_block_function():
+    # Annex B gives a sloppy block function a script-level var binding.
     library = "later();\n"
     probe = "if (true) { function later() { return 1; } }\n"
+    problem = workload.join_problem(library, probe)
+    assert problem and "later" in problem
+
+
+def test_join_ignores_strict_block_declarations():
+    library = '"use strict"; console.log(typeof later);\n'
+    for declaration in ("let later = 1;", "function later() { return 1; }"):
+        probe = f'"use strict"; if (true) {{ {declaration} }}\n'
+        assert workload.join_problem(library, probe) is None
+
+
+def test_join_ignores_function_local_declarations():
+    library = "later();\n"
+    probe = "function unrelated() { var later = 1; function nested() {} }\n"
     assert workload.join_problem(library, probe) is None
 
 
@@ -285,6 +403,35 @@ def test_join_ignores_names_only_in_strings_or_comments():
     library = 'var s = "later"; // later();\n'
     probe = "function later() { return 1; }\n"
     assert workload.join_problem(library, probe) is None
+
+
+def test_throwing_library_reference_cannot_report_done():
+    with tempfile.TemporaryDirectory() as folder:
+        root = Path(folder)
+        library, probe, page = (root / name for name in ("library.js", "probe.js", "page.html"))
+        library.write_text('throw new Error("stop");\n')
+        probe.write_text('console.log("probe ran");\n')
+        page.write_text("<p>test</p>\n")
+        reference = root / "ctcompile/test/ctcompile-test-native-reference"
+        reference.parent.mkdir(parents=True)
+        # The real reference exits nonzero when an explicit --script throws,
+        # even if earlier page scripts already printed matching output.
+        reference.write_text("#!/bin/sh\necho 'page ran'\necho 'library threw' >&2\nexit 1\n")
+        reference.chmod(0o755)
+        config = {
+            "name": "throwing-library",
+            "stages": ["script-run"],
+            "timeouts": {"command": 5, "item": 10, "total": 60},
+        }
+        ctx = workload.Context(config, root, time.monotonic() + 60, root)
+        ctx.pages = [page]
+        ctx.scripts = {"script:library.js": {"path": library, "script_run": {"probe": probe.name}}}
+        workload.script_run(ctx, "script-run")
+        result = workload.summarize(ctx)
+        assert result["verdict"] == "NOT DONE", result
+        assert ctx.results[0]["status"] == "FAIL", ctx.results
+        assert "VM reference failed probing" in ctx.results[0]["summary"], ctx.results
+        assert "library threw" in ctx.results[0]["details"], ctx.results
 
 
 def test_missing_capability_is_first_gap():
