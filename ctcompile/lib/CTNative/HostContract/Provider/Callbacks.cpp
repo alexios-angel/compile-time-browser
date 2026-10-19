@@ -138,13 +138,12 @@ struct callbackReader {
 } // namespace
 
 prefixValue providerCallback(prefixAnalysis & prefix, ctjs::CallOp sourceCall, prefixValue callee,
-                             prefixValue receiver, llvm::ArrayRef<prefixValue> arguments,
+                             llvm::ArrayRef<prefixValue> arguments,
                              llvm::StringMap<prefixValue> & globals,
                              HostPrefixProviderSummary & proof) {
     // The receiver is not interpreted. Requiring the callback to leave its
     // implicit arguments unused avoids modeling how `this` is bound
     // (sloppy, strict or lexical).
-    (void)receiver;
     auto function = prefix.target(callee);
     if (!prefix.followProviderCallbacks || !prefix.step() || !function ||
         !llvm::hasSingleElement(function.getBody()) || function.getUpvalueCount() != 0 ||

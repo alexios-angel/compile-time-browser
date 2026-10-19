@@ -166,8 +166,7 @@ prefixValue providerDiagnosticState::call(ctjs::CallOp invoked,
         if (!prefix.step()) { return {}; }
         arguments.push_back(values.lookup(argument));
     }
-    const auto result =
-        providerCallback(prefix, invoked, callee, receiver, arguments, globals, proof);
+    const auto result = providerCallback(prefix, invoked, callee, arguments, globals, proof);
     // Any callback that ran counts as a mutation, even one proved to touch
     // only scalars: a keys() iterator is admitted only when nothing runs
     // between its creation and its Array.from consumption.
