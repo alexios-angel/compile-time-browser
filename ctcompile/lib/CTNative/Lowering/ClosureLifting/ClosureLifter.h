@@ -536,10 +536,7 @@ struct closureLifter {
     /// Erases the cells captureLexicalThis made once only such arrows
     /// capture them (ArrowThis.cpp).
     void releaseLexicalThisCells();
-    /// What a read of an arrow's lexical `this` stands for: its maker's
-    /// receiver, or the maker's own such read (ArrowThis.cpp).
-    mlir::Value lexicalThisMaker(mlir::Value value);
-    /// The cell captureLexicalThis boxed that maker's value in (ArrowThis.cpp).
+    /// The lexical-this cell an arrow reads through `value` (ArrowThis.cpp).
     ctjs::CreateCellOp lexicalThisCell(mlir::Value value);
     /// True when `use` of a `this` is a held capture of the host callback its
     /// ctjs.call registers (ArrowThis.cpp).
