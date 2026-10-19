@@ -719,8 +719,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         if (arguments.size() == 1 &&
             ((contains && hasKind(arguments[0], Kind::element)) ||
              ((matches || closest || query || queryAll) && hasKind(arguments[0], Kind::string)))) {
-            const auto hostMethod =
-                elementMethods.find(ctjs::constantKey(method.getKey()))->second.second;
+            const auto hostMethod = proved.methods.find(method)->second;
             proved.calls.push_back({invoke, hostMethod, invoke.getReceiver()});
             if (queryAll) {
                 values[invoke.getResult()] = Kind::elementVector;
