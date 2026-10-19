@@ -192,13 +192,13 @@ void report(const char * which, const tally & t) {
 // --- the self-test -----------------------------------------------------------
 
 int self_test(const char * out_path) {
-    // 69 of the 95 opcodes define a register, counted from bytecode_opcodes.def's
+    // 69 of the 96 opcodes define a register, counted from bytecode_opcodes.def's
     // own writes_a column rather than written down. A new opcode changes this
     // number, and the change should be deliberate: a definer the recorder does
     // not know about is a register whose type it silently never sees. The
-    // 95th, define_data, stores into the literal in a and defines no register
-    // (writes_a 0).
-    static_assert(ctbrowser::script::opcode_count == 95,
+    // global lexical initializer stores its operand and defines no register
+    // (writes_a 0), as does define_data.
+    static_assert(ctbrowser::script::opcode_count == 96,
                   "the opcode count moved - re-derive the writer count below");
     static_assert(ctbrowser::script::opcode_writer_count == 69,
                   "the set of register-defining opcodes changed; confirm the recorder still "

@@ -1664,9 +1664,6 @@ std::vector<InstanceRegistry> proveInstanceRegistries(mlir::ModuleOp module) {
         const auto record = [&](ctjs::FuncOp constructor) -> InstanceRegistry & {
             InstanceRegistry & proof = out.emplace_back();
             proof.map = made;
-            for (mlir::Value map : inner) {
-                proof.innerMaps.push_back(map.getDefiningOp<ctjs::ConstructOp>());
-            }
             proof.constructor = constructor;
             return proof;
         };

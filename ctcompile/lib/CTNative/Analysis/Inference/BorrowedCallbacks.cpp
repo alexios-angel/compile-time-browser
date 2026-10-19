@@ -21,16 +21,6 @@
 
 namespace ctcompile::ctnative {
 
-bool TypeInference::isBorrowedCallbackParameter(mlir::Value value) {
-    auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
-    if (!argument || !argument.getOwner()->isEntryBlock() ||
-        argument.getArgNumber() < ctjs::implicit_arguments) {
-        return false;
-    }
-    auto function = llvm::dyn_cast<ctjs::FuncOp>(argument.getOwner()->getParentOp());
-    return function && function->hasAttr(kNativeBorrowedCallback);
-}
-
 std::optional<mlir::LogicalResult> TypeInference::visitBorrowedCallback(
     mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands,
     llvm::ArrayRef<TypeLattice *> results) {

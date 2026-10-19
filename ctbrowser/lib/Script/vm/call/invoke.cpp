@@ -300,23 +300,61 @@ std::string context::describe_callee(const function_proto & fn, std::string_view
 /// can say, and an uncaught throw is almost always an Error, whose name and
 /// message are right there.
 std::string context::describe_thrown(value thrown) {
-    if (thrown.is_object()) {
-        auto * obj = static_cast<object_object *>(thrown.as_heap());
-        const value name = lookup_property(thrown, "name");
-        const value message = lookup_property(thrown, "message");
-        if (!name.is_undefined() || !message.is_undefined()) {
-            return to_string(name.is_undefined() ? string("Error") : name) + ": " +
-                   to_string(message);
-        }
-        // Not an Error: list the keys it has, which is usually enough to
-        // recognise it.
-        std::string keys;
-        obj->each_own_key([&](const std::string & key) {
-            if (keys.size() < 120) { keys += (keys.empty() ? "" : ", ") + key; }
-        });
-        return "exception: an object {" + keys + "}";
-    }
-    return "exception: " + to_string(thrown);
+    // Diagnostic getters may throw, catch, collect, or enter another script.
+    // Keep the original exception independent of the mutable VM throw slots.
+    const value saved[] = {thrown, thrown_, pending_throw_, fence_thrown_};
+    const rooted_values keep{*this, saved};
+    const throw_site site = throw_site_;
+    const std::uint64_t site_value = throw_site_value_;
+    const bool failed = std::exchange(failed_, false);
+    std::string error = std::exchange(error_, std::string{});
+    const bool pending = std::exchange(has_pending_throw_, false);
+    const bool fenced = std::exchange(fence_hit_, false);
+    const std::size_t depth = frames_.size();
+    std::string description;
+    const value format = value::object(allocate<native_object>(
+        "<exception diagnostic>", [thrown, &description](context & cx, std::span<value>) {
+            if (thrown.is_object()) {
+                auto * obj = static_cast<object_object *>(thrown.as_heap());
+                const value name = cx.lookup_property(thrown, "name");
+                const rooted keep_name{cx, name};
+                if (cx.throw_pending()) { return value::undefined(); }
+                const value message = cx.lookup_property(thrown, "message");
+                const rooted keep_message{cx, message};
+                if (cx.throw_pending()) { return value::undefined(); }
+                if (!name.is_undefined() || !message.is_undefined()) {
+                    const std::string label = name.is_undefined() ? "Error" : cx.to_string(name);
+                    if (cx.throw_pending()) { return value::undefined(); }
+                    const std::string text = cx.to_string(message);
+                    if (!cx.throw_pending()) { description = label + ": " + text; }
+                    return value::undefined();
+                }
+                std::string keys;
+                obj->each_own_key([&](const std::string & key) {
+                    if (keys.size() < 120) { keys += (keys.empty() ? "" : ", ") + key; }
+                });
+                description = "exception: an object {" + keys + "}";
+            } else {
+                const std::string text = cx.to_string(thrown);
+                if (!cx.throw_pending()) { description = "exception: " + text; }
+            }
+            return value::undefined();
+        }));
+    bool threw = false;
+    value ignored = value::undefined();
+    (void)call_fenced(format, {}, value::undefined(), threw, ignored);
+    // A VM fault, unlike a JavaScript throw, can leave diagnostic frames live.
+    if (frames_.size() > depth) { frames_.resize(depth); }
+    thrown_ = saved[1];
+    pending_throw_ = saved[2];
+    fence_thrown_ = saved[3];
+    has_pending_throw_ = pending;
+    fence_hit_ = fenced;
+    throw_site_ = site;
+    throw_site_value_ = site_value;
+    failed_ = failed;
+    error_ = std::move(error);
+    return description.empty() ? "exception: <description unavailable>" : description;
 }
 
 /// GetMethod(handler, name) (7.3.10) with 10.5's steps 1-3 around it: a

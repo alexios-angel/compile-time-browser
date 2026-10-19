@@ -42,16 +42,6 @@ bool TypeInference::isTimerClear(mlir::Operation * op) {
     return isRealmGlobal(callee, "clearTimeout") || isRealmGlobal(callee, "clearInterval");
 }
 
-bool TypeInference::isHostCallbackParameter(mlir::Value value) {
-    auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
-    if (!argument || !argument.getOwner()->isEntryBlock() ||
-        argument.getArgNumber() < ctjs::implicit_arguments) {
-        return false;
-    }
-    auto function = llvm::dyn_cast<ctjs::FuncOp>(argument.getOwner()->getParentOp());
-    return function && function->hasAttr(kNativeHostCallback);
-}
-
 /// The one list of uses of the global object that leave the globals table
 /// alone. Initialization.cpp treats any other load of `window`, `self` or
 /// `globalThis` as a possible dynamic write to every global. Each entry is

@@ -129,7 +129,8 @@ value context::make_global_object(realm_record & r) {
         }
         if (realm->declared.contains(name)) {
             realm->globals[name] = args[2];
-        } else if (object->find(name) != nullptr || object->find_accessor(name) != nullptr) {
+        } else if (realm->lexical.contains(name) || object->find(name) != nullptr ||
+                   object->find_accessor(name) != nullptr) {
             cx.store_property(args[0], name, args[2]);
         } else {
             realm->globals[name] = args[2];
@@ -175,8 +176,10 @@ value context::make_global_object(realm_record & r) {
         if (cx.own_property(args[0], name, found)) {
             return value::boolean(cx.delete_own_property(args[0], name));
         }
-        (void)realm->globals.erase(name);
-        (void)realm->builtin.erase(name);
+        if (!realm->lexical.contains(name)) {
+            (void)realm->globals.erase(name);
+            (void)realm->builtin.erase(name);
+        }
         return value::boolean(true);
     });
     return value::object(allocate<proxy_object>(target, value::object(handler)));

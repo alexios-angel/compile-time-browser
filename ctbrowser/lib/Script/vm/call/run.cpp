@@ -139,7 +139,21 @@ bool context::global_declaration_instantiation(const program & prog) {
             return cannot(name);
         }
     }
-    for (const std::string & name : prog.lexical_names) { realm.lexical[name] = true; }
+    for (const std::string & name : prog.lexical_names) {
+        // A configurable object binding may be shadowed by a lexical binding.
+        // Keep its value on the object before reusing the table slot.
+        if (const auto prior = realm.globals.find(name); prior != realm.globals.end()) {
+            property_descriptor own;
+            if (holder.is_object() && !own_property(holder, name, own)) {
+                static_cast<object_object *>(holder.as_heap())
+                    ->define(name, prior->second,
+                             realm.builtin.contains(name) ? attr_writable | attr_configurable
+                                                          : attr_default);
+            }
+            realm.globals.erase(prior);
+        }
+        realm.lexical[name] = false;
+    }
     for (const std::string & name : prog.hoisted_vars) {
         if (!annex_b_skipped(prog, name)) { realm.var_names[name] = true; }
     }
@@ -233,6 +247,33 @@ bool context::annex_b_skipped(const program & prog, const std::string & name) {
     return !realm.globals.contains(name);
 }
 
+run_result context::run_script_fenced(const program & prog, value & thrown) {
+    thrown = value::undefined();
+    if (!prog.ok) { return {value::undefined(), false, prog.error}; }
+    const value start =
+        value::object(allocate<native_object>("<script>", [&prog](context & cx, std::span<value>) {
+            if (!cx.global_declaration_instantiation(prog)) { return value::undefined(); }
+            for (const std::string & name : prog.hoisted_vars) {
+                if (!cx.annex_b_skipped(prog, name)) {
+                    cx.declare_global_var(name, prog.eval_code);
+                }
+            }
+            for (const std::string & name : prog.function_names) {
+                cx.declare_global_function(name, prog.eval_code);
+            }
+            auto * entry = cx.allocate<closure_object>(&prog.functions[0]);
+            entry->owner = &prog;
+            entry->realm = &cx.current_realm();
+            return cx.call(value::object(entry), {}, cx.global_this());
+        }));
+    bool threw = false;
+    const value returned = call_fenced(start, {}, global_this(), threw, thrown);
+    const rooted keep_thrown{*this, thrown};
+    run_result result{.returned = returned, .ok = !threw && !failed_, .error = {}};
+    if (!result.ok) { result.error = failed_ ? error_ : "uncaught " + describe_thrown(thrown); }
+    return result;
+}
+
 /// Runs \p prog as a whole turn: declaration instantiation, the top level,
 /// then the microtask checkpoint.
 run_result context::run(const program & prog) {
@@ -244,6 +285,7 @@ run_result context::run(const program & prog) {
     }
     failed_ = false;
     error_.clear();
+    thrown_ = value::undefined();
     // See program::hoisted_vars: the script's `var`s exist before it starts,
     // once GlobalDeclarationInstantiation has found nothing to refuse. Its
     // refusal is thrown with no frame and no handler, as execute() would

@@ -275,9 +275,6 @@ public:
     /// factory's global that only such a call (or a toLowerCase call)
     /// consumes; it lowers to nothing.
     static bool consumedByStringCallback(mlir::Operation * op);
-    /// Whether `value` is a parameter of a specialised replace callback, which
-    /// its call types rather than the entry state.
-    static bool isStringCallbackParameter(mlir::Value value);
 
     /// Whether `array` is a dense array literal that can be a `std::vector`:
     /// its uses keep it dense (no holes) and local. Allowed uses are appends,
@@ -425,7 +422,7 @@ public:
     static bool isNumberElementVector(mlir::Value array);
     /// Whether `value` is a parameter of a specialised callback, which its
     /// call types rather than the entry state.
-    static bool isArrayCallbackParameter(mlir::Value value);
+    static bool isCallbackParameter(mlir::Value value, llvm::StringRef attr);
 
     // Callbacks handed to the host (Inference/HostCallbacks.cpp).
     /// Whether `op` is an `addEventListener` or `setTimeout` call closure
@@ -459,9 +456,6 @@ public:
     /// Whether `op` is `x.preventDefault()` or `x.stopPropagation()` with the
     /// method read only for the call; x is an Event when its type says so.
     static bool isEventCall(mlir::Operation * op);
-    /// Whether `value` is a parameter of such a callback, which its call
-    /// types rather than the entry state.
-    static bool isHostCallbackParameter(mlir::Value value);
     /// The key of `el.key(args)` when it is an element method an ordinary
     /// script calls, with its callee read only for the call
     /// (Inference/Elements.cpp); empty otherwise.
@@ -487,9 +481,6 @@ public:
     /// closure lifting specialised for its callback, a call of the realm's
     /// `Promise.resolve`, or a call of an executor's resolve function.
     static bool isPromiseCall(mlir::Operation * op);
-    /// Whether `value` is a parameter of such a callback, which its operation
-    /// types rather than the entry state.
-    static bool isPromiseCallbackParameter(mlir::Value value);
 
     /// The values that name one array lowered to `std::vector<T>` for a
     /// proved element type T: its owners (array literals and split results),
@@ -789,10 +780,6 @@ private:
     /// function does not handle. `boxed` is the top of the lattice and always
     /// safe; the native compiler either proves a type or falls back to it.
     // Borrowed callbacks (Inference/BorrowedCallbacks.cpp).
-    /// Whether `value` is a parameter of a borrowed callback, which the
-    /// closure and the calls through its callee's parameter type rather than
-    /// the entry state.
-    static bool isBorrowedCallbackParameter(mlir::Value value);
     /// The transfer function of a borrowed callback's closure and of a call
     /// through a borrowed parameter; nullopt for any other operation.
     std::optional<mlir::LogicalResult> visitBorrowedCallback(

@@ -97,6 +97,14 @@ CASES = {
         "ctjs-translate --ctbrowser-js-to-ctjs %t/probe.js --whole-page --whole-page-named=other 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=PROBE",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-declarations.js --whole-page --whole-page-named=PROPS 2>/dev/null    | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT",
     ],
+    "Transforms/computed-key-effects": [
+        "split-file %s %t",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/argument.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ARGUMENT --implicit-check-not='call_direct @add'",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/window.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=WINDOW --implicit-check-not='call_direct @add'",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/compiler.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=COMPILER --implicit-check-not='call_direct @add'",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/local.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=LOCAL",
+        "ctjs-translate --ctbrowser-js-to-ctjs %t/destructuring.js --mlir-print-debuginfo 2>/dev/null | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=DESTRUCTURING",
+    ],
     "Transforms/fold-dynamic-code": [
         "split-file %s %t",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/newfunction.js 2>/dev/null    | ctjs-opt --ctjs-fold-dynamic-code | FileCheck %s --check-prefix=NEWFN",

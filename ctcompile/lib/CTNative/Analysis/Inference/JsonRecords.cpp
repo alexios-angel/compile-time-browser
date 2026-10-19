@@ -9,26 +9,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "ctcompile/CTNative/Analysis/StaticTables.h"
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
 
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/StringExtras.h"
 
 namespace ctcompile::ctnative {
-
-namespace {
-
-/// Whether `key` is an array index (ECMA-262 6.1.7): the canonical decimal
-/// spelling of an integer below 2^32 - 1. Such keys are enumerated first, in
-/// numeric order, whatever order they were defined in.
-bool isArrayIndex(llvm::StringRef key) {
-    if (key.empty() || key.size() > 10 || !llvm::all_of(key, llvm::isDigit)) { return false; }
-    if (key.size() > 1 && key.front() == '0') { return false; }
-    unsigned long long value = 0;
-    return !key.getAsInteger(10, value) && value < 4294967295ULL;
-}
-
-} // namespace
 
 bool TypeInference::passesARecord(mlir::OpOperand & use) {
     // A ctjs.call's operands are the callee, the receiver, then the arguments.
@@ -52,7 +38,7 @@ std::string TypeInference::stringifiedRecordProblem(mlir::Value object, mlir::Op
             return ("it is also used by `" + user->getName().getStringRef() + "`").str();
         }
         const llvm::StringRef key = ctjs::constantKey(write.getKey());
-        if (key.empty() || isArrayIndex(key)) {
+        if (key.empty() || arrayIndexKey(key)) {
             return "a field is written under a key that is not constant or is an array index - "
                    "such keys are enumerated first";
         }

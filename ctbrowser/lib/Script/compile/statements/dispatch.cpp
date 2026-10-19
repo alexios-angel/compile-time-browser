@@ -168,7 +168,8 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                     }
                 } else {
                     const std::uint16_t name = name_operand(std::string{decl.text});
-                    proto().emit(instruction::with_bx(op::set_global, r, name));
+                    proto().emit(instruction::with_bx(
+                        n.text == "var" ? op::set_global : op::init_global, r, name));
                 }
                 release_to(mark);
             }
@@ -312,6 +313,7 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
             declaring_ = true;
             emit_write(std::string{n.text}, r);
             declaring_ = outer_declaring;
+            initialize_lexical(n.text);
         }
         break;
     }

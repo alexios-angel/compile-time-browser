@@ -209,7 +209,7 @@ std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::in
 }
 
 void compiler_impl::declare_class_name(std::string name, bool force) {
-    if ((force || frames_.size() > 1) && !was_predeclared(name) &&
+    if ((force || frames_.size() > 1) && (force || !was_predeclared(name)) &&
         find_local_in_current_scope(name) == nullptr) {
         const std::uint16_t reg = declare_local(name);
         fn().locals.back().lexical = true;
@@ -230,9 +230,12 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     // outer one: capture is decided when the nested function is compiled,
     // not when it runs. The value is written further down, as soon as the
     // class exists.
-    // A scope of its own for an expression's name, so the methods can capture
-    // it and the code after the expression cannot see it.
-    const bool own_scope = !as_declaration && !n.text.empty();
+    // A global declaration's outer binding stays uninitialized until static
+    // evaluation finishes. Its methods and statics use the inner class name,
+    // just as a named expression's do.
+    const bool global_declaration = as_declaration && frames_.size() == 1 && !top_level_is_scope_ &&
+                                    fn().scope_marks.size() <= 1 && !completion_value_;
+    const bool own_scope = !n.text.empty() && (!as_declaration || global_declaration);
     if (own_scope) { push_scope(); }
     ++class_body_depth_; // Everything in here is strict code (15.7.1).
     if (!n.text.empty()) { declare_class_name(std::string{n.text}, own_scope); }
@@ -419,6 +422,7 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         declaring_ = true;
         emit_write(n.text, dst);
         declaring_ = outer_declaring;
+        initialize_lexical(n.text);
     }
 
     // Two passes, in the specification's order: every method and accessor

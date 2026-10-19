@@ -14,6 +14,8 @@
 # - redeclare.html: a second top-level `let` of the same name fails its own
 #   script with a SyntaxError, and the next script still runs.
 # - module.html: a module script waits for the end of the parse.
+# - page_scripts.py: error payload identity survives diagnostic reentry; a
+#   throwing getter cannot escape a nested script; const writes check TDZ first.
 #
 # Today no native compile takes a page's scripts as one program:
 # check-workload.py compiles each page script on its own, and its script-run

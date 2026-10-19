@@ -215,11 +215,20 @@ void browser::allow_network(bool allowed) {
 }
 
 bool browser::run_script(std::string_view source) {
+    return run_script_impl(source, nullptr);
+}
+
+bool browser::run_script_impl(std::string_view source, script::value * thrown) {
     if (!script_) { return false; }
     auto compiled =
         std::make_unique<script::program>(script::compiler::compile(std::string{source}));
     if (!compiled->ok) {
         script_error_ = compiled->error;
+        if (thrown != nullptr) {
+            *thrown = compiled->error.starts_with("parse error:")
+                          ? script_->make_error("SyntaxError", compiled->error)
+                          : script::value::undefined();
+        }
         return false;
     }
     // Kept, not scoped. A closure holds a `const function_proto *` into its
@@ -228,6 +237,7 @@ bool browser::run_script(std::string_view source) {
     const script::program & kept = *compiled;
     extra_programs_.push_back(std::move(compiled));
     const script::run_result result = script_->run(kept);
+    if (!result.ok && thrown != nullptr) { *thrown = script_->last_thrown(); }
     // Reset on every run so that one failing script does not make later
     // successful ones report its error; callers use this to tell whether the
     // script ran.
