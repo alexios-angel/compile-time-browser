@@ -19,8 +19,6 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringSet.h"
 
-#include <iterator>
-
 namespace ctcompile::ctjs {
 namespace {
 
@@ -109,7 +107,7 @@ llvm::StringSet<> standardLibrary() {
 
 bool nativeRealmProvides(llvm::StringRef name) {
     static const llvm::StringSet<> standard = standardLibrary();
-    static const llvm::StringSet<> host(std::begin(hostNames), std::end(hostNames));
+    static const llvm::StringSet<> host(llvm::from_range, hostNames);
     // Event handler IDL attributes (`onload`, `onclick`, ...): the window has
     // one per event type, and the list of event types is open-ended.
     const bool handler =
