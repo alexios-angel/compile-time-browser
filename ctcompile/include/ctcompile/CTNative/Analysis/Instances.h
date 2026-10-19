@@ -60,7 +60,9 @@ struct InstanceRegistry {
     /// `super:` keys (ClosureLifting/ClassInheritance.cpp): they run on the
     /// new instance and hand `this` to the Map as the constructor does.
     llvm::SmallVector<ctjs::FuncOp> constructorCopies;
-    /// The `new` results of the class.
+    /// The `new` results of this class alone, including in a shared registry.
+    llvm::SmallVector<mlir::Value> classInstances;
+    /// Every `new` result a read of the registry Map may return.
     llvm::SmallVector<mlir::Value> instances;
     /// The values read back from the Map that may hold an instance: `get`
     /// results and every branch result, call result and parameter they flow

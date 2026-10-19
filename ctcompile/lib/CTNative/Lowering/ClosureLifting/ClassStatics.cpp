@@ -52,6 +52,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../../Symbolic/Facts.h"
 #include "ClassInheritance.h"
 #include "ClosureLifter.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -358,6 +359,7 @@ bool closureLifter::bindClassStatics(liftReport & out) {
         };
 
     bool changed = false;
+    llvm::SetVector<mlir::Operation *> boundGetters;
     for (auto & [key, cls] : jsClasses) {
         if (cls.statics.empty() && cls.staticGetters.empty()) { continue; }
         const auto refuse = [&](const llvm::Twine & why) {
@@ -1377,6 +1379,7 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                 // function must be private for type inference to see them all.
                 mlir::SymbolTable::setSymbolVisibility(m.target,
                                                        mlir::SymbolTable::Visibility::Private);
+                if (m.getter) { boundGetters.insert(m.target.getOperation()); }
             }
         }
         // A static member nothing reads stays as a function nobody calls.
@@ -1402,6 +1405,81 @@ bool closureLifter::bindClassStatics(liftReport & out) {
         }
         for (auto & [copy, source] : keptCopies) { all.emplace_back(copy, source); }
         module->setAttr(kNativeCopies, mlir::DictionaryAttr::get(context, all));
+    }
+    if (!boundGetters.empty()) {
+        // A getter may return a run-once const binding rather than a literal.
+        // Keep a read before its write, or a binding with any other writer,
+        // untouched; the normal static representation preserves those cases.
+        llvm::MapVector<mlir::Attribute, llvm::SmallVector<ctjs::CreateCellOp>> statics;
+        module.walk([&](ctjs::CreateCellOp cell) {
+            if (auto symbol = cell->getAttr(kNativeStaticCell)) { statics[symbol].push_back(cell); }
+        });
+        indexStarters();
+        const llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> noFields;
+        for (auto & [symbol, cells] : statics) {
+            ctjs::CellSetOp write;
+            bool closed = true;
+            for (ctjs::CreateCellOp cell : cells) {
+                if (!ctjs::isUndefinedConstant(cell.getInitial())) { closed = false; }
+                for (mlir::OpOperand & use : cell.getResult().getUses()) {
+                    if (classify(use) == cellUse::write) {
+                        auto set = llvm::cast<ctjs::CellSetOp>(use.getOwner());
+                        if (write) { closed = false; }
+                        write = set;
+                    } else if (classify(use) != cellUse::read &&
+                               !llvm::isa<ctjs::RootOp>(use.getOwner())) {
+                        closed = false;
+                    }
+                }
+            }
+            const auto text =
+                write ? ctjs::constantAttr<ctjs::StringAttr>(write.getValue()) : ctjs::StringAttr{};
+            if (!closed || !text) { continue; }
+            llvm::SmallVector<ctjs::CellGetOp> reads;
+            for (ctjs::CreateCellOp cell : cells) {
+                for (mlir::Operation * user : cell.getResult().getUsers()) {
+                    auto read = llvm::dyn_cast<ctjs::CellGetOp>(user);
+                    if (read && boundGetters.contains(read->getParentOp()) &&
+                        runsAfter(read, write, noFields)) {
+                        reads.push_back(read);
+                    }
+                }
+            }
+            for (ctjs::CellGetOp read : reads) {
+                mlir::OpBuilder at(read);
+                auto constant = ctjs::ConstantOp::create(at, read.getLoc(), read.getType(), text);
+                read.getResult().replaceAllUsesWith(constant.getResult());
+                read.erase();
+            }
+        }
+        // Use the existing primitive and direct-return analysis, restricted
+        // to these proved getters so unrelated caller censuses cannot exhaust
+        // the budget before their string expressions are visited.
+        auto getters = mlir::ModuleOp::create(module.getLoc());
+        mlir::OwningOpRef<mlir::ModuleOp> ownedGetters(getters);
+        for (mlir::Operation * getter : boundGetters) {
+            getters.getBody()->push_back(getter->clone());
+        }
+        WorkBudget budget{100000};
+        symbolic::Analysis facts(getters, budget);
+        facts.run();
+        if (budget.exhausted) { return changed; }
+        for (mlir::Operation * getter : boundGetters) {
+            auto original = llvm::cast<ctjs::FuncOp>(getter);
+            auto copy = getters.lookupSymbol<ctjs::FuncOp>(original.getSymName());
+            llvm::SmallVector<ctjs::ReturnOp> exits, copiedExits;
+            original.walk([&](ctjs::ReturnOp ret) { exits.push_back(ret); });
+            copy.walk([&](ctjs::ReturnOp ret) { copiedExits.push_back(ret); });
+            for (auto [ret, copied] : llvm::zip_equal(exits, copiedExits)) {
+                auto text =
+                    llvm::dyn_cast_or_null<ctjs::StringAttr>(facts.get(copied.getValue()).literal);
+                if (!text || ctjs::constantAttr<ctjs::StringAttr>(ret.getValue())) { continue; }
+                mlir::OpBuilder at(ret);
+                auto constant =
+                    ctjs::ConstantOp::create(at, ret.getLoc(), ret.getValue().getType(), text);
+                ret->setOperand(0, constant.getResult());
+            }
+        }
     }
     return changed;
 }
