@@ -9,7 +9,7 @@
 #
 # RUN: split-file %s %t
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/table.js --mlir-print-debuginfo 2>/dev/null \
-# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/table.mlir
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/table.mlir
 # RUN: FileCheck %s --check-prefix=TABLE --implicit-check-not=ctnative.not_native < %t/table.mlir
 # RUN: ctjs-opt %t/table.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/table.cpp
 # RUN: FileCheck %s --check-prefix=CPP < %t/table.cpp
@@ -20,7 +20,7 @@
 # RUN: %native_reference %t/table.js | FileCheck %s --check-prefix=OBSERVATION
 # RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/table.js | FileCheck %s --check-prefix=OBSERVATION
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/spread.js --mlir-print-debuginfo 2>/dev/null \
-# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/spread.mlir
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/spread.mlir
 # RUN: FileCheck %s --check-prefix=SPREAD --implicit-check-not=ctnative.not_native < %t/spread.mlir
 # RUN: ctjs-opt %t/spread.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/spread.cpp
 # RUN: %gxx -O2 %t/spread.cpp -o %t/spread-gcc
@@ -30,7 +30,7 @@
 # RUN: %native_reference %t/spread.js | FileCheck %s --check-prefix=SPREAD-OBSERVATION
 # RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/spread.js | FileCheck %s --check-prefix=SPREAD-OBSERVATION
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/entries.js --mlir-print-debuginfo 2>/dev/null \
-# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/entries.mlir
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/entries.mlir
 # RUN: FileCheck %s --check-prefix=ENTRIES --implicit-check-not=ctnative.not_native < %t/entries.mlir
 # RUN: ctjs-opt %t/entries.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/entries.cpp
 # RUN: %gxx -O2 %t/entries.cpp -o %t/entries-gcc
@@ -41,7 +41,7 @@
 # RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/entries.js | FileCheck %s --check-prefix=ENTRIES-OBSERVATION-NODE
 # RUN: for name in checked; do \
 # RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --mlir-print-debuginfo 2>/dev/null \
-# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/$name.mlir; \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/$name.mlir; \
 # RUN:   ctjs-opt %t/$name.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/$name.cpp; done
 # RUN: FileCheck %s --check-prefix=UNROLLED --implicit-check-not=ctnative.not_native < %t/checked.mlir
 # RUN: %gxx -O2 %t/checked.cpp -o %t/checked-gcc && %t/checked-gcc | FileCheck %s --check-prefix=CHECKED
@@ -59,7 +59,7 @@
 # `config[key]`, every call passing a constant key, lowers and prints what Node
 # and the interpreter print.
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/dynamic.js --mlir-print-debuginfo 2>/dev/null \
-# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/dynamic.mlir
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/dynamic.mlir
 # RUN: FileCheck %s --check-prefix=DYNAMIC --implicit-check-not=ctnative.not_native < %t/dynamic.mlir
 # RUN: ctjs-opt %t/dynamic.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/dynamic.cpp
 # RUN: %gxx -O2 %t/dynamic.cpp -o %t/dynamic-gcc
@@ -69,10 +69,10 @@
 # RUN: %native_reference %t/dynamic.js | FileCheck %s --check-prefix=DYNAMICRUN
 # RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/dynamic.js | FileCheck %s --check-prefix=DYNAMICRUN
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/guarded.js --mlir-print-debuginfo 2>/dev/null \
-# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 # RUN:   | FileCheck %s --check-prefix=GUARDED --implicit-check-not="holding an object literal"
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/passed.js --mlir-print-debuginfo 2>/dev/null \
-# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 # RUN:   | FileCheck %s --check-prefix=PASSED
 
 # TABLE: emitc.include <"ctcompile/CTNative/Runtime/StaticTable.hpp">

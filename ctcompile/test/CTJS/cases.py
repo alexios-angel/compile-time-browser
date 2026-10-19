@@ -95,6 +95,9 @@ CASES = {
         "sed 's|// escape: ||' %t/methods.js > %t/escape.js",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/escape.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s --check-prefix=ESCAPE",
     ],
+    "Transforms/closure-values-nested": [
+        "ctjs-opt %s --ctjs-test-closure-values | FileCheck %s",
+    ],
     "Transforms/closure-values-frames": [
         "split-file %s %t",
         "ctjs-translate --ctbrowser-js-to-ctjs %t/frames.js --mlir-print-debuginfo 2>/dev/null    | ctjs-opt --ctjs-test-closure-values | FileCheck %s",

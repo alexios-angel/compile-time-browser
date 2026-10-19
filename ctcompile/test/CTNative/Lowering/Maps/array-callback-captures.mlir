@@ -9,11 +9,11 @@
 // boxed) and the callbacks at their Map capture's carrier. proof.mlir keeps
 // the identity walk's refusal.
 // RUN: split-file %s %t
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/captured.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=CAPTURED --implicit-check-not="escapes or is mutated" --implicit-check-not=ctnative.map_reason
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/captured.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true | FileCheck %s --check-prefix=CAPTURED --implicit-check-not="escapes or is mutated" --implicit-check-not=ctnative.map_reason
 //
 // reduce's initial value is an argument of the call, not a capture: a Map
 // passed there still escapes.
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/initial.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=INITIAL
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/initial.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true | FileCheck %s --check-prefix=INITIAL
 
 // CAPTURED-DAG: @pick$1({{.*}}ctnative.not_native = "native Map needs supported keys and numeric, boolean, closed mixed, owning-string, object-identity union or acyclic Map values; inferred !ctnative.map<!ctnative.boxed, !ctnative.num<i32>>"
 // CAPTURED-DAG: @fn$2({{.*}}ctnative.not_native = "capture 0 is !ctnative.map<!ctnative.boxed, !ctnative.num<i32>>, which has no native carrier yet"

@@ -13,7 +13,7 @@
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/components.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/components.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/components.mlir
 // RUN: FileCheck %s --implicit-check-not=ctnative.not_native < %t/components.mlir
 // RUN: ctjs-opt %t/components.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/components.cpp
 // RUN: %gxx -O2 %t/components.cpp -o %t/components-gcc

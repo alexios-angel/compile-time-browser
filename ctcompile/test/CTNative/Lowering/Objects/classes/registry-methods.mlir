@@ -19,7 +19,7 @@
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/uncalled.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/uncalled.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/uncalled.mlir
 // RUN: FileCheck %s --check-prefix=UNCALLED --implicit-check-not=ctnative.not_native < %t/uncalled.mlir
 // RUN: ctjs-opt %t/uncalled.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/uncalled.cpp
 // RUN: FileCheck %s --check-prefix=CPP --implicit-check-not=std::variant --implicit-check-not=std::visit < %t/uncalled.cpp
@@ -36,7 +36,7 @@
 // `reset` is refused too instead of naming a class the shape census never
 // saw.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/refused-maker.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=MAKER
 //
 // What keeps "nothing calls it": a class with no registry (LOCAL), a method
@@ -45,19 +45,19 @@
 // (KEYED), and a method whose class does not lift because another method
 // needs a call (ALONE).
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/local.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=LOCAL
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/param.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=PARAM
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/value.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=VALUE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/keyed.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=KEYED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/alone.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=ALONE
 //
 // The receiver rule (condition 3) still applies on this route. In calls.js
@@ -67,7 +67,7 @@
 // lifts; registry-receivers.mlir), `this.grow()` is not a direct call, and
 // `reset` keeps that refusal.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/calls.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=CALLS
 
 // UNCALLED-DAG: emitc.class @Widget

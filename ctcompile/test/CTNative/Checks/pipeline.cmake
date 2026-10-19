@@ -26,7 +26,10 @@ endforeach()
 # value suppresses the duplicate stage inside lowering. OPTIMIZE=OFF disables
 # only the entry's defaults, just as --ctnative-lower-to-emitc=optimize=false
 # does in a manually composed pipeline.
-set(_native_options "")
+# observe-globals: main prints each global as name=value before it returns,
+# which is what compilation-unit.py and the workload drivers compare with the
+# interpreter. A program with string entries still prints none.
+set(_native_options "observe-globals=true")
 if(DEFINED OPTIMIZE AND NOT OPTIMIZE)
   list(APPEND _native_options "optimize=false")
 endif()

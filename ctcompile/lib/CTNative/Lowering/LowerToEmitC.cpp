@@ -1004,6 +1004,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // script's top level prints nothing in the VM. So it prints no
         // globals.
         if (!stringEntries.empty()) { lower.explicitObservations = true; }
+        lower.observeGlobals = observeGlobals;
         if (admittedGlobals && admittedGlobals->proved()) {
             lower.explicitObservations = true;
             for (const auto & name : hostContract->observations) {

@@ -7,7 +7,7 @@
 #
 # RUN: split-file %s %t
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/tags.js --mlir-print-debuginfo 2>/dev/null \
-# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/tags.mlir
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/tags.mlir
 # RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/tags.mlir
 # RUN: ctjs-opt %t/tags.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/tags.cpp
 # RUN: FileCheck %s --check-prefix=CPP < %t/tags.cpp
@@ -24,7 +24,7 @@
 # A group that may not take part stays refused.
 #
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/totype.js -o %t/totype-input.mlir
-# RUN: ctjs-opt %t/totype-input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/totype.mlir
+# RUN: ctjs-opt %t/totype-input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{observe-globals=true},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/totype.mlir
 # RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/totype.mlir
 # RUN: ctjs-translate --mlir-to-cpp %t/totype.mlir | FileCheck %s --check-prefix=TOTYPE-CPP
 # RUN: %compilation_unit --cxx g++ --module %t/totype.mlir --js %t/totype.js --work %t --name totype_gcc --core-build %build
@@ -37,7 +37,7 @@
 # parameter has that kind's own carrier, and no union carrier is left.
 #
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js -o %t/mixed-input.mlir
-# RUN: ctjs-opt %t/mixed-input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/mixed.mlir
+# RUN: ctjs-opt %t/mixed-input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{observe-globals=true},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/mixed.mlir
 # RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/mixed.mlir
 # RUN: FileCheck %s --check-prefix=COPIES < %t/mixed.mlir
 # RUN: ctjs-translate --mlir-to-cpp %t/mixed.mlir | FileCheck %s --check-prefix=MIXED-CPP --implicit-check-not=number_string --implicit-check-not=boolean_string
@@ -50,7 +50,7 @@
 # three copies (null and undefined share the nullable carrier), all native.
 #
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/primitive.js -o %t/primitive-input.mlir
-# RUN: ctjs-opt %t/primitive-input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/primitive.mlir
+# RUN: ctjs-opt %t/primitive-input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{observe-globals=true},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/primitive.mlir
 # RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/primitive.mlir
 # RUN: FileCheck %s --check-prefix=PRIMITIVE-COPIES < %t/primitive.mlir
 # RUN: ctjs-translate --mlir-to-cpp %t/primitive.mlir | FileCheck %s --check-prefix=CPP --implicit-check-not=number_string --implicit-check-not=boolean_string --implicit-check-not=std::variant
@@ -66,7 +66,7 @@
 # the nullable one keeps `${t}`. All of them lower.
 #
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/bootstrap.js -o %t/bootstrap-input.mlir
-# RUN: ctjs-opt %t/bootstrap-input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/bootstrap.mlir
+# RUN: ctjs-opt %t/bootstrap-input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{observe-globals=true},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/bootstrap.mlir
 # RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/bootstrap.mlir
 # RUN: FileCheck %s --check-prefix=PRIMITIVE-COPIES < %t/bootstrap.mlir
 # RUN: ctjs-translate --mlir-to-cpp %t/bootstrap.mlir | FileCheck %s --check-prefix=CPP --implicit-check-not=number_string --implicit-check-not=boolean_string --implicit-check-not=std::variant
@@ -81,7 +81,7 @@
 # narrowed by `string` from !ctnative.num<i32>"); folded, all of them lower.
 #
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/kinds.js -o %t/kinds-input.mlir
-# RUN: ctjs-opt %t/kinds-input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/kinds.mlir
+# RUN: ctjs-opt %t/kinds-input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{observe-globals=true},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/kinds.mlir
 # RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/kinds.mlir
 # RUN: FileCheck %s --check-prefix=KINDS-COPIES < %t/kinds.mlir
 # RUN: %compilation_unit --cxx g++ --module %t/kinds.mlir --js %t/kinds.js --work %t --name kinds_gcc --core-build %build
@@ -97,15 +97,15 @@
 # has no carrier, so toType stays refused.
 #
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/union.js --mlir-print-debuginfo 2>/dev/null \
-# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 # RUN:   | FileCheck %s --check-prefix=UNION-REFUSED --implicit-check-not=ctnative.copies
 # RUN: %native_reference %t/union.js | FileCheck %s --check-prefix=UNION
 # RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/union.js | FileCheck %s --check-prefix=UNION-NODE
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/merged.js --mlir-print-debuginfo 2>/dev/null \
-# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 # RUN:   | FileCheck %s --check-prefix=MERGED --implicit-check-not=ctnative.copies
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional.js --mlir-print-debuginfo 2>/dev/null \
-# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 # RUN:   | FileCheck %s --check-prefix=OPTIONAL
 
 # NATIVE: emitc.func @main

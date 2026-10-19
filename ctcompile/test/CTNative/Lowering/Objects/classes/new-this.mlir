@@ -14,7 +14,7 @@
 // and calls a method on it. The whole program is native, and GCC, Clang, the
 // interpreter and Node print the same value.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/components.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/components.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/components.mlir
 // RUN: FileCheck %s --check-prefix=COMPONENTS --implicit-check-not=ctnative.not_native < %t/components.mlir
 // RUN: ctjs-opt %t/components.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/components.cpp
 // RUN: %gxx -O2 %t/components.cpp -o %t/components-gcc
@@ -34,7 +34,7 @@
 // it: name() reads `this.constructor.NAME`, which the static rewrite resolves
 // per class (name_D for D), and describe() builds `new this` and calls it.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/names.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/names.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/names.mlir
 // RUN: FileCheck %s --check-prefix=NAMES --implicit-check-not=ctnative.not_native < %t/names.mlir
 // RUN: ctjs-opt %t/names.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/names.cpp
 // RUN: %gxx -O2 %t/names.cpp -o %t/names-gcc
@@ -53,7 +53,7 @@
 // native and prints the interpreter's value; instances-by-value.mlir's
 // twice.js keeps a returned instance that is passed on refused.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/get-or-create.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/get-or-create.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/get-or-create.mlir
 // RUN: FileCheck %s --check-prefix=GETORCREATE --implicit-check-not=ctnative.not_native < %t/get-or-create.mlir
 // RUN: ctjs-opt %t/get-or-create.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/get-or-create.cpp
 // RUN: %gxx -O2 %t/get-or-create.cpp -o %t/get-or-create-gcc
@@ -69,21 +69,21 @@
 // The static read as a value and called as a plain function: its `this` is
 // then undefined, not the class, so the class keeps its static members.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/extracted.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=EXTRACTED
 // EXTRACTED: ctnative.class_reason = "it has static method `getOrCreateInstance`; its static method is called with another receiver in `run${{[0-9]+}}`"
 //
 // `new this.constructor` in an instance method has no such proof: an
 // instance's `constructor` is the class only while nothing replaces it.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/constructor.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=CONSTRUCTOR
 // CONSTRUCTOR: ctnative.class_reason = "it has static method `make`; it constructs `new this` or `new this.constructor` in `clone${{[0-9]+}}`"
 //
 // The constructor captures a value of the frame that defines the class, which
 // a `new this` in a static member's own frame cannot reach.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/captures.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=CAPTURES
 // CAPTURES: ctnative.closure_reason = "it is constructed by `new this` in `measure${{[0-9]+}}`, outside the frame that defines it, and its constructor captures 1 value(s) from that frame"
 

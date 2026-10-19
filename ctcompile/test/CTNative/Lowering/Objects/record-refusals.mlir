@@ -14,25 +14,25 @@
 
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/global.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=GLOBAL
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/stored.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=STORED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/kept.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=KEPT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/argument.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=ARGUMENT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/joined.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=JOINED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/dynamic-key-kept.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=DYNAMIC
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/dynamic-key.js --mlir-print-debuginfo 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/dynamic-key.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/dynamic-key.mlir
 // RUN: FileCheck %s --check-prefix=DYNTABLE --implicit-check-not=ctnative.not_native < %t/dynamic-key.mlir
 // RUN: ctjs-opt %t/dynamic-key.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/dynamic-key.cpp
 // RUN: %gxx -O2 %t/dynamic-key.cpp -o %t/dynamic-key-gcc
