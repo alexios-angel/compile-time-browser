@@ -16,8 +16,8 @@ namespace ctcompile::ctnative::lowering_detail {
 bool recovery::run() {
     if (!inspect()) { return false; }
     tail normal, caught;
-    if (!collect(normal, push.getBody(), true, false) ||
-        !collect(caught, push.getHandler(), false, true) || !partition(normal, caught)) {
+    if (!collect(normal, push.getBody(), false) ||
+        !collect(caught, push.getHandler(), true) || !partition(normal, caught)) {
         return false;
     }
     if (throws == 0 && invocations.empty()) {

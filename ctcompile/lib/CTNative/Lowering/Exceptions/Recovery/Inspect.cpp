@@ -171,8 +171,8 @@ ExceptionInvocationSource inspectSingleInvocationRegion(ctjs::FuncOp function, u
     recovery attempt{function, maxSteps, ExceptionRecoveryMode::CheckedInvocations};
     recovery::tail normal, caught;
     ExceptionInvocationSource result;
-    if (attempt.inspect() && attempt.collect(normal, attempt.push.getBody(), true, false) &&
-        attempt.collect(caught, attempt.push.getHandler(), false, true) &&
+    if (attempt.inspect() && attempt.collect(normal, attempt.push.getBody(), false) &&
+        attempt.collect(caught, attempt.push.getHandler(), true) &&
         attempt.partition(normal, caught)) {
         // Every checked call must sit on the one straight-line success path
         // from the handler installation; a call reachable any other way refuses.

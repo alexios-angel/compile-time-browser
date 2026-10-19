@@ -124,7 +124,7 @@ struct recovery : workBudget {
     bool proveEffects(const tail & normal, const tail & caught);
 
     // Defined in Tails.cpp.
-    bool collect(tail & result, mlir::Block * start, bool initiallyActive, bool isCatch);
+    bool collect(tail & result, mlir::Block * start, bool isCatch);
     bool acyclic(tail & plan);
     /// Kahn's topological drain of `ready`, charging each node and edge.
     /// Returns the number of nodes visited, or nullopt once the budget is
