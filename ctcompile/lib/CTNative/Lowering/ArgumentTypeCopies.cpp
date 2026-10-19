@@ -207,7 +207,12 @@ bool copyPerArgumentType(mlir::ModuleOp module,
             for (unsigned i : mixed) {
                 const mlir::Type passed = typeOf(call->getOperand(i));
                 merged |= !passed || needsUnion(passed);
-                key.push_back(static_cast<char>(carrierOf(passed)));
+                const carrier held = carrierOf(passed);
+                key.push_back(static_cast<char>(held));
+                if (held == carrier::instance) {
+                    const llvm::StringRef name = instanceClassName(passed);
+                    key += llvm::Twine(name.size()).str() + ":" + name.str();
+                }
                 types.push_back(passed);
             }
             auto row = llvm::find_if(byType, [&](const group & g) { return g.key == key; });

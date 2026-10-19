@@ -1705,6 +1705,9 @@ std::vector<InstanceRegistry> markInstanceRegistries(mlir::ModuleOp module) {
         }
         proved.push_back(std::move(registry));
     }
+    // Keep the exact class origins for its methods before widening generic
+    // Map reads to every class sharing the registry.
+    for (InstanceRegistry & registry : proved) { registry.classInstances = registry.instances; }
     // A value read back from a family's Map may be an instance of any of its
     // classes.
     for (InstanceRegistry & registry : proved) {
