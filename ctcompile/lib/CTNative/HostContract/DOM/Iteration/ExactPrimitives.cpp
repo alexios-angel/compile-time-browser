@@ -15,7 +15,6 @@
 #include "mlir/IR/Matchers.h"
 #include "llvm/ADT/APFloat.h"
 
-#include <bit>
 #include <cmath>
 #include <limits>
 
@@ -89,13 +88,12 @@ mlir::Attribute exactUnary(ctjs::UnaryOp unary, dom_source_detail::DOMSource & w
     if (!number) {
         const auto converted = exactNumber(input.getValue(), work);
         if (!converted) { return {}; }
-        number = ctjs::NumberAttr::get(unary.getContext(), std::bit_cast<uint64_t>(*converted));
+        number = ctjs::numberAttr(unary.getContext(), *converted);
     }
     if (unary.getKind() == ctjs::UnaryKind::Plus) { return number; }
     if (unary.getKind() == ctjs::UnaryKind::BitNot) {
-        return ctjs::NumberAttr::get(
-            unary.getContext(),
-            std::bit_cast<uint64_t>((~::ctnative::js_num{number.getDouble()}).value()));
+        return ctjs::numberAttr(unary.getContext(),
+                                (~::ctnative::js_num{number.getDouble()}).value());
     }
     // Number negation changes only the sign, including zero and NaN.
     llvm::APFloat result(llvm::APFloat::IEEEdouble(), llvm::APInt(64, number.getBits()));
@@ -245,8 +243,7 @@ mlir::Attribute exactArithmetic(mlir::Operation * binary, dom_source_detail::DOM
     const auto number = [&](mlir::Attribute value) -> ctjs::NumberAttr {
         if (auto original = llvm::dyn_cast<ctjs::NumberAttr>(value)) { return original; }
         const auto converted = exactNumber(value, work);
-        return converted ? ctjs::NumberAttr::get(binary->getContext(),
-                                                 std::bit_cast<uint64_t>(*converted))
+        return converted ? ctjs::numberAttr(binary->getContext(), *converted)
                          : ctjs::NumberAttr{};
     };
     auto left = number(lhs.getValue()), right = number(rhs.getValue());
@@ -265,7 +262,7 @@ mlir::Attribute exactArithmetic(mlir::Operation * binary, dom_source_detail::DOM
         case ctjs::BinaryKind::UShr: result = a.unsigned_shift_right(b); break;
         default: return {};
         }
-        return ctjs::NumberAttr::get(binary->getContext(), std::bit_cast<uint64_t>(result.value()));
+        return ctjs::numberAttr(binary->getContext(), result.value());
     }
     if (kind.getValue() == ctjs::BinaryKind::Pow) {
         const double base = left.getDouble(), exponent = right.getDouble();
@@ -276,8 +273,7 @@ mlir::Attribute exactArithmetic(mlir::Operation * binary, dom_source_detail::DOM
                               : std::abs(base) == 1 && !std::isfinite(exponent)
                                   ? nan
                                   : std::pow(base, exponent);
-        return ctjs::NumberAttr::get(binary->getContext(),
-                                     std::bit_cast<uint64_t>(std::isnan(result) ? nan : result));
+        return ctjs::numberAttr(binary->getContext(), std::isnan(result) ? nan : result);
     }
     // Exact Number operands cannot invoke conversion hooks. LLVM supplies
     // binary64 rounding independently of the host's floating-point state.
