@@ -170,12 +170,7 @@ bool copyPerArgumentType(mlir::ModuleOp module,
         return lattice ? lattice->getValue().getType() : mlir::Type{};
     };
 
-    unsigned nextIndex = 0;
-    module.walk([&](ctjs::FuncOp fn) {
-        if (const std::optional<unsigned> index = ctjs::functionIndex(fn)) {
-            nextIndex = std::max(nextIndex, *index + 1);
-        }
-    });
+    unsigned nextIndex = ctjs::nextFunctionIndex(module);
     auto earlier = module->getAttrOfType<mlir::DictionaryAttr>(kNativeCopies);
     llvm::SmallVector<mlir::NamedAttribute> copies;
     if (earlier) { copies.append(earlier.begin(), earlier.end()); }

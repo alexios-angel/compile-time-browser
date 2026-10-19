@@ -88,21 +88,6 @@ void eraseWithFeeders(mlir::Operation * op) {
     }
 }
 
-/// Whether `fn` reads new.target, or its own closure for anything but making
-/// closures that relay none of its captures. A direct call passes neither.
-bool needsCallee(ctjs::FuncOp fn) {
-    mlir::Block & entry = fn.getBody().front();
-    if (!entry.getArgument(1).use_empty()) { return true; }
-    return llvm::any_of(entry.getArgument(2).getUses(), [](mlir::OpOperand & use) {
-        auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(use.getOwner());
-        if (!made || use.getOperandNumber() != 0) { return true; }
-        for (unsigned i = 0; i < made.getUpvalues().size(); ++i) {
-            if (closureLifter::enclosingIndex(made, i) >= 0) { return true; }
-        }
-        return false;
-    });
-}
-
 /// Whether `value` is the global object on every path: a load of
 /// `globalThis`, `window` or `self`, the script's own `this`, a choice between
 /// such values, or a parameter every direct caller passes one for (a UMD
@@ -147,26 +132,6 @@ bool isGlobalObject(mlir::ModuleOp module, mlir::Value value, unsigned depth = 0
         return call && argument.getArgNumber() < call->getNumOperands() &&
                isGlobalObject(module, call->getOperand(argument.getArgNumber()), depth + 1);
     });
-}
-
-/// Whether `fn` reads no new.target and uses its own closure only to read its
-/// captures or to make closures (which may relay them): a closure made for a
-/// copy of `fn` with the same captures runs the copy exactly as the original
-/// runs on its own closure.
-bool readsOnlyCaptures(ctjs::FuncOp fn) {
-    mlir::Block & entry = fn.getBody().front();
-    return entry.getArgument(1).use_empty() &&
-           llvm::all_of(entry.getArgument(2).getUses(), [](mlir::OpOperand & use) {
-               return llvm::isa<ctjs::CreateClosureOp, ctjs::LoadUpvalueOp>(use.getOwner()) &&
-                      use.getOperandNumber() == 0;
-           });
-}
-
-/// Whether `made` runs before `op` in the same function: it sits in a block
-/// that contains `op` (or an operation enclosing it), earlier.
-bool madeBefore(mlir::Operation * made, mlir::Operation * op) {
-    mlir::Operation * level = made->getBlock()->findAncestorOpInBlock(*op);
-    return level && made->isBeforeInBlock(level);
 }
 
 /// The function that `op` sits in, by name, for a refusal.
@@ -357,12 +322,7 @@ bool closureLifter::bindClassStatics(liftReport & out) {
 
     // A helper that a class is passed to is cloned for that class, with the
     // functions it creates, under fresh function indices.
-    unsigned nextIndex = 0;
-    module.walk([&](ctjs::FuncOp fn) {
-        if (const std::optional<unsigned> index = ctjs::functionIndex(fn)) {
-            nextIndex = std::max(nextIndex, *index + 1);
-        }
-    });
+    unsigned nextIndex = ctjs::nextFunctionIndex(module);
     llvm::DenseMap<mlir::Operation *, mlir::StringAttr> copiedFrom;
     llvm::SmallVector<std::pair<mlir::StringAttr, mlir::StringAttr>> keptCopies;
     std::function<ctjs::FuncOp(ctjs::FuncOp, llvm::SmallVectorImpl<mlir::Operation *> &)>
