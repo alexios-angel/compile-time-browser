@@ -986,8 +986,8 @@ template <class K, class V> struct ordered_map_storage {
     using key_type = K;
     std::vector<std::pair<K, V>> entries;
     auto find(const K & key) {
-        return std::ranges::find_if(entries,
-                                    [&](const auto & entry) { return map_key_equal(entry.first, key); });
+        return std::ranges::find_if(
+            entries, [&](const auto & entry) { return map_key_equal(entry.first, key); });
     }
     auto end() { return entries.end(); }
     void insert_or_assign(const K & key, const V & value) {
