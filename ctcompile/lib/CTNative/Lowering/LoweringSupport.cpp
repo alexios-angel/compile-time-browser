@@ -49,14 +49,6 @@ template <class Kind> bool is(mlir::Type type) {
     return llvm::isa<Kind>(type);
 }
 
-/// Whether `level` holds for this Map or for any Map nested as its values.
-template <class Level> bool anyMapLevel(MapType type, Level && level) {
-    for (; type; type = llvm::dyn_cast<MapType>(type.getValueType())) {
-        if (level(type)) { return true; }
-    }
-    return false;
-}
-
 } // namespace
 
 mlir::Type scalarObservationType(mlir::MLIRContext * context, PrimitiveAlternatives alternatives) {
@@ -516,27 +508,6 @@ std::string mapValueSpelling(mlir::Type type) {
         return llvm::cast<ec::OpaqueType>(mapCarrierType(map)).getValue().str();
     }
     llvm::report_fatal_error("native Map value has no carrier; admission should refuse it");
-}
-
-bool mapNeedsString(MapType type) {
-    return anyMapLevel(type, [](MapType level) {
-        return llvm::isa<StrType>(level.getKeyType()) ||
-               !nullableMapSpelling(level.getKeyType()).empty() ||
-               llvm::isa<StrType>(level.getValueType()) ||
-               !nullableMapSpelling(level.getValueType()).empty();
-    });
-}
-
-bool mapNeedsNullableString(MapType type) {
-    return anyMapLevel(type, [](MapType level) {
-        return !nullableMapSpelling(level.getKeyType()).empty() ||
-               !nullableMapSpelling(level.getValueType()).empty();
-    });
-}
-
-bool mapNeedsNullableStringKey(MapType type) {
-    return anyMapLevel(
-        type, [](MapType level) { return !nullableMapSpelling(level.getKeyType()).empty(); });
 }
 
 std::string dictionaryValueSpelling(DictType type) {
