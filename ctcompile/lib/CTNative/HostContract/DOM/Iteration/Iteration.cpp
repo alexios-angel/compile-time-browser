@@ -215,12 +215,8 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
                 return mlir::WalkResult::advance();
             }
             auto branch = llvm::dyn_cast<mlir::scf::IfOp>(iterable->getParentOp());
-            auto truth =
-                branch ? branch.getCondition().getDefiningOp<ctjs::TruthyOp>() : ctjs::TruthyOp{};
-            auto compare =
-                truth ? truth.getValue().getDefiningOp<ctjs::CompareOp>() : ctjs::CompareOp{};
             if (branch && iterable->getParentRegion() == &branch.getThenRegion() &&
-                strictUndefinedTest(compare, open.getResult())) {
+                strictUndefinedTest(truthyComparison(branch.getCondition()), open.getResult())) {
                 materializations.insert(operation);
             }
             return mlir::WalkResult::advance();
