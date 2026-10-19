@@ -156,11 +156,9 @@ struct flattener {
     }
 
     void index() {
+        nextIndex = ctjs::nextFunctionIndex(module);
         module.walk([&](ctjs::FuncOp fn) {
-            if (auto at = ctjs::functionIndex(fn)) {
-                byIndex.try_emplace(*at, fn);
-                nextIndex = std::max(nextIndex, *at + 1);
-            }
+            if (auto at = ctjs::functionIndex(fn)) { byIndex.try_emplace(*at, fn); }
         });
     }
 

@@ -860,6 +860,45 @@ struct closureLifter {
     static constexpr unsigned captureArgument(unsigned k) { return 3 + k; }
     static std::int32_t enclosingIndex(ctjs::CreateClosureOp c, unsigned i);
 
+    /// Whether `fn` reads new.target, or its own closure for anything but
+    /// making closures that relay none of its captures. A direct call passes
+    /// neither.
+    static bool needsCallee(ctjs::FuncOp fn) {
+        mlir::Block & entry = fn.getBody().front();
+        if (!entry.getArgument(ctjs::arg_new_target).use_empty()) { return true; }
+        return llvm::any_of(entry.getArgument(ctjs::arg_callee).getUses(),
+                            [](mlir::OpOperand & use) {
+                                auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(use.getOwner());
+                                if (!made || use.getOperandNumber() != 0) { return true; }
+                                for (unsigned i = 0; i < made.getUpvalues().size(); ++i) {
+                                    if (enclosingIndex(made, i) >= 0) { return true; }
+                                }
+                                return false;
+                            });
+    }
+
+    /// Whether `fn` reads no new.target and uses its own closure only to read
+    /// its captures or to make closures: a closure made for a copy of `fn`
+    /// with the same captures runs the copy exactly as the original runs on
+    /// its own closure.
+    static bool readsOnlyCaptures(ctjs::FuncOp fn) {
+        mlir::Block & entry = fn.getBody().front();
+        return entry.getArgument(ctjs::arg_new_target).use_empty() &&
+               llvm::all_of(entry.getArgument(ctjs::arg_callee).getUses(),
+                            [](mlir::OpOperand & use) {
+                                return llvm::isa<ctjs::CreateClosureOp, ctjs::LoadUpvalueOp>(
+                                           use.getOwner()) &&
+                                       use.getOperandNumber() == 0;
+                            });
+    }
+
+    /// Whether `made` runs before `op` in the same function: it sits in a
+    /// block that contains `op` (or an operation enclosing it), earlier.
+    static bool madeBefore(mlir::Operation * made, mlir::Operation * op) {
+        mlir::Operation * level = made->getBlock()->findAncestorOpInBlock(*op);
+        return level && made->isBeforeInBlock(level);
+    }
+
     mlir::Value capturedValue(ctjs::CreateClosureOp c, unsigned i);
 
     mlir::Value liftedCapture(ctjs::CreateClosureOp c, unsigned i);
@@ -1111,6 +1150,9 @@ struct closureLifter {
     /// would let the closure lift where the last one uses it.
     std::optional<llvm::SmallVector<std::pair<ctjs::CallDirectOp, unsigned>>> copyChain(
         ctjs::FuncOp first, unsigned at);
+    /// The closure to clone for a direct-call copy, none if its callee is not
+    /// needed, or nullopt when the call cannot supply its copy's callee.
+    std::optional<ctjs::CreateClosureOp> calleeFor(ctjs::CallDirectOp call);
     /// The methods whose resolved calls copyCallSitesForClosures turned into
     /// calls of per-site copies. One left with no call lifts with none
     /// (whyNotLiftableMethod), so its class is not refused for it.
