@@ -2373,7 +2373,6 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         state.push_back(ctjs::ConstantOp::create(start, where, constant.getValue()));
     }
     ctjs::CallOp emittedNext;
-    mlir::Value emittedDone;
     const auto methodCall = [&](mlir::OpBuilder & at, llvm::StringRef name,
                                 mlir::IRMapping & values, llvm::SmallVector<mlir::Value> & state) {
         auto key = keyConstant(at, where, name);
@@ -2435,7 +2434,6 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 if (!emittedNext) { return false; }
                 auto key = keyConstant(at, where, "done");
                 state.front() = ctjs::GetPropertyOp::create(at, where, type, emittedNext, key);
-                emittedDone = state.front();
                 key = keyConstant(at, where, "value");
                 auto item = ctjs::GetPropertyOp::create(at, where, type, emittedNext, key);
                 values.map(next.getResult(), item.getResult());
@@ -2877,7 +2875,6 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
     }
     emittedNext = {};
-    emittedDone = {};
     bool normalPrimitiveClose = false;
     llvm::SmallVector<mlir::scf::IfOp> exhaustedCloses;
     const auto methods = entry.walk([&](mlir::Operation * operation) {
@@ -3000,6 +2997,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
         nextResult = normal.getArgument(0);
     }
+    mlir::Value emittedDone;
     for (mlir::Operation * user : nextResult.getUsers()) {
         if (!spend()) { return error("DOM custom iterator budget exhausted"); }
         auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
