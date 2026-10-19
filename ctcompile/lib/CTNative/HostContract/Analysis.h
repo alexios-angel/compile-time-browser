@@ -20,6 +20,7 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 
+#include <cstdint>
 #include <initializer_list>
 #include <optional>
 #include <string>
@@ -27,6 +28,18 @@
 #include <vector>
 
 namespace ctcompile::ctnative::host_detail {
+
+/// Charges work without narrowing first; a failed charge empties the budget
+/// and marks it exhausted. A zero charge succeeds even after exhaustion.
+inline bool chargeBudget(unsigned & remaining, bool & exhausted, std::uint64_t count) {
+    if (count > remaining) {
+        exhausted = true;
+        remaining = 0;
+        return false;
+    }
+    remaining -= static_cast<unsigned>(count);
+    return true;
+}
 
 /// Copies a recovered invocation's inert continuation tuple at the builder's
 /// insertion point. The supplied payload is the normal result or caught value;

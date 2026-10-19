@@ -60,12 +60,7 @@ bool neverStored(mlir::Operation * at, llvm::StringRef name) {
 bool hostBinding(mlir::Operation * at, llvm::StringRef name) {
     auto rows =
         at->getParentOfType<mlir::ModuleOp>()->getAttrOfType<mlir::ArrayAttr>("ctjs.globals");
-    if (!rows) { return false; }
-    for (auto row : rows.getAsRange<mlir::DictionaryAttr>()) {
-        auto bound = row.getAs<mlir::StringAttr>("name");
-        if (bound && bound.getValue() == name) { return row.contains(kGlobalsHostBinding); }
-    }
-    return false;
+    return realmBinding(rows, name);
 }
 
 /// True when the program writes no property of the global `Object` that

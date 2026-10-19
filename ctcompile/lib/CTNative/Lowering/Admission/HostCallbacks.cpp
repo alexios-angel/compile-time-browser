@@ -74,7 +74,10 @@ bool hostCallbackOperation(admission & self, ctjs::CallOp call) {
         case carrier::boolean:
         case carrier::string:
         case carrier::domElement:
-        case carrier::timer: break;
+        case carrier::timer:
+        // A registry instance: its copy is a std::shared_ptr sharing the
+        // instance's owner, which keeps the instance alive with the callback.
+        case carrier::instance: break;
         default:
             return self.refuse("the " + std::string{timer ? "handler" : "listener"} + " of " +
                                method.str() + " captures " + printed(self.typeOf(capture)) +

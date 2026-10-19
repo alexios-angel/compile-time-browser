@@ -91,15 +91,6 @@ struct HostContract {
         ctbrowserIntrinsics
     };
     Provider provider = Provider::closedSource;
-    /// True for the two DOM entry providers: ctbrowserDOM and ctbrowserDOMSession.
-    [[nodiscard]] bool domProvider() const {
-        return provider == Provider::ctbrowserDOM || provider == Provider::ctbrowserDOMSession;
-    }
-    /// True for any provider with DOM inputs: the two above and
-    /// ctbrowserDOMDataSession.
-    [[nodiscard]] bool isDOM() const {
-        return domProvider() || provider == Provider::ctbrowserDOMDataSession;
-    }
     /// hostContractFingerprint() of the module the manifest was written for; a
     /// mismatch means the manifest is stale.
     std::string moduleSha256;
@@ -299,45 +290,6 @@ enum class HostDOMResult {
     string
 };
 
-/// What a call of `method` produces. Every method is listed, so a new one is a
-/// -Wswitch error rather than a silent Boolean.
-[[nodiscard]] inline HostDOMResult resultOf(HostDOMMethod method) {
-    switch (method) {
-    case HostDOMMethod::addClass:
-    case HostDOMMethod::removeClass:
-    case HostDOMMethod::setAttribute:
-    case HostDOMMethod::removeAttribute: return HostDOMResult::none;
-    case HostDOMMethod::toggleClass:
-    case HostDOMMethod::containsClass:
-    case HostDOMMethod::toggleAttribute:
-    case HostDOMMethod::hasAttribute:
-    case HostDOMMethod::contains:
-    case HostDOMMethod::matches:
-    case HostDOMMethod::startsWith: return HostDOMResult::boolean;
-    case HostDOMMethod::getAttribute: return HostDOMResult::optionalString;
-    case HostDOMMethod::closest:
-    case HostDOMMethod::querySelector:
-    case HostDOMMethod::documentQuerySelector: return HostDOMResult::element;
-    case HostDOMMethod::querySelectorAll:
-    case HostDOMMethod::documentQuerySelectorAll: return HostDOMResult::elementVector;
-    case HostDOMMethod::datasetKeys:
-    case HostDOMMethod::filterStrings: return HostDOMResult::stringVector;
-    case HostDOMMethod::number: return HostDOMResult::number;
-    case HostDOMMethod::symbol:
-    case HostDOMMethod::symbolValueOf: return HostDOMResult::symbol;
-    case HostDOMMethod::jsonParse: return HostDOMResult::json;
-    case HostDOMMethod::numberToString:
-    case HostDOMMethod::symbolToString:
-    case HostDOMMethod::decodeURIComponent:
-    case HostDOMMethod::removeStringPrefix:
-    case HostDOMMethod::replaceUppercase:
-    case HostDOMMethod::stringCharAt:
-    case HostDOMMethod::stringSlice:
-    case HostDOMMethod::stringLowercaseUnit: return HostDOMResult::string;
-    }
-    llvm_unreachable("unknown HostDOMMethod");
-}
-
 /// One proved call of a HostDOMMethod in the entry.
 struct HostDOMCall {
     ctjs::CallOp operation;
@@ -348,13 +300,48 @@ struct HostDOMCall {
     ctjs::FuncOp callback{};
     /// True when Function.prototype.call supplies the receiver as argument zero.
     bool explicitReceiver = false;
-    /// The single original document/style input, once the analysis has proved
-    /// how it reaches this call.
-    mlir::BlockArgument styleParameter{};
-    /// When several inputs can reach the call, each keeps its association
-    /// through the same SSA edges.
+    /// Every original document/style input that can reach this call, including
+    /// a singleton root. Multiple inputs keep their associations through the
+    /// same SSA edges.
     llvm::SmallVector<mlir::BlockArgument> styleParameters{};
-    [[nodiscard]] HostDOMResult result() const { return resultOf(kind); }
+    /// What this call produces. Every method is listed so a new one is
+    /// a -Wswitch error instead of a silent Boolean.
+    [[nodiscard]] HostDOMResult result() const {
+        switch (kind) {
+        case HostDOMMethod::addClass:
+        case HostDOMMethod::removeClass:
+        case HostDOMMethod::setAttribute:
+        case HostDOMMethod::removeAttribute: return HostDOMResult::none;
+        case HostDOMMethod::toggleClass:
+        case HostDOMMethod::containsClass:
+        case HostDOMMethod::toggleAttribute:
+        case HostDOMMethod::hasAttribute:
+        case HostDOMMethod::contains:
+        case HostDOMMethod::matches:
+        case HostDOMMethod::startsWith: return HostDOMResult::boolean;
+        case HostDOMMethod::getAttribute: return HostDOMResult::optionalString;
+        case HostDOMMethod::closest:
+        case HostDOMMethod::querySelector:
+        case HostDOMMethod::documentQuerySelector: return HostDOMResult::element;
+        case HostDOMMethod::querySelectorAll:
+        case HostDOMMethod::documentQuerySelectorAll: return HostDOMResult::elementVector;
+        case HostDOMMethod::datasetKeys:
+        case HostDOMMethod::filterStrings: return HostDOMResult::stringVector;
+        case HostDOMMethod::number: return HostDOMResult::number;
+        case HostDOMMethod::symbol:
+        case HostDOMMethod::symbolValueOf: return HostDOMResult::symbol;
+        case HostDOMMethod::jsonParse: return HostDOMResult::json;
+        case HostDOMMethod::numberToString:
+        case HostDOMMethod::symbolToString:
+        case HostDOMMethod::decodeURIComponent:
+        case HostDOMMethod::removeStringPrefix:
+        case HostDOMMethod::replaceUppercase:
+        case HostDOMMethod::stringCharAt:
+        case HostDOMMethod::stringSlice:
+        case HostDOMMethod::stringLowercaseUnit: return HostDOMResult::string;
+        }
+        llvm_unreachable("unknown HostDOMMethod");
+    }
     [[nodiscard]] bool returnsElement() const { return result() == HostDOMResult::element; }
     [[nodiscard]] bool returnsOptionalString() const {
         return result() == HostDOMResult::optionalString;

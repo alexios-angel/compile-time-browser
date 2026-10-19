@@ -7,6 +7,7 @@
 
 #pragma once
 #include "mlir/Bytecode/BytecodeOpInterface.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/SymbolTable.h"
@@ -18,6 +19,7 @@
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/bit.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 
@@ -94,6 +96,17 @@ inline std::optional<unsigned> functionIndex(FuncOp function) {
 inline std::optional<unsigned> closureFunction(CreateClosureOp made) {
     if (made.getFunction() < 0) { return std::nullopt; }
     return static_cast<unsigned>(made.getFunction());
+}
+
+/// One past the highest function index in `module`, for fresh indices.
+inline unsigned nextFunctionIndex(mlir::ModuleOp module) {
+    unsigned next = 0;
+    module.walk([&](FuncOp fn) {
+        if (const std::optional<unsigned> index = functionIndex(fn)) {
+            next = std::max(next, *index + 1);
+        }
+    });
+    return next;
 }
 
 /// The attribute of kind A a ctjs.constant operand carries, or null both for

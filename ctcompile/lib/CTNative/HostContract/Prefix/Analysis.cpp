@@ -114,13 +114,7 @@ bool prefixAnalysis::step() {
 }
 
 bool prefixAnalysis::spend(uint64_t count) {
-    if (count > remaining) {
-        exhausted = true;
-        remaining = 0;
-        return false;
-    }
-    remaining -= static_cast<unsigned>(count);
-    return true;
+    return chargeBudget(remaining, exhausted, count);
 }
 
 bool prefixAnalysis::spendText(llvm::StringRef text) {

@@ -1,0 +1,12 @@
+# Commit-message checks. Install once per clone (all worktrees share it):
+#   pre-commit install --allow-missing-config
+default_install_hook_types: [commit-msg]
+repos:
+  - repo: local
+    hooks:
+      - id: co-authored-by
+        name: Co-Authored-By trailer
+        description: 'The message ends with a "Co-Authored-By: <name> <email>" trailer naming the model that wrote the commit.'
+        entry: python3 tools/check/check-co-authored-by.py
+        language: system
+        stages: [commit-msg]

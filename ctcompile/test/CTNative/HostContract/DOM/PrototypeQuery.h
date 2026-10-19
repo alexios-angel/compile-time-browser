@@ -99,7 +99,9 @@ module {
                 check(edge->explicitReceiver && edge->element == call.getArgs().front() &&
                           proof.isDocumentElement(
                               edge->element.getDefiningOp<ctjs::GetPropertyOp>()) &&
-                          edge->styleParameter == proof.documentParameter() && edge->usesStyle(),
+                          edge->styleParameters.size() == 1 &&
+                          edge->styleParameters.front() == proof.documentParameter() &&
+                          edge->usesStyle(),
                       "a checked root retains its exact snapshot at the prototype call");
                 return;
             }

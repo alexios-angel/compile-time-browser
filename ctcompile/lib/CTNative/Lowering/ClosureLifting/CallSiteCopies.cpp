@@ -139,55 +139,22 @@ bool copyable(ctjs::FuncOp function) {
                 .wasInterrupted();
 }
 
-/// Whether `fn` reads new.target, or its own closure for anything but making
-/// closures that relay none of its captures (ClassStatics.cpp's rule).
-bool needsCallee(ctjs::FuncOp fn) {
-    mlir::Block & entry = fn.getBody().front();
-    if (!entry.getArgument(ctjs::arg_new_target).use_empty()) { return true; }
-    return llvm::any_of(entry.getArgument(ctjs::arg_callee).getUses(), [](mlir::OpOperand & use) {
-        auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(use.getOwner());
-        if (!made || use.getOperandNumber() != 0) { return true; }
-        for (unsigned i = 0; i < made.getUpvalues().size(); ++i) {
-            if (closureLifter::enclosingIndex(made, i) >= 0) { return true; }
-        }
-        return false;
-    });
-}
-
-/// Whether `fn` reads no new.target and uses its own closure only to read its
-/// captures or to make closures (ClassStatics.cpp's readsOnlyCaptures).
-bool readsOnlyCaptures(ctjs::FuncOp fn) {
-    mlir::Block & entry = fn.getBody().front();
-    return entry.getArgument(ctjs::arg_new_target).use_empty() &&
-           llvm::all_of(entry.getArgument(ctjs::arg_callee).getUses(), [](mlir::OpOperand & use) {
-               return llvm::isa<ctjs::CreateClosureOp, ctjs::LoadUpvalueOp>(use.getOwner()) &&
-                      use.getOperandNumber() == 0;
-           });
-}
-
-/// Whether `made` runs before `op` in the same function.
-bool madeBefore(mlir::Operation * made, mlir::Operation * op) {
-    mlir::Operation * level = made->getBlock()->findAncestorOpInBlock(*op);
-    return level && made->isBeforeInBlock(level);
-}
+} // namespace
 
 /// How a copy of `call`'s target gets its callee value: nullopt when it
 /// cannot, null when it reads none (undefined is passed), or the target's own
-/// closure, made earlier in the caller, to clone for the copy. `ownTarget` is
-/// the function that closure names. An undefined callee does not do for a
-/// target that reads its captures: that is a call Bindings.cpp made, whose
-/// captures the lift adds later.
-std::optional<ctjs::CreateClosureOp> calleeFor(ctjs::CallDirectOp call, ctjs::FuncOp ownTarget) {
+/// closure, made earlier in the caller, to clone for the copy. An undefined
+/// callee does not do for a target that reads its captures: that is a call
+/// Bindings.cpp made, whose captures the lift adds later.
+std::optional<ctjs::CreateClosureOp> closureLifter::calleeFor(ctjs::CallDirectOp call) {
     ctjs::FuncOp target = call.getTarget();
     if (!needsCallee(target)) { return ctjs::CreateClosureOp{}; }
     auto own = call.getCalleeValue().getDefiningOp<ctjs::CreateClosureOp>();
-    if (own && ownTarget == target && readsOnlyCaptures(target) && madeBefore(own, call)) {
+    if (own && targetOf(own) == target && readsOnlyCaptures(target) && madeBefore(own, call)) {
         return own;
     }
     return std::nullopt;
 }
-
-} // namespace
 
 /// The calls a closure passed to `first` at parameter `at` is handed on
 /// through, each with the position it passes it at, when the last function
@@ -216,18 +183,13 @@ std::optional<llvm::SmallVector<std::pair<ctjs::CallDirectOp, unsigned>>> closur
         // merges it would refuse it there, so the copies would only move the
         // refusal, at the cost of every function they copy. A cell that only
         // holds the parameter is forwarded to its reads instead.
-        const bool handed = !hops.empty() && !parameter.use_empty() &&
-                            !llvm::all_of(parameter.getUses(),
-                                          [](mlir::OpOperand & use) {
-                                              return llvm::isa<ctjs::CallOp>(use.getOwner()) &&
-                                                     use.getOperandNumber() == 0;
-                                          }) &&
-                            llvm::none_of(parameter.getUsers(),
-                                          [](mlir::Operation * user) {
-                                              auto box = llvm::dyn_cast<ctjs::CreateCellOp>(user);
-                                              return box && !holdsOnlyItsValue(box);
-                                          }) &&
-                            !passedOnOrMerged(parameter);
+        const bool
+            handed = !hops.empty() && !llvm::all_of(parameter.getUses(), [](mlir::OpOperand & use) {
+                return llvm::isa<ctjs::CallOp>(use.getOwner()) && use.getOperandNumber() == 0;
+            }) && llvm::none_of(parameter.getUsers(), [](mlir::Operation * user) {
+                auto box = llvm::dyn_cast<ctjs::CreateCellOp>(user);
+                return box && !holdsOnlyItsValue(box);
+            }) && !passedOnOrMerged(parameter);
         // Or every closure that calls it makes it there (ExecuteCalls.cpp).
         if (!handed && (hops.empty() || !relaysCallback(parameter))) { return std::nullopt; }
         return hops;
@@ -279,13 +241,6 @@ bool closureLifter::writesUpvalues(ctjs::FuncOp fn, unsigned depth) {
     return writes;
 }
 
-/// Whether every object the receiver of `call` may name is known, so that
-/// resolveMethod's answer holds for every run of the call: a closed object
-/// the method census rooted (`behind` names only itself), or the caller's
-/// own receiver when the caller is a method whose closure goes only into the
-/// method fields the census proved (the first half of whyNotLiftableMethod),
-/// so no call the census did not see can pass another. Asked after
-/// methodCensus.
 /// Whether `use` is the receiver of a direct call copyCallSitesForClosures
 /// made of a copy that keeps its method call's receiver, and that copy uses
 /// `this` only as a method's receiver may: the census then treats the
@@ -296,6 +251,13 @@ bool closureLifter::carriesReceiverToCopy(mlir::OpOperand & use) {
            call.getTarget() && !whyThisLeaks(call.getTarget());
 }
 
+/// Whether every object the receiver of `call` may name is known, so that
+/// resolveMethod's answer holds for every run of the call: a closed object
+/// the method census rooted (`behind` names only itself), or the caller's
+/// own receiver when the caller is a method whose closure goes only into the
+/// method fields the census proved (the first half of whyNotLiftableMethod),
+/// so no call the census did not see can pass another. Asked after
+/// methodCensus.
 bool closureLifter::knowsEveryReceiver(ctjs::CallOp call) {
     const mlir::Value receiver = call.getReceiver();
     const auto named = behind.lookup(receiver);
@@ -426,12 +388,7 @@ llvm::DenseMap<mlir::Operation *, ctjs::FuncOp> closureLifter::methodSitesForCop
 /// copy of that chain, and makes the closure in the last copy (see the file
 /// comment). Returns whether anything was copied.
 bool closureLifter::copyCallSitesForClosures() {
-    unsigned nextIndex = 0;
-    module.walk([&](ctjs::FuncOp fn) {
-        if (const std::optional<unsigned> index = ctjs::functionIndex(fn)) {
-            nextIndex = std::max(nextIndex, *index + 1);
-        }
-    });
+    unsigned nextIndex = ctjs::nextFunctionIndex(module);
     // The source each copy stands for, so a copy of a copy names the source
     // too.
     llvm::StringMap<mlir::StringAttr> sourceOf;
@@ -551,9 +508,7 @@ bool closureLifter::copyCallSitesForClosures() {
         // a copy, a closure the original made names a copy of its own. A
         // resolved method reads no callee value (methodSitesForCopies).
         const auto passesCallee = [&](ctjs::CallDirectOp link, bool firstLink) {
-            auto own = link.getCalleeValue().getDefiningOp<ctjs::CreateClosureOp>();
-            const std::optional<ctjs::CreateClosureOp> value =
-                calleeFor(link, own ? targetOf(own) : ctjs::FuncOp{});
+            const std::optional<ctjs::CreateClosureOp> value = calleeFor(link);
             return value && (firstLink || !*value);
         };
         if ((direct && !passesCallee(direct, true)) ||
@@ -605,9 +560,7 @@ bool closureLifter::copyCallSitesForClosures() {
                 if (load && load->use_empty()) { load->erase(); }
                 copiedAwayMethods.insert(original.getOperation());
             }
-            auto own = link.getCalleeValue().getDefiningOp<ctjs::CreateClosureOp>();
-            const std::optional<ctjs::CreateClosureOp> callee =
-                calleeFor(link, own ? targetOf(own) : ctjs::FuncOp{});
+            const std::optional<ctjs::CreateClosureOp> callee = calleeFor(link);
             link.setCalleeAttr(mlir::FlatSymbolRefAttr::get(copy.getSymNameAttr()));
             // The call is no longer the original's, so the lift must not add
             // the original's captures to it (Bindings.cpp records the calls it

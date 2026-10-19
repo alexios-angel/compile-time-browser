@@ -351,14 +351,8 @@ void passElementArrays(lowering & lower, ctjs::FuncOp fn,
     fn.getBody().walk([&](ctjs::ReturnOp ret) { returns.push_back(ret); });
     // A call result moved into a local below is that local from then on: a
     // later call may lend it and a return may move it.
-    llvm::DenseMap<mlir::Value, mlir::Value> owners;
-    const auto owner = [&](mlir::Value v) {
-        const auto found = owners.find(v);
-        return found == owners.end() ? v : found->second;
-    };
-    const auto isArray = [&](mlir::Value v) {
-        return arrays.contains(v) || llvm::is_contained(llvm::make_second_range(owners), v);
-    };
+    llvm::DenseMap<mlir::Value, mlir::Value> sourceOf;
+    const auto isArray = [&](mlir::Value v) { return arrays.contains(v) || sourceOf.contains(v); };
     for (ctjs::CallDirectOp call : calls) {
         mlir::OpBuilder at(call);
         // Operands 0-2 are the implicit arguments; the rest are lent as spans,
@@ -377,10 +371,8 @@ void passElementArrays(lowering & lower, ctjs::FuncOp fn,
             // The lattice still knows the source value's type (a local's comes
             // from the call result it holds): only operations are replaced
             // after this, never values.
-            mlir::Value source = argument;
-            for (const auto & [result, local] : owners) {
-                if (local == argument) { source = result; }
-            }
+            const auto found = sourceOf.find(argument);
+            mlir::Value source = found == sourceOf.end() ? argument : found->second;
             const std::string span = elementSpanSpelling(lower.typeOf(source));
             call->setOperand(i, callValue(at, call.getLoc(),
                                           ec::OpaqueType::get(fn.getContext(), span), span,
@@ -396,11 +388,11 @@ void passElementArrays(lowering & lower, ctjs::FuncOp fn,
                                        ec::OpaqueAttr::get(fn.getContext(), ""));
             auto assign = ec::AssignOp::create(at, call.getLoc(), local, result);
             result.replaceAllUsesExcept(local, assign);
-            owners[result] = local;
+            sourceOf[local] = result;
         }
     }
     for (ctjs::ReturnOp ret : returns) {
-        mlir::Value value = owner(ret.getValue());
+        mlir::Value value = ret.getValue();
         if (!isArray(value) || isSpan(value)) { continue; }
         mlir::OpBuilder at(ret);
         mlir::Value place = lowering::cellPlace(at, ret.getLoc(), value);
@@ -494,7 +486,16 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
         return true;
     }
     if (llvm::StringRef field = kind; field.consume_front("rect:")) {
-        swap(callValue(b, where, numeric, "ctnative::rect_" + field, o->getOperand(0)));
+        mlir::Value rectangle = o->getOperand(0);
+        if (!llvm::isa<ec::LValueType>(rectangle.getType())) {
+            auto local = ec::VariableOp::create(b, where, ec::LValueType::get(rectangle.getType()),
+                                                ec::OpaqueAttr::get(context, ""));
+            ec::AssignOp::create(b, where, local, rectangle);
+            rectangle = local;
+        }
+        auto member =
+            ec::MemberOp::create(b, where, ec::LValueType::get(numeric), field, rectangle);
+        swap(ec::LoadOp::create(b, where, numeric, member));
         return true;
     }
     if (kind == "document_element") {

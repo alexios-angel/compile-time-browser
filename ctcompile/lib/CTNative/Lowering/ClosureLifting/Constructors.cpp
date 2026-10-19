@@ -7,6 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "ClassInheritance.h"
 #include "ClosureLifter.h"
 #include "ctcompile/CTNative/Analysis/Instances.h"
 
@@ -405,7 +406,40 @@ std::optional<std::string> closureLifter::whyConstructorSetupDoesNotLift(ctjs::C
         // already refuses the names Object.prototype answers (such as
         // `constructor`), and any other unwritten key is undefined in the VM
         // too, as for a literal.
-        if (auto why = whyCallSiteDoesNotLift(made, made.getArgs().size(), parameters, "a `new`")) {
+        size_t supplied = made.getArgs().size();
+        if (supplied > parameters) {
+            // Implicit derived constructors have become parent-body copies.
+            // Keep those and zero-parameter constructors outside this rule.
+            const auto copies = module->getAttrOfType<mlir::DictionaryAttr>(kNativeCopies);
+            if (parameters == 0 || (copies && copies.get(target.getSymName()))) {
+                return "surplus constructor arguments require an explicit, uncopied constructor "
+                       "with declared parameters";
+            }
+            if (ctjs::readsRawArguments(target)) {
+                return "surplus constructor arguments are observed by arguments or a rest "
+                       "parameter";
+            }
+            const bool observesWindow =
+                target
+                    .walk([](mlir::Operation * op) {
+                        if (llvm::isa<ctjs::CallSpreadOp, ctjs::ConstructSpreadOp,
+                                      ctjs::DynamicImportOp>(op)) {
+                            return mlir::WalkResult::interrupt();
+                        }
+                        if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
+                            load && (load.getName() == "eval" || load.getName() == "Function")) {
+                            return mlir::WalkResult::interrupt();
+                        }
+                        return mlir::WalkResult::advance();
+                    })
+                    .wasInterrupted();
+            if (observesWindow) {
+                return "surplus constructor arguments may reach whole-window forwarding or "
+                       "run-time code creation";
+            }
+            supplied = parameters;
+        }
+        if (auto why = whyCallSiteDoesNotLift(made, supplied, parameters, "a `new`")) {
             return why;
         }
     }

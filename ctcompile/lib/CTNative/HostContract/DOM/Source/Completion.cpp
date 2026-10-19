@@ -261,7 +261,7 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                                 terminal.exit.cases.size() == 1
                                     ? mlir::Attribute(ctjs::BooleanAttr::get(function.getContext(),
                                                                              choice == 0))
-                                    : mlir::Attribute(ctjs::NumberAttr::get(
+                                    : mlir::Attribute(ctjs::numberAttr(
                                           function.getContext(), static_cast<double>(choice)));
                             arguments[terminal.exit.selector] =
                                 ctjs::ConstantOp::create(at, condition.getLoc(), discriminator);
@@ -288,8 +288,7 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                             terminal.exit.cases.size() == 1
                                 ? mlir::Attribute(
                                       ctjs::BooleanAttr::get(function.getContext(), false))
-                                : mlir::Attribute(
-                                      ctjs::NumberAttr::get(function.getContext(), 0.0));
+                                : mlir::Attribute(ctjs::numberAttr(function.getContext(), 0.0));
                         arguments[terminal.exit.selector] =
                             ctjs::ConstantOp::create(at, condition.getLoc(), discriminator);
                         ++operationCount;
@@ -624,8 +623,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                             if (index == before.exit.arms.size()) { return emitArm(builder); }
                             auto tag = ctjs::ConstantOp::create(
                                 builder, dispatch->getLoc(),
-                                ctjs::NumberAttr::get(function.getContext(),
-                                                      static_cast<double>(index)));
+                                ctjs::numberAttr(function.getContext(),
+                                                 static_cast<double>(index)));
                             auto equal = ctjs::CompareOp::create(
                                 builder, dispatch->getLoc(), tag.getType(),
                                 ctjs::CompareKind::StrictEq, copied.getResult(before.exit.selector),

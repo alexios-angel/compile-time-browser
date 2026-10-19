@@ -26,6 +26,71 @@ inline void checkDOMIteration(mlir::MLIRContext & context) {
     context.getOrLoadDialect<mlir::arith::ArithDialect>();
     context.getOrLoadDialect<mlir::scf::SCFDialect>();
     context.getOrLoadDialect<mlir::ub::UBDialect>();
+    const char * taggedExits = R"MLIR(
+module {
+  ctjs.func @complete$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %flag: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %zero = ctjs.constant #ctjs.number<0>
+    %stop = arith.constant false
+    %i0 = arith.constant 0 : i32
+    %i1 = arith.constant 1 : i32
+    %i2 = arith.constant 2 : i32
+    %test = ctjs.truthy %flag
+    %loop:2 = scf.while (%value = %zero) : (!ctjs.value) -> (!ctjs.value, i32) {
+      %tag = scf.if %test -> i32 {
+        scf.yield %i1 : i32
+      } else {
+        scf.yield %i2 : i32
+      }
+      scf.condition(%stop) %value, %tag : !ctjs.value, i32
+    } do {
+    ^bb0(%value: !ctjs.value, %tag: i32):
+      scf.yield %value : !ctjs.value
+    }
+    %selector = arith.index_castui %loop#1 : i32 to index
+    %answer = scf.index_switch %selector -> !ctjs.value
+    case 0 {
+      ctjs.store_global "first", %loop#0
+      scf.yield %loop#0 : !ctjs.value
+    }
+    case 1 {
+      ctjs.store_global "second", %loop#0
+      scf.yield %loop#0 : !ctjs.value
+    }
+    default {
+      ctjs.store_global "last", %loop#0
+      scf.yield %loop#0 : !ctjs.value
+    }
+    ctjs.return %answer
+  }
+}
+)MLIR";
+    auto tagged = parsed(context, taggedExits, "multi-arm completion fixture parses");
+    if (tagged) {
+        auto error = expandDOMHelpers(*tagged, "complete$0", 100000);
+        check(!error, "effectful multi-arm completion normalizes");
+        if (error) {
+            std::fprintf(stderr, "%s\n", llvm::toString(std::move(error)).c_str());
+        } else {
+            unsigned selectors = 0;
+            tagged->walk([&](mlir::scf::WhileOp loop) {
+                auto branch = llvm::cast<mlir::scf::IfOp>(loop.getBefore().front().front());
+                for (auto [index, region] : llvm::enumerate(branch->getRegions())) {
+                    auto yield = llvm::cast<mlir::scf::YieldOp>(region.front().back());
+                    auto tag = ctjs::constantAttr<ctjs::NumberAttr>(yield.getOperand(2));
+                    check(tag && tag.getDouble() == static_cast<double>(index + 1),
+                          "completion arm selectors hold 1 and 2, not denormal bit patterns");
+                    ++selectors;
+                }
+            });
+            tagged->walk([&](ctjs::CompareOp compare) {
+                if (compare.getKind() != ctjs::CompareKind::StrictEq) { return; }
+                auto tag = ctjs::constantAttr<ctjs::NumberAttr>(compare.getRhs());
+                check(tag && (tag.getDouble() == 0.0 || tag.getDouble() == 1.0),
+                      "completion dispatch compares numeric arm indices");
+            });
+            check(selectors == 2, "both multi-arm completion selectors are inspected");
+        }
+    }
     // A loop counting `Object.keys(element.dataset)`. In the fixtures,
     // #ctjs.number<4607182418800017408> is the IEEE-754 bit pattern of 1.0.
     const std::string prefix = R"MLIR(

@@ -12,7 +12,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SetVector.h"
 
 namespace ctcompile::ctnative::binding_time_detail {
 namespace {
@@ -41,28 +41,22 @@ mlir::StringAttr propertyKey(mlir::Value value) {
 } // namespace
 
 bool solveCallerFixpoint(mlir::ModuleOp module, llvm::function_ref<bool(ctjs::FuncOp)> visit) {
-    llvm::SmallVector<ctjs::FuncOp> functions, pending;
-    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::FuncOp>> dependents;
+    llvm::SmallVector<ctjs::FuncOp> functions;
+    llvm::SetVector<ctjs::FuncOp> pending;
+    llvm::DenseMap<mlir::Operation *, llvm::SetVector<ctjs::FuncOp>> dependents;
     module.walk([&](ctjs::FuncOp function) { functions.push_back(function); });
     module.walk([&](ctjs::CallDirectOp call) {
         auto caller = call->getParentOfType<ctjs::FuncOp>();
         auto callee = call.getTarget();
-        if (caller && callee && !llvm::is_contained(dependents[callee], caller)) {
-            dependents[callee].push_back(caller);
-        }
+        if (caller && callee) { dependents[callee].insert(caller); }
     });
-    llvm::SmallPtrSet<mlir::Operation *, 32> queued;
-    const auto enqueue = [&](ctjs::FuncOp function) {
-        if (queued.insert(function).second) { pending.push_back(function); }
-    };
-    for (ctjs::FuncOp function : llvm::reverse(functions)) { enqueue(function); }
+    for (ctjs::FuncOp function : llvm::reverse(functions)) { pending.insert(function); }
     const uint64_t count = static_cast<uint64_t>(functions.size());
     const uint64_t limit = count * (count + 1);
     for (uint64_t visits = 0; !pending.empty() && visits < limit; ++visits) {
         auto function = pending.pop_back_val();
-        queued.erase(function);
         if (visit(function)) {
-            for (ctjs::FuncOp caller : dependents[function]) { enqueue(caller); }
+            for (ctjs::FuncOp caller : dependents[function]) { pending.insert(caller); }
         }
     }
     return pending.empty();

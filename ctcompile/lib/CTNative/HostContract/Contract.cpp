@@ -560,11 +560,15 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
                     llvm::isa<ctjs::StringAttr>(message.getValue())) {
                     continue;
                 }
-            } else if (const unsigned arity = classIntrinsicArity(load.getName())
-                                                  ? classIntrinsicArity(load.getName())
-                                                  : (iteratorIntrinsicArity(load.getName())
-                                                         ? iteratorIntrinsicArity(load.getName())
-                                                         : sourceHelperArity(load.getName()))) {
+            } else if (const unsigned arity = [&] {
+                           if (const unsigned arity = classIntrinsicArity(load.getName())) {
+                               return arity;
+                           }
+                           if (const unsigned arity = iteratorIntrinsicArity(load.getName())) {
+                               return arity;
+                           }
+                           return sourceHelperArity(load.getName());
+                       }()) {
                 auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
                 if (call && use.getOperandNumber() == 0 && call.getArgs().size() == arity &&
                     ctjs::isUndefinedConstant(call.getReceiver()) &&

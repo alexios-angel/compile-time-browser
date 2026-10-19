@@ -410,6 +410,19 @@ bool closureLifter::makeRunOnceCellsStatic(liftReport & out, bool functions) {
                         use.getOperandNumber() <= 1);
             });
         };
+        const auto capturesAccept = [&](const plan & p, bool & shaped, auto && accepts) {
+            for (const auto & [made, slot] : p.slots) {
+                targetOf(made).getBody().walk([&](mlir::Operation * op) {
+                    auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op);
+                    auto write = llvm::dyn_cast<ctjs::StoreUpvalueOp>(op);
+                    if (read && read.getIndex() == slot) {
+                        shaped = shaped && accepts(read.getResult());
+                    } else if (write && write.getIndex() == slot) {
+                        shaped = false;
+                    }
+                });
+            }
+        };
         const auto constructsOnly = [&](plan & p) {
             auto owner = p.cell->getParentOfType<ctjs::FuncOp>();
             ctjs::CreateClosureOp stored;
@@ -428,17 +441,7 @@ bool closureLifter::makeRunOnceCellsStatic(liftReport & out, bool functions) {
                                            llvm::cast<ctjs::CellGetOp>(use.getOwner()).getResult());
                 }
             }
-            for (const auto & [made, slot] : p.slots) {
-                targetOf(made).getBody().walk([&](mlir::Operation * op) {
-                    auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op);
-                    auto write = llvm::dyn_cast<ctjs::StoreUpvalueOp>(op);
-                    if (read && read.getIndex() == slot) {
-                        shaped = shaped && onlyConstructs(read.getResult());
-                    } else if (write && write.getIndex() == slot) {
-                        shaped = false;
-                    }
-                });
-            }
+            capturesAccept(p, shaped, onlyConstructs);
             return shaped && stored;
         };
         llvm::DenseSet<mlir::Operation *> methodCaptures;
@@ -461,18 +464,7 @@ bool closureLifter::makeRunOnceCellsStatic(liftReport & out, bool functions) {
                              onlyReceives(llvm::cast<ctjs::CellGetOp>(use.getOwner()).getResult());
                 }
             }
-            for (const auto & [made, slot] : p.slots) {
-                ctjs::FuncOp target = targetOf(made);
-                target.getBody().walk([&](mlir::Operation * op) {
-                    auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op);
-                    auto write = llvm::dyn_cast<ctjs::StoreUpvalueOp>(op);
-                    if (read && read.getIndex() == slot) {
-                        shaped = shaped && onlyReceives(read.getResult());
-                    } else if (write && write.getIndex() == slot) {
-                        shaped = false;
-                    }
-                });
-            }
+            capturesAccept(p, shaped, onlyReceives);
             if (shaped && literal) {
                 tables.insert(p.cell.getOperation());
                 literals.push_back(literal);

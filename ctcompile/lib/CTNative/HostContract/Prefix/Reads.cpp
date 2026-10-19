@@ -50,7 +50,7 @@ struct emptyMapReader {
             // overrides, and this path has mutated no property or provider.
             if (key == "size") {
                 proof.reads.push_back({read, factory.resources[owner.object], key.str()});
-                return prefixValue::constant(ctjs::NumberAttr::get(context, 0.0));
+                return prefixValue::constant(ctjs::numberAttr(context, 0.0));
             }
             if (key == "has" || key == "get") {
                 return {prefixValue::Kind::resourceMethod,

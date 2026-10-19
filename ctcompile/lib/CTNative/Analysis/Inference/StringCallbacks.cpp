@@ -270,15 +270,15 @@ void TypeInference::markStringMethodCalls(mlir::Operation * top) {
     top->walk([](ctjs::CallOp call) {
         auto read = ctjs::receiverMethod(call);
         const llvm::StringRef name = ctjs::methodKey(call);
-        if (read && read.getObject() == call.getReceiver() && read.getResult().hasOneUse() &&
-            call.getArgs().empty() &&
+        const bool soleMethodRead =
+            read && read.getObject() == call.getReceiver() && read.getResult().hasOneUse();
+        if (soleMethodRead && call.getArgs().empty() &&
             (name == "toLowerCase" || name == "toUpperCase" || name == "trim")) {
             call->setAttr(kNativeStringMethod, mlir::StringAttr::get(call.getContext(), name));
         }
         // `text.replace(/pattern/, replacement)` with a replacement that is
         // not a function: closure lifting specialises the function case.
-        if (read && read.getObject() == call.getReceiver() && read.getResult().hasOneUse() &&
-            name == "replace" && call.getArgs().size() == 2 &&
+        if (soleMethodRead && name == "replace" && call.getArgs().size() == 2 &&
             !call->hasAttr(kNativeStringCallback) &&
             !call.getArgs()[1].getDefiningOp<ctjs::CreateClosureOp>() &&
             call.getArgs()[0].hasOneUse()) {
@@ -294,8 +294,7 @@ void TypeInference::markStringMethodCalls(mlir::Operation * top) {
         // `new RegExp(source).test(text)` with a constant source, as Config's
         // type check tests a type name against its table's pattern once the
         // table loop is unrolled (Inference/TableLoops.cpp).
-        if (read && read.getObject() == call.getReceiver() && read.getResult().hasOneUse() &&
-            name == "test" && call.getArgs().size() == 1) {
+        if (soleMethodRead && name == "test" && call.getArgs().size() == 1) {
             if (const auto made = testedRegExp(call.getReceiver(), call)) {
                 mlir::MLIRContext * c = call.getContext();
                 call->setAttr(kNativeStringMethod, mlir::StringAttr::get(c, name));
