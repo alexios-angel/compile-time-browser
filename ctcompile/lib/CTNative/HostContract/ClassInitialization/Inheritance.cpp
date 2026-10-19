@@ -1380,7 +1380,7 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         if (!methodHome || !block.getArgument(ctjs::arg_new_target).use_empty() ||
             (!isStatic &&
              (!normalizeSuperMethods(fn, baseDefinitions) ||
-              !fieldsOnly(block.getArgument(ctjs::arg_receiver), methodKeys, staticReads, true)))) {
+              !fieldsOnly(block.getArgument(ctjs::arg_receiver), methodKeys, staticReads)))) {
             return refuse("class method observes its identity, home or an unproved receiver");
         }
         if (isStatic) {
@@ -1450,7 +1450,7 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         }
     }
     for (ctjs::ConstructOp made : instances) {
-        if (!fieldsOnly(made.getResult(), methodKeys, staticReads, true)) { return false; }
+        if (!fieldsOnly(made.getResult(), methodKeys, staticReads)) { return false; }
         for (ctjs::SetPropertyOp definition : definitions) {
             if (!step()) { return false; }
             methodProbes.emplace_back(made, definition);
@@ -1470,7 +1470,7 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
             auto fn = target(definition.getValue().getDefiningOp<ctjs::CreateClosureOp>());
             llvm::SmallVector<ctjs::GetPropertyOp> receiverReads;
             if (!step() || !fieldsOnly(fn.getBody().front().getArgument(ctjs::arg_receiver),
-                                       methodKeys, receiverReads, true)) {
+                                       methodKeys, receiverReads)) {
                 return false;
             }
             // A shared inherited body resolves each read once, for every class.
@@ -1510,7 +1510,7 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
     if (leafConstructed) { leafBuilt.insert(function); }
     if (!entry.getArgument(ctjs::arg_new_target).use_empty() ||
         (closure.getUpvalues().empty() && !entry.getArgument(ctjs::arg_callee).use_empty()) ||
-        !fieldsOnly(entry.getArgument(ctjs::arg_receiver), methodKeys, staticReads, true,
+        !fieldsOnly(entry.getArgument(ctjs::arg_receiver), methodKeys, staticReads,
                     leafConstructed)) {
         return refuse("class constructor observes new.target, lexical home or receiver identity");
     }

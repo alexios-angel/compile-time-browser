@@ -350,7 +350,7 @@ struct classInitialization {
     /// construct.
     bool fieldsOnly(mlir::Value object, const llvm::StringSet<> & methodKeys,
                     llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads,
-                    bool methodsAvailable = false, bool unconstructed = false);
+                    bool unconstructed = false);
     bool retainedMapAliases(mlir::OpOperand & use, llvm::SmallVectorImpl<mlir::Value> & reads);
     bool retainedMapReads(mlir::OpOperand & use, const llvm::StringSet<> & methodKeys,
                           llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads);
