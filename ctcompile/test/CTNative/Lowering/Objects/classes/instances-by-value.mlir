@@ -167,7 +167,7 @@
 // FOREIGN: ctnative.closure_reason = "the instance `new` makes does not have a closed shape - it is stored into a field that does not own it by value - field `_scrollBar` is read in `peek${{[0-9]+}}` through something other than the `this` of the class's constructor or methods"
 //
 // An arrow a method makes reads the field through the `this` it captures,
-// which is the method's (ClosureLifting/ArrowThis.cpp lexicalThisMaker).
+// which is the method's receiver (ClosureLifting/ArrowThis.cpp lexicalThisCell).
 // When the method only calls it, directly or from an arrow it only calls,
 // the arrow runs while the method's call does, so the instance outlives it:
 // native, and GCC, Clang, the interpreter and Node print the same value.

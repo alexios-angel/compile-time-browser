@@ -258,18 +258,8 @@ bool closureLifter::passesLexicalThis(mlir::OpOperand & use) {
     });
 }
 
-/// The value a read of an arrow's lexical `this` stands for: what the cell
-/// captureLexicalThis made for the arrow's one closure was made from. That is
-/// the receiver of the function making the closure, or, when that function is
-/// an arrow too, its own read of this kind. Null for any other value, and for
-/// a read rewritten since (a lifted arrow reads a capture parameter instead).
-mlir::Value closureLifter::lexicalThisMaker(mlir::Value value) {
-    ctjs::CreateCellOp cell = lexicalThisCell(value);
-    return cell ? cell.getInitial() : mlir::Value{};
-}
-
-/// The cell that value lexicalThisMaker answers for `value` is boxed in, or
-/// null.
+/// The lexical-this cell captured by an arrow's unique closure and read by
+/// `value`, or null if that read no longer names the capture.
 ctjs::CreateCellOp closureLifter::lexicalThisCell(mlir::Value value) {
     auto read = value.getDefiningOp<ctjs::LoadUpvalueOp>();
     auto arrow = read ? read->getParentOfType<ctjs::FuncOp>() : ctjs::FuncOp{};
