@@ -103,18 +103,12 @@ bool emptyString(mlir::Value value) {
     return string && string.getValue().empty();
 }
 
-bool indexArithmetic(ctjs::BinaryKind kind) {
-    return kind == ctjs::BinaryKind::Div || kind == ctjs::BinaryKind::Sub ||
-           kind == ctjs::BinaryKind::Mul || kind == ctjs::BinaryKind::Mod ||
-           kind == ctjs::BinaryKind::Add || kind == ctjs::BinaryKind::Pow;
-}
-
 /// Evaluates a String index expression at compile time: numericIndexLiteral
 /// operands combined by at most \p arithmeticDepth levels of / - * % + or **.
 /// std::nullopt when the expression has any other shape.
 std::optional<double> stringIndex(mlir::Value value, unsigned arithmeticDepth = 2) {
     if (auto binary = value.getDefiningOp<ctjs::BinaryOp>();
-        binary && indexArithmetic(binary.getKind())) {
+        binary && ctjs::isArithmetic(binary.getKind())) {
         // ponytail: two binary levels bound this literal proof's work. Deeper
         // expressions need a separately budgeted origin analysis.
         if (!arithmeticDepth) { return std::nullopt; }
@@ -171,7 +165,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         return true;
     }
     if ((unary && unary.getKind() == ctjs::UnaryKind::Neg) ||
-        (binary && indexArithmetic(binary.getKind()) &&
+        (binary && ctjs::isArithmetic(binary.getKind()) &&
          (binary.getKind() != ctjs::BinaryKind::Add ||
           (binary.getLhs().getDefiningOp<ctjs::UnaryOp>() &&
            numericIndexLiteral(binary.getLhs())) ||
