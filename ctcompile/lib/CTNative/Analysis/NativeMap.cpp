@@ -39,9 +39,7 @@ llvm::StringRef nativeMapAction(mlir::Operation * op) {
 }
 
 bool nativeMapKeyAction(llvm::StringRef action) {
-    static const llvm::StringSet<> actions{"set", "get", "has", "delete"};
-    // Every accepted name is at most six characters; check length before hashing.
-    return action.size() <= 6 && actions.contains(action);
+    return action == "set" || action == "get" || action == "has" || action == "delete";
 }
 
 int64_t nativeMapGroup(mlir::Value value) {
