@@ -107,6 +107,49 @@ function announce() {
 }
 announce();
 
+// Duplicate EventInit keys keep the last value. Cancellation and dispatch to
+// an ancestor expose the flags without reading unsupported Event members.
+var init = '';
+var bubbled = false;
+document.documentElement.addEventListener('duplicate', function () {
+    bubbled = true;
+});
+
+function duplicateInit() {
+    var cancelableTrue = new Event('duplicate', {
+        cancelable: false,
+        cancelable: true
+    });
+    cancelableTrue.preventDefault();
+    var cancelableFalse = new Event('duplicate', {
+        cancelable: true,
+        cancelable: false
+    });
+    cancelableFalse.preventDefault();
+    init = 'cancelable:' + cancelableTrue.defaultPrevented + ',' + cancelableFalse.defaultPrevented;
+
+    var kids = document.documentElement.children;
+    for (var i = 0; i < kids.length; i++) {
+        var kid = kids[i];
+        if (kid.tagName === 'BODY') {
+            var bubblesTrue = new Event('duplicate', {
+                bubbles: false,
+                bubbles: true
+            });
+            kid.dispatchEvent(bubblesTrue);
+            init = init + ' bubbles:' + bubbled;
+            bubbled = false;
+            var bubblesFalse = new Event('duplicate', {
+                bubbles: true,
+                bubbles: false
+            });
+            kid.dispatchEvent(bubblesFalse);
+            init = init + ',' + bubbled;
+        }
+    }
+}
+duplicateInit();
+
 // Listeners named by a variable, so the same function reaches addEventListener
 // twice (the second is ignored) and removeEventListener once: removal matches
 // the capture flag, so the capturing registration of `g` stays.
@@ -147,5 +190,5 @@ document.documentElement.addEventListener('click', function () {
 });
 
 function events_report() {
-    return 'clicks=' + clicks + ' order=' + order + ' seen=' + seen + '| phases=' + phases + '| notes=' + notes + '| counted=' + counted + '| named=' + named + '| jobs=' + jobs;
+    return 'clicks=' + clicks + ' order=' + order + ' seen=' + seen + '| phases=' + phases + '| notes=' + notes + '| counted=' + counted + '| named=' + named + '| jobs=' + jobs + '| init=' + init;
 }
