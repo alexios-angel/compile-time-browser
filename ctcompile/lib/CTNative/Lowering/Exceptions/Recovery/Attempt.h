@@ -13,7 +13,6 @@
 #include "../Recovery.h"
 
 #include "../../../../CTJS/Lowering/Globals/RegisterFlow.h"
-#include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"
 
