@@ -40,10 +40,6 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         return llvm::createStringError(work.remaining ? reason
                                                       : "DOM custom iterator budget exhausted");
     };
-    const auto helper = [](ctjs::CallOp call) -> llvm::StringRef {
-        auto load = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-        return load ? load.getName() : llvm::StringRef{};
-    };
     const auto undefined = dom_source_detail::DOMSource::undefined;
     // A String key constant, and the hidden own slot of iterator state `index`.
     const auto keyConstant = [&](mlir::OpBuilder & at, mlir::Location where, llvm::StringRef name) {
@@ -90,7 +86,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             undefinedWritten |= store.getNameAttr() && store.getName() == "undefined";
         }
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
-            call && helper(call) == "__ctbrowser_for_of_open" && call.getArgs().size() == 1) {
+            call && ctjs::calleeGlobalName(call) == "__ctbrowser_for_of_open" && call.getArgs().size() == 1) {
             custom |= static_cast<bool>(call.getArgs()[0].getDefiningOp<ctjs::CreateObjectOp>());
         }
         return mlir::WalkResult::advance();
@@ -145,7 +141,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 return mlir::WalkResult::interrupt();
             }
             auto call = invokedCall(invocation);
-            const auto arity = call ? host_detail::iteratorIntrinsicArity(helper(call)) : 0;
+            const auto arity = call ? host_detail::iteratorIntrinsicArity(ctjs::calleeGlobalName(call)) : 0;
             if (!call || !arity || !undefined(call.getReceiver()) ||
                 call.getArgs().size() != arity) {
                 return mlir::WalkResult::interrupt();
@@ -158,7 +154,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 if (!invocation->getParentOfType<ctjs::TryOp>()) {
                     return mlir::WalkResult::interrupt();
                 }
-                if (helper(call) == "__ctbrowser_iter_close" &&
+                if (ctjs::calleeGlobalName(call) == "__ctbrowser_iter_close" &&
                     !ctjs::constantAttr<ctjs::BooleanAttr>(call.getArgs()[1])) {
                     return mlir::WalkResult::interrupt();
                 }
@@ -175,7 +171,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 observedInvocations[invocation] = call;
                 return mlir::WalkResult::advance();
             }
-            if (helper(call) != "__ctbrowser_iter_close" ||
+            if (ctjs::calleeGlobalName(call) != "__ctbrowser_iter_close" ||
                 !llvm::cast<ctjs::InvokeExitOp>(call->getNextNode()).getState().empty()) {
                 return mlir::WalkResult::interrupt();
             }
@@ -201,7 +197,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     ctjs::CallOp open;
     const auto opens = entry.walk([&](ctjs::CallOp call) {
         if (!spend()) { return mlir::WalkResult::interrupt(); }
-        if (helper(call) != "__ctbrowser_for_of_open" || call.getArgs().size() != 1 ||
+        if (ctjs::calleeGlobalName(call) != "__ctbrowser_for_of_open" || call.getArgs().size() != 1 ||
             !call.getArgs()[0].getDefiningOp<ctjs::CreateObjectOp>()) {
             return mlir::WalkResult::advance();
         }
@@ -418,7 +414,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     ctjs::SetPropertyOp iteratorSlot;
     ctjs::CallOp iteratorKey, iteratorName;
     const auto setupCall = [&](ctjs::CallOp call, llvm::StringRef name, unsigned arity) {
-        return spend() && call && helper(call) == name && undefined(call.getReceiver()) &&
+        return spend() && call && ctjs::calleeGlobalName(call) == name && undefined(call.getReceiver()) &&
                call.getArgs().size() == arity &&
                llvm::is_contained(contract.initialIntrinsics, name);
     };
@@ -1709,7 +1705,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     };
     const auto selectedCloses = entry.walk([&](ctjs::CallOp call) {
         if (!spend()) { return mlir::WalkResult::interrupt(); }
-        if (helper(call) != "__ctbrowser_iter_close" || call.getArgs().size() != 2 ||
+        if (ctjs::calleeGlobalName(call) != "__ctbrowser_iter_close" || call.getArgs().size() != 2 ||
             call.getArgs()[0] == open.getResult() ||
             !recordDominance.properlyDominates(open.getResult(), call)) {
             return mlir::WalkResult::advance();
@@ -1796,9 +1792,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             call.getArgs()[0] != open.getResult()) {
             return error("DOM iterator record has an unsupported observer");
         }
-        if (helper(call) == "__ctbrowser_iter_next" && call.getArgs().size() == 1 && !next) {
+        if (ctjs::calleeGlobalName(call) == "__ctbrowser_iter_next" && call.getArgs().size() == 1 && !next) {
             next = call;
-        } else if (helper(call) == "__ctbrowser_iter_close" && call.getArgs().size() == 2) {
+        } else if (ctjs::calleeGlobalName(call) == "__ctbrowser_iter_close" && call.getArgs().size() == 2) {
             auto boolean = ctjs::constantAttr<ctjs::BooleanAttr>(call.getArgs()[1]);
             const bool protectedClose = protectedCloses.lookup(call->getParentOp()) == call;
             if (!boolean || boolean.getValue() != protectedClose) {
