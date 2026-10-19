@@ -475,9 +475,13 @@ auto visit_carrier(const string_union<S, N> & value, Text text, Scalar scalar) {
     std::terminate();
 }
 template <class S, bool N> js_string union_text(const string_union<S, N> & value) {
-    return visit_carrier(
-        value, [](const std::string & text) { return js_string{text}; },
-        [](nullable_scalar scalar) { return scalar.to_string(); });
+    switch (value.tag) {
+    case union_kind::undefined: return js_string{"undefined"};
+    case union_kind::null: return js_string{"null"};
+    case union_kind::scalar: return value.scalar.toString();
+    case union_kind::string: return value.text;
+    }
+    std::terminate();
 }
 template <class S, bool N> bool union_truthy(const string_union<S, N> & value) {
     return visit_carrier(
@@ -498,9 +502,19 @@ template <class S, bool N> js_num union_number(const string_union<S, N> & value)
         [](nullable_scalar scalar) { return to_number(scalar); });
 }
 template <class S, bool N> void print_union(const char * name, const string_union<S, N> & value) {
-    visit_carrier(
-        value, [name](const std::string & text) { print_string(name, text); },
-        [name](nullable_scalar scalar) { print_scalar(name, scalar); });
+    switch (value.tag) {
+    case union_kind::undefined: print_line(std::string{name} + "=undefined"); return;
+    case union_kind::null: print_line(std::string{name} + "=null"); return;
+    case union_kind::scalar:
+        if constexpr (std::is_same_v<S, js_boolean_t>) {
+            print_boolean(name, value.scalar);
+        } else {
+            print_number(name, value.scalar);
+        }
+        return;
+    case union_kind::string: print_string(name, value.text.value()); return;
+    }
+    std::terminate();
 }
 // Widening keeps every kind; absence stays its own kind.
 template <class R, class S, bool N> R widen(const string_union<S, N> & value) {

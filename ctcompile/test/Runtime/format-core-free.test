@@ -1,0 +1,35 @@
+# Statically nonnumeric formatters stay Core-free, including both Boolean
+# union carriers. Keep every runtime tag live rather than relying on inlining
+# to remove an unreachable Number arm.
+# RUN: split-file %s %t
+# RUN: %gxx -O1 %t/main.cpp -o %t/gcc
+# RUN: %clangxx -O1 %t/main.cpp -o %t/clang
+# RUN: %nm -C %t/gcc | FileCheck %s --check-prefix=SYMBOLS --implicit-check-not=ctbrowser::number_to_string --implicit-check-not=ctbrowser::script:: --implicit-check-not=ctbrowser::aot::
+# RUN: %nm -C %t/clang | FileCheck %s --check-prefix=SYMBOLS --implicit-check-not=ctbrowser::number_to_string --implicit-check-not=ctbrowser::script:: --implicit-check-not=ctbrowser::aot::
+# RUN: %t/gcc | FileCheck %s --check-prefix=OUTPUT --match-full-lines
+# RUN: %t/clang | FileCheck %s --check-prefix=OUTPUT --match-full-lines
+# SYMBOLS: main
+# OUTPUT: text true undefined null
+# OUTPUT-NEXT: boolean=true
+# OUTPUT-NEXT: string="text"
+# OUTPUT-NEXT: missing=undefined
+# OUTPUT-NEXT: absent=null
+# OUTPUT-NEXT: true text undefined null
+# OUTPUT-NOT: {{.}}
+
+#--- main.cpp
+#include <ctcompile/CTNative/Runtime/Format.hpp>
+
+int main(int argc, char **) {
+    using namespace ctnative;
+    println("{} {} {} {}", js_string{"text"}, js_boolean_t{argc != 0}, undefined_t{}, js_null_t{});
+    const boolean_string boolean{js_boolean_t{argc != 0}};
+    const boolean_string string{js_string{"text"}};
+    const nullable_boolean_string missing{undefined_t{}};
+    const nullable_boolean_string absent{js_null_t{}};
+    print_boolean_string("boolean", boolean);
+    print_boolean_string("string", string);
+    print_nullable_boolean_string("missing", missing);
+    print_nullable_boolean_string("absent", absent);
+    println("{} {} {} {}", boolean, string, missing, absent);
+}
