@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../../PartialEvaluation/Heap.h"
+#include "../DOM/Snapshot/Bounds.h"
 #include "Proof.hpp"
 
 namespace ctcompile::ctnative::class_detail {
@@ -221,35 +222,21 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
             before.getOperations().size() != 3 || after.getOperations().size() != 4) {
             return false;
         }
-        auto compare = llvm::dyn_cast<ctjs::CompareOp>(before.front());
-        auto truth = llvm::dyn_cast<ctjs::TruthyOp>(before.front().getNextNode());
-        auto condition = llvm::dyn_cast<mlir::scf::ConditionOp>(before.back());
-        auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(after.front());
-        auto advance = llvm::dyn_cast<ctjs::BinaryStaticOp>(append->getNextNode());
-        auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(after.back());
+        auto [compare, read] = matchIndexCopyLoop(loop, append);
         auto length =
             compare ? compare.getRhs().getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
         auto items =
             length ? length.getObject().getDefiningOp<ctjs::IterableOp>() : ctjs::IterableOp{};
         auto rest =
             items ? items.getSource().getDefiningOp<ctjs::GatherRestOp>() : ctjs::GatherRestOp{};
-        if (!compare || compare.getKind() != ctjs::CompareKind::Lt ||
-            compare.getLhs() != before.getArgument(0) || !truth ||
-            truth.getValue() != compare.getResult() || !condition ||
-            condition.getCondition() != truth.getResult() || condition.getArgs().size() != 1 ||
-            condition.getArgs()[0] != before.getArgument(0) || !read ||
-            read->getNextNode() != append || read.getKey() != after.getArgument(0) ||
-            append.getElement() != read.getResult() || !advance ||
-            advance.getKind() != ctjs::BinaryKind::Add ||
-            advance.getLhs() != after.getArgument(0) || !numberIs(advance.getRhs(), 1) || !yield ||
-            yield.getNumOperands() != 1 || yield.getOperand(0) != advance.getResult() ||
-            ctjs::constantKey(length.getKey()) != "length" || !rest || rest.getFrom() != 0 ||
-            read.getObject() != items.getResult() || rest->getBlock() != &original ||
-            items->getBlock() != &original || length->getBlock() != &original ||
-            !rest->isBeforeInBlock(items) || !items->isBeforeInBlock(length) ||
-            !length->isBeforeInBlock(loop) || !array->isBeforeInBlock(loop) ||
-            !loop->isBeforeInBlock(spread) || !usesOnly(rest, {items}) ||
-            !usesOnly(items, {length, read}) || !usesOnly(length, {compare})) {
+        if (!compare || ctjs::constantKey(length.getKey()) != "length" || !rest ||
+            rest.getFrom() != 0 || read.getObject() != items.getResult() ||
+            rest->getBlock() != &original || items->getBlock() != &original ||
+            length->getBlock() != &original || !rest->isBeforeInBlock(items) ||
+            !items->isBeforeInBlock(length) || !length->isBeforeInBlock(loop) ||
+            !array->isBeforeInBlock(loop) || !loop->isBeforeInBlock(spread) ||
+            !usesOnly(rest, {items}) || !usesOnly(items, {length, read}) ||
+            !usesOnly(length, {compare})) {
             return false;
         }
         for (mlir::Operation * op :
