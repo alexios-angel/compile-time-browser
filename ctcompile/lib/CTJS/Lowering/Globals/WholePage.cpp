@@ -426,6 +426,26 @@ std::string writeSink(mlir::ModuleOp module, mlir::Value object, mlir::Value key
             continue;
         }
         if (mlir::isa_and_present<ConstantOp>(leaf.getDefiningOp())) { continue; }
+        // Every sink property name is ASCII letters only, so a concatenation
+        // with a constant piece holding any other character (`.bs`, `::`) can
+        // never name a sink, whatever the other pieces are.
+        mlir::Value part = registerFlowOrigin(leaf);
+        bool concat = false;
+        bool ruledOut = false;
+        while (auto sum = part ? part.getDefiningOp<BinaryOp>() : BinaryOp{}) {
+            if (sum.getKind() != BinaryKind::Add && sum.getKind() != BinaryKind::Concat) { break; }
+            concat = true;
+            const auto text = constantString(sum.getRhs());
+            if (text && !llvm::all_of(*text, [](char c) { return llvm::isAlpha(c); })) {
+                ruledOut = true;
+            }
+            part = registerFlowOrigin(sum.getLhs());
+        }
+        if (const auto text = part ? constantString(part) : std::nullopt;
+            text && !llvm::all_of(*text, [](char c) { return llvm::isAlpha(c); })) {
+            ruledOut = true;
+        }
+        if (concat && ruledOut) { continue; }
         const auto prefix = leftmostPart(leaf);
         for (llvm::StringRef name :
              {"innerHTML", "outerHTML", "srcdoc", "text", "textContent", "innerText", "href",
@@ -440,9 +460,9 @@ std::string writeSink(mlir::ModuleOp module, mlir::Value object, mlir::Value key
 
 /// Why calling `method` with `call`'s arguments may create code, or empty.
 /// `closures` follows every possible leaf, not just the closures among them.
-std::string methodCall(llvm::StringRef method, CallOp call,
+std::string methodCall(llvm::StringRef method, CallView call, mlir::Operation * site,
                        globals_detail::ClosureValues & closures) {
-    const auto args = call.getArgs();
+    const auto args = call.args;
     const auto arg = [&](std::size_t index) {
         return index < args.size() ? args[index] : mlir::Value{};
     };
@@ -493,7 +513,7 @@ std::string methodCall(llvm::StringRef method, CallOp call,
         if (!markup) { return {}; }
         if (std::string why = handlerMarkup(markup, method); !why.empty()) { return why; }
         if (std::string why = codeMarkup(markup, method); !why.empty()) { return why; }
-        return textIntoScript(call.getReceiver(), method, closures);
+        return textIntoScript(call.receiver, method, closures);
     }
     if (method == "appendChild" || method == "insertBefore" || method == "replaceChild" ||
         method == "append" || method == "prepend" || method == "before" || method == "after" ||
@@ -520,7 +540,7 @@ std::string methodCall(llvm::StringRef method, CallOp call,
         for (std::size_t index = first; !text && index < count; ++index) {
             text = args[index] && !elementTag(args[index], closures);
         }
-        if (text) { return textIntoScript(call.getReceiver(), method, closures); }
+        if (text) { return textIntoScript(call.receiver, method, closures); }
         return {};
     }
     if (method == "parseFromString") {
@@ -538,7 +558,7 @@ std::string methodCall(llvm::StringRef method, CallOp call,
         const auto check = [&](llvm::StringRef key) -> std::string {
             const std::string api = method.str() + "(\"" + key.str() + "\")";
             if (key.equals_insensitive("srcdoc")) { return codeMarkup(value, api); }
-            return urlWrite(key, value, call.getReceiver(), api, closures);
+            return urlWrite(key, value, call.receiver, api, closures);
         };
         if (const auto text = constantString(name)) { return check(*text); }
         const auto leaves = closures.leafValuesOf(name);
@@ -565,7 +585,7 @@ std::string methodCall(llvm::StringRef method, CallOp call,
         // The attribute carries its own name and value into the element this
         // call attaches it to; only names that cannot be sinks are safe here.
         llvm::SmallVector<llvm::StringRef> names;
-        attrNamesOf(arg(0), call->getParentOfType<mlir::ModuleOp>(), 0, names);
+        attrNamesOf(arg(0), site->getParentOfType<mlir::ModuleOp>(), 0, names);
         const auto sink = [](llvm::StringRef name) {
             return name.empty() || name.starts_with_insensitive("on") ||
                    llvm::StringSwitch<bool>(name.lower())
@@ -636,13 +656,13 @@ std::string methodCall(llvm::StringRef method, CallOp call,
     // Navigating to a URL: `location.assign(u)`, `location.replace(u)` and
     // `window.open(u)`, when the receiver is that object.
     if ((method == "assign" || method == "replace" || method == "open") && arg(0)) {
-        const mlir::Value receiver = registerFlowOrigin(call.getReceiver());
+        const mlir::Value receiver = registerFlowOrigin(call.receiver);
         auto global = receiver ? receiver.getDefiningOp<LoadGlobalOp>() : LoadGlobalOp{};
         auto read = receiver ? receiver.getDefiningOp<GetPropertyOp>() : GetPropertyOp{};
         const bool location = (global && global.getName() == "location") ||
                               (read && constantKey(read.getKey()) == "location");
         const bool window = (global && globals_detail::names_global_object(global.getName())) ||
-                            (!call.getReceiver() || isUndefinedConstant(call.getReceiver()));
+                            (!call.receiver || isUndefinedConstant(call.receiver));
         if ((method == "open" && window) || (method != "open" && location)) {
             return urlTarget(arg(0), method);
         }
@@ -664,9 +684,45 @@ bool createsCode(llvm::StringRef key) {
         .Cases({"before", "after", "replaceWith", "replaceChildren", "insertAdjacentElement"}, true)
         .Cases({"insertAdjacentText", "setAttributeNode", "setAttributeNodeNS", "setNamedItem",
                 "setNamedItemNS", "defineProperty", "getOwnPropertyDescriptor",
-                "getOwnPropertyDescriptors"},
+                "getOwnPropertyDescriptors", "set"},
                true)
         .Default(false);
+}
+
+/// The `get_property "set"` `value` reaches, through registers and the globals
+/// stores write, or none: `Reflect.set` and a name holding it are the same
+/// function here.
+GetPropertyOp setReadOf(mlir::Value value, mlir::ModuleOp module, unsigned depth) {
+    if (!value || depth == 8) { return {}; }
+    const mlir::Value origin = registerFlowOrigin(value);
+    if (auto read = origin ? origin.getDefiningOp<GetPropertyOp>() : GetPropertyOp{}) {
+        return constantKey(read.getKey()) == "set" ? read : GetPropertyOp{};
+    }
+    if (auto load = origin ? origin.getDefiningOp<LoadGlobalOp>() : LoadGlobalOp{}) {
+        GetPropertyOp found;
+        module.walk([&](StoreGlobalOp store) {
+            if (found || store.getName() != load.getName()) { return; }
+            found = setReadOf(store.getValue(), module, depth + 1);
+        });
+        return found;
+    }
+    return {};
+}
+
+/// Whether `value` is the Reflect global, through registers and the globals
+/// stores write (`var R = Reflect` makes R the same object).
+bool isReflect(mlir::Value value, mlir::ModuleOp module, unsigned depth = 0) {
+    if (!value || depth == 8) { return false; }
+    const mlir::Value origin = registerFlowOrigin(value);
+    auto load = origin ? origin.getDefiningOp<LoadGlobalOp>() : LoadGlobalOp{};
+    if (!load) { return false; }
+    if (load.getName() == "Reflect") { return true; }
+    bool found = false;
+    module.walk([&](StoreGlobalOp store) {
+        if (found || store.getName() != load.getName()) { return; }
+        found = isReflect(store.getValue(), module, depth + 1);
+    });
+    return found;
 }
 
 /// Why the value of `read` (a constant-key read off any object) or of `load` (a
@@ -678,8 +734,10 @@ std::string usedFunction(mlir::Value function, llvm::StringRef name,
     auto uses = registerFlowUses(function);
     if (!uses) { return "`" + name.str() + "` moves through too many registers to follow"; }
     for (mlir::OpOperand * use : *uses) {
-        auto call = mlir::dyn_cast<CallOp>(use->getOwner());
-        if (!call || use->getOperandNumber() != 0) {
+        // A resolved call (`ctjs.call_direct`) is a call here too: the value
+        // is its callee operand, not a value that escapes to something else.
+        const auto view = callView(use->getOwner());
+        if (!view || view->callee != use->get()) {
             // Testing or comparing the function does not call it. A navigation
             // method is matched only at its calls (`assign`, `replace` and
             // `open` name other objects' methods far more often).
@@ -692,8 +750,8 @@ std::string usedFunction(mlir::Value function, llvm::StringRef name,
             }
             continue;
         }
-        if (std::string why = methodCall(name, call, closures); !why.empty()) {
-            sites.push_back({call, std::move(why)});
+        if (std::string why = methodCall(name, *view, use->getOwner(), closures); !why.empty()) {
+            sites.push_back({use->getOwner(), std::move(why)});
         }
     }
     return {};
@@ -1023,7 +1081,7 @@ void markRuntimeCode(mlir::ModuleOp module) {
                           "replaceChildren", "insertAdjacentElement", "insertAdjacentText",
                           "setAttributeNode", "setAttributeNodeNS", "setNamedItem",
                           "setNamedItemNS", "defineProperty", "getOwnPropertyDescriptor",
-                          "getOwnPropertyDescriptors"}) {
+                          "getOwnPropertyDescriptors", "set"}) {
                         if (!prefix || name.starts_with(*prefix)) {
                             names.push_back(name.str());
                         }
@@ -1039,17 +1097,19 @@ void markRuntimeCode(mlir::ModuleOp module) {
                 return;
             }
             for (mlir::OpOperand * use : *uses) {
-                auto call = mlir::dyn_cast<CallOp>(use->getOwner());
-                if (!call || use->getOperandNumber() != 0) { continue; }
+                const auto view = callView(use->getOwner());
+                if (!view || view->callee != use->get()) { continue; }
                 if (unbounded) {
                     found.push_back(
-                        {call, "a method name not known at build time may create code when "
-                               "called, whose code a native program cannot compile"});
+                        {use->getOwner(),
+                         "a method name not known at build time may create code when "
+                         "called, whose code a native program cannot compile"});
                     continue;
                 }
                 for (const std::string & name : names) {
-                    if (std::string why = methodCall(name, call, closures); !why.empty()) {
-                        found.push_back({call, std::move(why)});
+                    if (std::string why = methodCall(name, *view, use->getOwner(), closures);
+                        !why.empty()) {
+                        found.push_back({use->getOwner(), std::move(why)});
                         break;
                     }
                 }
@@ -1066,13 +1126,13 @@ void markRuntimeCode(mlir::ModuleOp module) {
         }
         if (auto call = mlir::dyn_cast<CallOp>(op)) {
             // Reflect.set(target, key, value) writes `key` on `target` just
-            // like a ctjs.set_property does, so the same sink rules run.
-            auto read = call.getCallee().getDefiningOp<GetPropertyOp>();
-            const mlir::Value owner = read ? registerFlowOrigin(read.getObject()) : mlir::Value{};
-            auto reflect = owner ? owner.getDefiningOp<LoadGlobalOp>() : LoadGlobalOp{};
+            // like a ctjs.set_property does, so the same sink rules run. The
+            // builtin can be held in a name (`var R = Reflect; R.set`), so the
+            // callee resolves to a `set` read whose object is the Reflect
+            // global through registers and global stores.
+            auto read = setReadOf(call.getCallee(), module, 0);
             const auto args = call.getArgs();
-            if (reflect && reflect.getName() == "Reflect" && constantKey(read.getKey()) == "set" &&
-                args.size() >= 3) {
+            if (read && isReflect(read.getObject(), module) && args.size() >= 3) {
                 if (std::string why = writeSink(module, args[0], args[1], args[2], closures);
                     !why.empty()) {
                     found.push_back({op, std::move(why)});

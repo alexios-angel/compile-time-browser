@@ -53,7 +53,7 @@
 // RUN:   2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --implicit-check-not=ctjs.runtime_code
 
-// RUN: for name in sink-srcdoc-property sink-srcdoc-attribute sink-srcdoc-attribute-ns sink-sethtml-script sink-sethtml-runscripts sink-parsehtml-script sink-fragment-script sink-write-script sink-writeln-script sink-outer-handler sink-adjacent-handler sink-srcdoc-nested sink-markup-frame sink-iframe-url sink-object-url sink-embed-url sink-anchor-url sink-form-url sink-location-url sink-location-href-url sink-location-assign-url sink-location-replace-url sink-window-open-url sink-global-open-url sink-attribute-src-url sink-attribute-data-url sink-attribute-href-url sink-attribute-action-url sink-script-create sink-script-create-ns sink-script-insert sink-script-before sink-script-replace sink-script-append sink-script-text sink-script-src sink-script-text-content sink-script-src-attribute sink-safe-img sink-safe-anchor-text sink-safe-div-text sink-safe-append-div sink-safe-srcdoc sink-safe-sethtml sink-safe-parsehtml sink-frame-data-url sink-frame-https-url sink-object-data-html sink-embed-data-html sink-frame-src-attribute sink-object-data-attribute-ns sink-key-srcdoc sink-key-sethtml sink-key-append sink-key-script-text sink-attr-value-srcdoc sink-attr-named-srcdoc sink-descriptor-srcdoc sink-attr-node-srcdoc sink-define-property-srcdoc sink-script-append-string sink-script-prepend-string sink-script-adjacent-text sink-script-append-param sink-script-prepend-param sink-script-innerhtml sink-script-adjacent-html sink-reflect-set-srcdoc sink-reflect-set-innerhtml sink-reflect-set-src sink-descriptors-plural; do \
+// RUN: for name in sink-srcdoc-property sink-srcdoc-attribute sink-srcdoc-attribute-ns sink-sethtml-script sink-sethtml-runscripts sink-parsehtml-script sink-fragment-script sink-write-script sink-writeln-script sink-outer-handler sink-adjacent-handler sink-srcdoc-nested sink-markup-frame sink-iframe-url sink-object-url sink-embed-url sink-anchor-url sink-form-url sink-location-url sink-location-href-url sink-location-assign-url sink-location-replace-url sink-window-open-url sink-global-open-url sink-attribute-src-url sink-attribute-data-url sink-attribute-href-url sink-attribute-action-url sink-script-create sink-script-create-ns sink-script-insert sink-script-before sink-script-replace sink-script-append sink-script-text sink-script-src sink-script-text-content sink-script-src-attribute sink-safe-img sink-safe-anchor-text sink-safe-div-text sink-safe-append-div sink-safe-srcdoc sink-safe-sethtml sink-safe-parsehtml sink-frame-data-url sink-frame-https-url sink-object-data-html sink-embed-data-html sink-frame-src-attribute sink-object-data-attribute-ns sink-key-srcdoc sink-key-sethtml sink-key-append sink-key-script-text sink-attr-value-srcdoc sink-attr-named-srcdoc sink-descriptor-srcdoc sink-attr-node-srcdoc sink-define-property-srcdoc sink-script-append-string sink-script-prepend-string sink-script-adjacent-text sink-script-append-param sink-script-prepend-param sink-script-innerhtml sink-script-adjacent-html sink-reflect-set-srcdoc sink-reflect-set-innerhtml sink-reflect-set-src sink-descriptors-plural sink-reflect-set-method-alias sink-reflect-alias sink-safe-key sink-key-unbounded sink-key-letters sink-safe-map-set; do \
 // RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --whole-page --mlir-print-debuginfo 2>/dev/null \
 // RUN:     | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc > %t/$name.mlir; done
 // RUN: FileCheck %s --check-prefix=SINKSRCDOCPROPERTY < %t/sink-srcdoc-property.mlir
@@ -127,6 +127,12 @@
 // RUN: FileCheck %s --check-prefix=SINKREFLECTSETINNERHTML < %t/sink-reflect-set-innerhtml.mlir
 // RUN: FileCheck %s --check-prefix=SINKREFLECTSETSRC < %t/sink-reflect-set-src.mlir
 // RUN: FileCheck %s --check-prefix=SINKDESCRIPTORSPLURAL < %t/sink-descriptors-plural.mlir
+// RUN: FileCheck %s --check-prefix=SINKREFLECTSETMETHODALIAS < %t/sink-reflect-set-method-alias.mlir
+// RUN: FileCheck %s --check-prefix=SINKREFLECTALIAS < %t/sink-reflect-alias.mlir
+// RUN: FileCheck %s --check-prefix=SINKSAFEKEY --implicit-check-not=ctjs.runtime_code < %t/sink-safe-key.mlir
+// RUN: FileCheck %s --check-prefix=SINKKEYUNBOUNDED < %t/sink-key-unbounded.mlir
+// RUN: FileCheck %s --check-prefix=SINKKEYLETTERS < %t/sink-key-letters.mlir
+// RUN: FileCheck %s --check-prefix=SINKSAFEMAPSET --implicit-check-not=ctjs.runtime_code < %t/sink-safe-map-set.mlir
 
 // RUN: for name in computed-document-method reflected-document-method; do \
 // RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --whole-page 2>/dev/null \
@@ -491,6 +497,28 @@ arm(document.body, 1);
 // SINKDESCRIPTORSPLURAL: ctnative.not_native = "`getOwnPropertyDescriptors` of a property not known at build time can reach code a native program cannot compile
 // SINKDESCRIPTORSPLURAL: ctjs.runtime_code = "`getOwnPropertyDescriptors` of a property not known at build time can reach code a native program cannot compile
 
+// A set read off Reflect used other than as the direct callee marks like the
+// other method values; the call through an alias runs the same sink rules.
+// SINKREFLECTSETMETHODALIAS: ctnative.not_native = "`set` is used as a value, and a call through it may create code at run time
+// SINKREFLECTSETMETHODALIAS: ctjs.runtime_code = "`set` is used as a value, and a call through it may create code at run time
+// SINKREFLECTSETMETHODALIAS: ctjs.runtime_code = "`srcdoc` with executable markup may add a script or browsing context, whose code a native program cannot compile
+// SINKREFLECTALIAS: ctnative.not_native = "`innerHTML` with executable markup may add a script or browsing context, whose code a native program cannot compile
+// SINKREFLECTALIAS: ctjs.runtime_code = "`innerHTML` with executable markup may add a script or browsing context, whose code a native program cannot compile
+
+// A computed property key that is a concatenation with a constant piece no
+// sink property name contains (every sink name is ASCII letters only) can
+// never name a sink; a letters-only prefix still may, and a key with no
+// constant piece is still refused.
+// SINKSAFEKEY: module
+// SINKKEYUNBOUNDED: ctnative.not_native = "a property name not known at build time may write a code sink, whose code a native program cannot compile
+// SINKKEYUNBOUNDED: ctjs.runtime_code = "a property name not known at build time may write a code sink, whose code a native program cannot compile
+// SINKKEYLETTERS: ctnative.not_native = "`innerHTML` with markup holding an on* attribute adds an event handler, whose code a native program cannot compile
+// SINKKEYLETTERS: ctjs.runtime_code = "`innerHTML` with markup holding an on* attribute adds an event handler, whose code a native program cannot compile
+
+// A Map's own set method is not the reflection builtin; its call is a call
+// through a name the sink rules do not reach.
+// SINKSAFEMAPSET: module
+
 //--- sink-srcdoc-property.js
 document.querySelector("iframe").srcdoc = "<script>x=1</script>";
 
@@ -703,6 +731,32 @@ Reflect.set(document.querySelector("iframe"), "src", "data:text/html,<script>x=1
 
 //--- sink-descriptors-plural.js
 Object.getOwnPropertyDescriptors(document.querySelector("iframe")).srcdoc.set.call(document.querySelector("iframe"), "<script>x=1</script>");
+
+//--- sink-reflect-set-method-alias.js
+var rs = Reflect.set; rs(document.querySelector("iframe"), "srcdoc", "<script>x=1</script>");
+
+//--- sink-reflect-alias.js
+var R = Reflect; R.set(document.body, "innerHTML", "<script>x=1</script>");
+
+//--- sink-safe-key.js
+function fill(el, name, k, n, markup) {
+    document.body[name + '.bs'] = "<img src=x onerror=y>";
+    el[k + '::' + n] = markup;
+}
+fill(document.body, "click", "type", 1, "<b>ok</b>");
+
+//--- sink-key-unbounded.js
+document.body[location.hash.slice(1)] = "<script>x=1</script>";
+
+//--- sink-key-letters.js
+function fill(el, x) {
+    el["inner" + x] = "<img src=x onerror=y>";
+}
+fill(document.body, "HTML");
+
+//--- sink-safe-map-set.js
+function use(m, k, v) { m.set(k, v); return m; }
+use(new Map(), 1, 2);
 
 //--- computed-document-method.js
 document[location.hash] = function () { return document.querySelector("script"); };
