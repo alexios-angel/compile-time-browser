@@ -25,6 +25,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <optional>
 #include <string>
 
@@ -596,14 +597,13 @@ llvm::StringRef TypeInference::firstPropertyRead(mlir::Value value) {
         ctjs::FuncOp callee = call ? call.getTarget() : ctjs::FuncOp{};
         if (!callee || callee.getBody().empty()) { return {}; }
         // Into the callee, at the first argument position that passes it.
-        const mlir::Value passed = value;
-        value = {};
-        for (unsigned i = 3; i < call->getNumOperands(); ++i) {
-            if (call->getOperand(i) == passed) {
-                value = callee.getBody().front().getArgument(i);
-                break;
-            }
-        }
+        auto operands = call->getOperands().drop_front(ctjs::implicit_arguments);
+        auto found = llvm::find(operands, value);
+        value = found == operands.end()
+                    ? mlir::Value{}
+                    : callee.getBody().front().getArgument(
+                          ctjs::implicit_arguments +
+                          static_cast<unsigned>(std::distance(operands.begin(), found)));
     }
     return {};
 }
