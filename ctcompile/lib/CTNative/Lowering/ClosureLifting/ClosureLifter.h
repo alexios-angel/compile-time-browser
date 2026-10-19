@@ -539,6 +539,11 @@ struct closureLifter {
     /// What a read of an arrow's lexical `this` stands for: its maker's
     /// receiver, or the maker's own such read (ArrowThis.cpp).
     mlir::Value lexicalThisMaker(mlir::Value value);
+    /// The cell captureLexicalThis boxed that maker's value in (ArrowThis.cpp).
+    ctjs::CreateCellOp lexicalThisCell(mlir::Value value);
+    /// True when `use` of a `this` is a held capture of the host callback its
+    /// ctjs.call registers (ArrowThis.cpp).
+    bool handsHeldThis(mlir::OpOperand & use);
     /// The use of `arrow`'s closure that lets it outlive its maker's call, or
     /// null when every use calls it (ArrowThis.cpp).
     mlir::OpOperand * useOutlivingMaker(ctjs::FuncOp arrow);

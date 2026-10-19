@@ -42,6 +42,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "ClosureLifter.h"
+#include "ctcompile/CTNative/Analysis/Instances.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -157,6 +158,11 @@ llvm::SmallVector<int32_t> closureLifter::lexicalThisObjectArgs(
     for (ctjs::CreateClosureOp c : made) {
         if (*slot >= c.getUpvalues().size() || slotIsCarried(c, *slot)) { return {}; }
         auto cell = c.getUpvalues()[*slot].getDefiningOp<ctjs::CreateCellOp>();
+        // The host keeps a callback holding a registry instance: it binds the
+        // instance's owner (passesLexicalThis), not a pointer it would outlive.
+        if (cell && cell->hasAttr(kNativeHeldThis) && hostCallbacks.contains(c.getOperation())) {
+            return {};
+        }
         auto self = cell ? llvm::dyn_cast<mlir::BlockArgument>(cell.getInitial()) : nullptr;
         auto maker = c->getParentOfType<ctjs::FuncOp>();
         if (!cell || !cell->hasAttr(kLexicalThis) || !self || !maker ||
@@ -223,6 +229,19 @@ bool closureLifter::passesLexicalThis(mlir::OpOperand & use) {
                listsObjectArg(call.getTarget(), use.getOperandNumber());
     }
     auto cell = llvm::dyn_cast<ctjs::CreateCellOp>(user);
+    // A registry instance's `this`, boxed for arrows that only read fields and
+    // call methods through it (kNativeHeldThis, Analysis/Instances.h), each
+    // lifted as a host callback: the host binds a copy of the capture, which
+    // is the instance's std::shared_ptr owner (EmitC/HostCallbacks.cpp), and
+    // keeps the instance alive as long as it keeps the callback.
+    if (cell && cell->hasAttr(kNativeHeldThis) &&
+        llvm::all_of(cell.getResult().getUses(), [&](mlir::OpOperand & capture) {
+            auto c = llvm::dyn_cast<ctjs::CreateClosureOp>(capture.getOwner());
+            ctjs::FuncOp target = c ? targetOf(c) : ctjs::FuncOp{};
+            return c && c->hasAttr(kNativeLifted) && target && target->hasAttr(kNativeHostCallback);
+        })) {
+        return true;
+    }
     // A cell makeRunOnceCellsStatic turned into a static variable is that
     // variable's definition, read by name from other functions, not a box
     // only these arrows read.
@@ -245,6 +264,13 @@ bool closureLifter::passesLexicalThis(mlir::OpOperand & use) {
 /// an arrow too, its own read of this kind. Null for any other value, and for
 /// a read rewritten since (a lifted arrow reads a capture parameter instead).
 mlir::Value closureLifter::lexicalThisMaker(mlir::Value value) {
+    ctjs::CreateCellOp cell = lexicalThisCell(value);
+    return cell ? cell.getInitial() : mlir::Value{};
+}
+
+/// The cell that value lexicalThisMaker answers for `value` is boxed in, or
+/// null.
+ctjs::CreateCellOp closureLifter::lexicalThisCell(mlir::Value value) {
     auto read = value.getDefiningOp<ctjs::LoadUpvalueOp>();
     auto arrow = read ? read->getParentOfType<ctjs::FuncOp>() : ctjs::FuncOp{};
     const std::optional<unsigned> slot = lexicalThisSlot(arrow);
@@ -256,8 +282,26 @@ mlir::Value closureLifter::lexicalThisMaker(mlir::Value value) {
     auto cell = c && *slot < c.getUpvalues().size()
                     ? c.getUpvalues()[*slot].getDefiningOp<ctjs::CreateCellOp>()
                     : ctjs::CreateCellOp{};
-    if (!cell || !cell->hasAttr(kLexicalThis)) { return {}; }
-    return cell.getInitial();
+    return cell && cell->hasAttr(kLexicalThis) ? cell : ctjs::CreateCellOp{};
+}
+
+/// True when `use` of a function's `this` hands it to the host callback the
+/// ctjs.call `use` is in registers, as the capture of a held cell (see
+/// passesLexicalThis) whose closure is that callback's.
+bool closureLifter::handsHeldThis(mlir::OpOperand & use) {
+    auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+    auto named = call ? call->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativeHostCallback)
+                      : mlir::FlatSymbolRefAttr{};
+    if (!named || use.getOperandNumber() < 2) { return false; }
+    return llvm::any_of(use.get().getUsers(), [&](mlir::Operation * user) {
+        auto cell = llvm::dyn_cast<ctjs::CreateCellOp>(user);
+        return cell && cell->hasAttr(kNativeHeldThis) &&
+               llvm::any_of(cell->getUsers(), [&](mlir::Operation * captor) {
+                   auto c = llvm::dyn_cast<ctjs::CreateClosureOp>(captor);
+                   ctjs::FuncOp target = c ? targetOf(c) : ctjs::FuncOp{};
+                   return target && target.getSymName() == named.getValue();
+               });
+    });
 }
 
 /// The first use of `arrow`'s one closure that is not a call of it (callSiteOf),

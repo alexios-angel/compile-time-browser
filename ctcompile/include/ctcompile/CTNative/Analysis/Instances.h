@@ -91,6 +91,12 @@ struct InstanceRegistry {
     /// result is an instance of this class or neither.
     std::string key;
     llvm::SmallVector<mlir::Operation *> keyedReads;
+    /// The cells captureLexicalThis boxes the constructor's or a method's
+    /// `this` in for an arrow (ClosureLifting/ArrowThis.cpp) that only reads
+    /// fields and calls methods through it. Such an arrow may outlive the call
+    /// that made it, and then holds the instance through its capture, the
+    /// registry's std::shared_ptr.
+    llvm::SmallVector<mlir::Operation *> heldThis;
 };
 
 /// The mark markInstanceRegistries puts on a call that reads a family's Map
@@ -103,6 +109,10 @@ inline constexpr llvm::StringLiteral kNativeInstanceMethod = "ctnative.instance_
 
 /// The mark markInstanceRegistries puts on each of those comparisons.
 inline constexpr llvm::StringLiteral kNativeInstanceTest = "ctnative.instance_test";
+
+/// The mark markInstanceRegistries puts on each cell in a proved class's
+/// heldThis.
+inline constexpr llvm::StringLiteral kNativeHeldThis = "ctnative.held_this";
 
 /// The attribute markInstanceRegistries puts on a proved constructor: the
 /// class's name, which its instances' C++ class is named after.

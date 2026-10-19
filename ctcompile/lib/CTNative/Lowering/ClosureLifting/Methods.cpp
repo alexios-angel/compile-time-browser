@@ -141,14 +141,15 @@ bool closureLifter::ownsByValue(ctjs::SetPropertyOp set,
         }
         // Only the constructor and the methods of its prototype read the
         // field, and only through their own `this`, or the `this` of an arrow
-        // one of them makes and only calls: another object has no such
-        // field. A read before the store, or after a store of null, finds the
-        // field undefined or null, which the member records
-        // (Runtime/Owned.hpp), and throws the interpreter's TypeError. A store
-        // in the constructor runs once per instance, so no method of an
-        // instance the field held is still running when it is replaced; a
-        // store in a method can replace one whose method is running, so the
-        // field keeps every instance it held alive (ctnative::replaceable).
+        // one of them makes and only calls, or that holds a registry
+        // instance: another object has no such field. A read before the
+        // store, or after a store of null, finds the field undefined or null,
+        // which the member records (Runtime/Owned.hpp), and throws the
+        // interpreter's TypeError. A store in the constructor runs once per
+        // instance, so no method of an instance the field held is still
+        // running when it is replaced; a store in a method can replace one
+        // whose method is running, so the field keeps every instance it held
+        // alive (ctnative::replaceable).
         if (!inConstructor) { replaceableStores.insert(set.getOperation()); }
         llvm::SmallPtrSet<mlir::Operation *, 8> readers{targetOf(constructor).getOperation()};
         for (ctjs::SetPropertyOp field : prototype->fields) {
@@ -172,10 +173,14 @@ bool closureLifter::ownsByValue(ctjs::SetPropertyOp set,
                            from.getOwner()->isEntryBlock() &&
                            readers.contains(from.getOwner()->getParentOp());
                 }
-                const mlir::Value maker = lexicalThisMaker(object);
-                if (!maker) { return false; }
+                ctjs::CreateCellOp cell = lexicalThisCell(object);
+                if (!cell) { return false; }
                 auto arrow = object.getDefiningOp()->getParentOfType<ctjs::FuncOp>();
-                if (mlir::OpOperand * kept = useOutlivingMaker(arrow)) {
+                // A registry instance's held `this` (ArrowThis.cpp
+                // passesLexicalThis): the arrow keeps the instance's owner, and
+                // with it this member, however long it runs.
+                if (mlir::OpOperand * kept = useOutlivingMaker(arrow);
+                    kept && !cell->hasAttr(kNativeHeldThis)) {
                     escape = ("through the `this` that arrow `" + arrow.getSymName() +
                               "` captures, and that arrow is " + describeUse(*kept) +
                               ", so it can run after the call that made it returns, when "
@@ -183,7 +188,7 @@ bool closureLifter::ownsByValue(ctjs::SetPropertyOp set,
                                  .str();
                     return false;
                 }
-                object = maker;
+                object = cell.getInitial();
             }
             return false;
         };
@@ -1190,13 +1195,14 @@ void closureLifter::methodCensus() {
         }
     }
     // An arrow's `this` names what its maker's receiver names when the arrow
-    // runs only during its maker's calls (ArrowThis.cpp), so `this.m()` in it
-    // resolves as it would in the maker.
+    // runs only during its maker's calls, or holds a registry instance
+    // (ArrowThis.cpp), so `this.m()` in it resolves as it would in the maker.
     llvm::SmallVector<std::pair<mlir::Value, mlir::Value>> lexicalThisReads;
     module.walk([&](ctjs::LoadUpvalueOp read) {
-        const mlir::Value maker = lexicalThisMaker(read.getResult());
-        if (maker && !useOutlivingMaker(read->getParentOfType<ctjs::FuncOp>())) {
-            lexicalThisReads.emplace_back(read.getResult(), maker);
+        ctjs::CreateCellOp cell = lexicalThisCell(read.getResult());
+        if (cell && (cell->hasAttr(kNativeHeldThis) ||
+                     !useOutlivingMaker(read->getParentOfType<ctjs::FuncOp>()))) {
+            lexicalThisReads.emplace_back(read.getResult(), cell.getInitial());
         }
     });
     // Fixpoint over the receiver chain. `this.other()` inside a method has
@@ -1309,6 +1315,9 @@ std::optional<std::string> closureLifter::whyThisLeaks(ctjs::FuncOp target) {
             // direct. Any other position is `this` passed as an argument,
             // which has no call site to move it to.
             if (use.getOperandNumber() == 1 && resolveMethod(call)) { continue; }
+            // A registry instance's held `this`, bound by the host into the
+            // callback this call registers (ArrowThis.cpp).
+            if (handsHeldThis(use)) { continue; }
             return "it passes `this` to a call this rewrite cannot make direct";
         }
         // The receiver of a per-site copy of a method (CallSiteCopies.cpp)

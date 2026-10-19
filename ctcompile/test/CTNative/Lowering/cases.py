@@ -879,6 +879,11 @@ CASES = {
         "%t/observed-clang | FileCheck %s --check-prefix=OBSERVED --match-full-lines",
         "%native_reference %t/globals.js | FileCheck %s --check-prefix=OBSERVED --match-full-lines",
     ],
+    "Emission/class-bases": [
+        "split-file %s %t",
+        "ctjs-translate --mlir-to-cpp %t/one.mlir | FileCheck %s --check-prefix=ONE",
+        "not ctjs-translate --mlir-to-cpp %t/empty.mlir 2>&1 | FileCheck %s --check-prefix=EMPTY",
+    ],
     "Emission/print-deduced": [
         "ctjs-opt --ctnative-print-deduced %s | FileCheck %s",
         "ctjs-opt --ctnative-print-deduced --mlir-print-debuginfo %s | ctjs-translate --mlir-to-cpp | FileCheck --check-prefix=CPP %s",
@@ -1315,6 +1320,23 @@ CASES = {
     "Objects/array/borrow": [
         "split-file %s %t",
         "python3 %S/borrow.py --translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --original %S/shrink.mlir --fixtures %t --work %t.executables",
+    ],
+    "Objects/classes/held-this": [
+        "split-file %s %t",
+        "for name in timer constructor owned field-collision by-value writes passes stored constructor-stored promise; do    ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js 2>/dev/null    | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/$name.mlir; done",
+        'FileCheck %s --check-prefix=TIMER --implicit-check-not="this rewrite cannot make direct" --implicit-check-not="carry a receiver through" --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/timer.mlir',
+        'FileCheck %s --check-prefix=CONSTRUCTOR --implicit-check-not="this rewrite cannot make direct" --implicit-check-not="carry a receiver through" --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/constructor.mlir',
+        'FileCheck %s --check-prefix=OWNED --implicit-check-not="own it by value" --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/owned.mlir',
+        "FileCheck %s --check-prefix=BY-VALUE --implicit-check-not=ctnative.held_this --implicit-check-not=ctnative.instance_class < %t/by-value.mlir",
+        "FileCheck %s --check-prefix=BY-VALUE --implicit-check-not=ctnative.held_this --implicit-check-not=ctnative.instance_class < %t/writes.mlir",
+        "FileCheck %s --check-prefix=BY-VALUE --implicit-check-not=ctnative.held_this --implicit-check-not=ctnative.instance_class < %t/passes.mlir",
+        "FileCheck %s --check-prefix=STORED < %t/stored.mlir",
+        "FileCheck %s --check-prefix=CONSTRUCTOR-STORED < %t/constructor-stored.mlir",
+        "FileCheck %s --check-prefix=PROMISE < %t/promise.mlir",
+        "FileCheck %s --check-prefix=COLLISION --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/field-collision.mlir",
+        "ctjs-opt %t/field-collision.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/field-collision.cpp",
+        "%gxx -fsyntax-only %t/field-collision.cpp",
+        "%clangxx -fsyntax-only %t/field-collision.cpp",
     ],
     "Objects/array/overwrite": [
         "ctjs-translate --ctbrowser-js-to-ctjs %S/../../../Fixtures/Objects/array/overwrite.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=STORED",
