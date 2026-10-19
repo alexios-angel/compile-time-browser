@@ -67,10 +67,10 @@
 // helper is copied for the class, and the class is proved: its
 // jQueryInterface is removed as unreachable. The same program writing
 // `window.jQuery` keeps the branch and is refused as before.
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/jquery-plugin.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/jquery-plugin.js --whole-page 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=PLUGIN --implicit-check-not=ctnative.class_reason
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/jquery-plugin-written.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/jquery-plugin-written.js --whole-page 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=PLUGIN-WRITTEN --implicit-check-not=ctnative.absent_globals
 

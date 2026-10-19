@@ -73,6 +73,12 @@ def prepare_umd(args, name="umd-browser", source=None):
     pinned, values, prefix = umd_source()
     source = source or pinned
     js, prepared, functions = boundary.prepare(args, name, source.removesuffix("\n"))
+    # This input is the complete fixture page; the shared module helper stays open.
+    raw = args.work / f"{name}.raw.mlir"
+    host.run([args.translate, "--ctbrowser-js-to-ctjs", str(js), "--whole-page", "-o", str(raw)])
+    host.run(
+        [args.opt, str(raw), "--ctjs-resolve-globals", "--ctjs-lift-to-scf", "-o", str(prepared)]
+    )
     if js.read_bytes() != source.encode() or functions != 7:
         raise RuntimeError(f"{name}: preparation changed its source or seven functions")
     config = umd_contract(args, prepared, name, values)
@@ -311,6 +317,35 @@ def check_umd(args, node, reference, compilers, nm):
     expected = observe_umd(args, js, values)
     raw_config = umd_contract(args, prepared, "umd-raw", values)
     config = umd_contract(args, specialized, "umd-specialized", values)
+    open_raw = args.work / "umd-open.raw.mlir"
+    open_prepared = args.work / "umd-open.prepared.mlir"
+    host.run([args.translate, "--ctbrowser-js-to-ctjs", str(js), "-o", str(open_raw)])
+    host.run(
+        [
+            args.opt,
+            str(open_raw),
+            "--ctjs-resolve-globals",
+            "--ctjs-lift-to-scf",
+            "-o",
+            str(open_prepared),
+        ]
+    )
+    if "ctjs.whole_page" in open_prepared.read_text():
+        raise RuntimeError("module-only UMD import silently became a whole page")
+    open_config = umd_contract(args, open_prepared, "umd-open-prefix", values)
+    open_specialized = args.work / "umd-open.specialized.mlir"
+    host.run(
+        [
+            args.opt,
+            str(open_prepared),
+            f"--ctnative-specialize-host-prefix=manifest={open_config} "
+            + boundary.FOLLOW
+            + " follow-provider-objects=true",
+            "-o",
+            str(open_specialized),
+        ]
+    )
+    open_config = umd_contract(args, open_specialized, "umd-open-specialized", values)
     source, _, _ = umd_source()
     future = args.work / "umd-browser-future.js"
     future.write_text(
@@ -459,6 +494,16 @@ def check_umd(args, node, reference, compilers, nm):
         for field, admitted in (("absent_bindings", True), ("undefined_bindings", False)):
             name = f"umd-{policy}-missing-{field}"
             expectations.append((specialized, name, without(config, field, name), flags, admitted))
+        open_name = f"umd-open-{policy}-missing-absent_bindings"
+        expectations.append(
+            (
+                open_specialized,
+                open_name,
+                without(open_config, "absent_bindings", open_name),
+                flags,
+                False,
+            )
+        )
         for name, (subject, manifest, reason) in mutants.items():
             stale = f"umd-{policy}-{name}-stale"
             expectations.append((subject, stale, config, flags, False, "fingerprint mismatch"))

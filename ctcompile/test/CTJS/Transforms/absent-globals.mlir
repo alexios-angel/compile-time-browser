@@ -1,10 +1,11 @@
-// --ctjs-resolve-globals folds `typeof` of an absent global to `undefined`.
+// --ctjs-resolve-globals folds `typeof` of an absent global to `undefined`,
+// on a whole page (--whole-page, WholePage.h).
 //
-// A whole-program compile treats the script as a closed program. A name it
-// never stores, that the native realm does not provide (NativeRealm.h) and
-// that nothing can bind dynamically does not exist at run time, so `typeof`
-// of it is "undefined". The read becomes that constant and the globals row
-// says why. css-dump.js's `typeof PROPS` and a UMD wrapper's
+// A whole page is the closed program: every script its page will ever run is
+// in it. A name it never stores, that the native realm does not provide
+// (NativeRealm.h) and that nothing can bind dynamically does not exist at run
+// time, so `typeof` of it is "undefined". The read becomes that constant and
+// the globals row says why. css-dump.js's `typeof PROPS` and a UMD wrapper's
 // `typeof define`/`exports`/`module` are the shapes this is for.
 //
 // Each negative control keeps the read: a name the program stores, a name the
@@ -13,25 +14,33 @@
 // is left for native admission to refuse.
 //
 // RUN: split-file %s %t
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/probe.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/probe.js --whole-page 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=PROBE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/stored.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/stored.js --whole-page 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/host.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/host.js --whole-page 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=HOST
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/dynamic.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/dynamic.js --whole-page 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/window.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/window.js --whole-page 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/plain.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/plain.js --whole-page 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=PLAIN
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-umd.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-umd.js --whole-page 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=PREFIXUMD
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-declarations.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-declarations.js --whole-page 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=PREFIXPROPS
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-call.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-call.js --whole-page 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-twice.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-twice.js --whole-page 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/probe.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=OPEN
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/probe.js --whole-page --whole-page-named=PROPS 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/probe.js --whole-page --whole-page-named=other 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=PROBE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-declarations.js --whole-page --whole-page-named=PROPS 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT
 
 // PROBE: {name = "PROPS", reason = "absent: never stored and not provided by the native realm; 1 typeof read(s) folded to undefined", resolved = "none", stores = 0 : i32}
@@ -49,6 +58,10 @@
 
 // PLAIN: ctjs.load_global "PROPS"
 // PLAIN-NOT: typeof_lookup
+
+// Only a whole page folds: a module that is only part of one keeps the read,
+// since a later script can bind the name.
+// OPEN: ctjs.load_global "PROPS" {typeof_lookup = true}
 
 // --- The prefix rule ---------------------------------------------------------
 //
