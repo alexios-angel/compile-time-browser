@@ -103,15 +103,18 @@ bool emptyString(mlir::Value value) {
     return string && string.getValue().empty();
 }
 
+bool indexArithmetic(ctjs::BinaryKind kind) {
+    return kind == ctjs::BinaryKind::Div || kind == ctjs::BinaryKind::Sub ||
+           kind == ctjs::BinaryKind::Mul || kind == ctjs::BinaryKind::Mod ||
+           kind == ctjs::BinaryKind::Add || kind == ctjs::BinaryKind::Pow;
+}
+
 /// Evaluates a String index expression at compile time: numericIndexLiteral
 /// operands combined by at most \p arithmeticDepth levels of / - * % + or **.
 /// std::nullopt when the expression has any other shape.
 std::optional<double> stringIndex(mlir::Value value, unsigned arithmeticDepth = 2) {
     if (auto binary = value.getDefiningOp<ctjs::BinaryOp>();
-        binary &&
-        (binary.getKind() == ctjs::BinaryKind::Div || binary.getKind() == ctjs::BinaryKind::Sub ||
-         binary.getKind() == ctjs::BinaryKind::Mul || binary.getKind() == ctjs::BinaryKind::Mod ||
-         binary.getKind() == ctjs::BinaryKind::Add || binary.getKind() == ctjs::BinaryKind::Pow)) {
+        binary && indexArithmetic(binary.getKind())) {
         // ponytail: two binary levels bound this literal proof's work. Deeper
         // expressions need a separately budgeted origin analysis.
         if (!arithmeticDepth) { return std::nullopt; }
@@ -168,15 +171,12 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         return true;
     }
     if ((unary && unary.getKind() == ctjs::UnaryKind::Neg) ||
-        (binary &&
-         (binary.getKind() == ctjs::BinaryKind::Div || binary.getKind() == ctjs::BinaryKind::Sub ||
-          binary.getKind() == ctjs::BinaryKind::Mul || binary.getKind() == ctjs::BinaryKind::Mod ||
-          binary.getKind() == ctjs::BinaryKind::Pow ||
-          (binary.getKind() == ctjs::BinaryKind::Add &&
-           ((binary.getLhs().getDefiningOp<ctjs::UnaryOp>() &&
-             numericIndexLiteral(binary.getLhs())) ||
-            (binary.getRhs().getDefiningOp<ctjs::UnaryOp>() &&
-             numericIndexLiteral(binary.getRhs()))))))) {
+        (binary && indexArithmetic(binary.getKind()) &&
+         (binary.getKind() != ctjs::BinaryKind::Add ||
+          (binary.getLhs().getDefiningOp<ctjs::UnaryOp>() &&
+           numericIndexLiteral(binary.getLhs())) ||
+          (binary.getRhs().getDefiningOp<ctjs::UnaryOp>() &&
+           numericIndexLiteral(binary.getRhs()))))) {
         if (!spend()) { return false; }
         const auto result = operation.getResult(0);
         if (!stringIndex(result)) {
