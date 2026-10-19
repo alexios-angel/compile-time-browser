@@ -56,7 +56,7 @@ static_assert(!std::is_invocable_v<decltype(Symbol.hasInstance)>);
 static_assert(!std::is_assignable_v<decltype((Symbol.hasInstance)), js_symbol_t>);
 
 void boolean(const char * name, bool value) {
-    ctnative::print_scalar(name, ctnative::js_boolean_t{value});
+    ctnative::print_boolean(name, value);
 }
 
 void description(const char * name, const js_symbol_t & value) {
@@ -64,7 +64,7 @@ void description(const char * name, const js_symbol_t & value) {
     if (text) {
         ctnative::print_string(name, text->value());
     } else {
-        ctnative::print_scalar(name, ctnative::undefined_t{});
+        ctnative::print_line(std::string{name} + "=undefined");
     }
 }
 

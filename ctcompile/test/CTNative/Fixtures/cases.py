@@ -204,12 +204,14 @@ CASES = {
     ],
     "Scalars/template-literal": [
         "rm -rf %t && mkdir -p %t",
+        "%node %S/template-literal.js > %t/node.txt",
         "%native_reference --page %S/template-literal.html --script %S/template-literal.js > %t/vm.txt",
+        "cmp %t/node.txt %t/vm.txt",
         "FileCheck %s --match-full-lines --strict-whitespace < %t/vm.txt",
-        "%cmake -DTRANSLATE=ctjs-translate -DOPT=ctjs-opt -DSOURCE=%S/template-literal.js -DOUTPUT=%t/template.mlir -P %S/../../Checks/pipeline.cmake",
+        "%cmake -DTRANSLATE=ctjs-translate -DOPT=ctjs-opt -DSOURCE=%S/template-literal.js -DOUTPUT=%t/template.mlir -DOPTIMIZE=OFF -P %S/../../Checks/pipeline.cmake",
         "ctjs-translate --mlir-to-cpp %t/template.mlir -o %t/template.cpp",
-        "grep -c 'ctnative::format(' %t/template.cpp | FileCheck %s --check-prefix=CALLS",
-        "python3 %S/template_literal.py --cpp %t/template.cpp --expected %t/vm.txt --build %build --include %{monorepo}/ctbrowser/include --work %t",
+        "FileCheck %s --check-prefix=CPP < %t/template.cpp",
+        "python3 %S/console_log.py --cpp %t/template.cpp --expected %t/vm.txt --build %build --include %{monorepo}/ctbrowser/include --work %t",
     ],
 }
 
