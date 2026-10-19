@@ -56,7 +56,7 @@ struct EmitCEliminateBlockArgumentsPass
         // ctjs.func lacks a ctjs.not_lowered reason: functions the lowering
         // refused carry one, and an unlowered module has none.
         if (mlir::WalkResult early = getOperation().walk([](mlir::Operation * op) {
-                if (op->getName().getStringRef() != "ctjs.func") {
+                if (!mlir::isa<FuncOp>(op)) {
                     return mlir::WalkResult::advance();
                 }
                 return op->hasAttr(notLoweredMarker) ? mlir::WalkResult::advance()
@@ -73,14 +73,12 @@ struct EmitCEliminateBlockArgumentsPass
             return;
         }
 
-        llvm::SmallVector<ec::FuncOp> functions;
-        getOperation().walk([&](ec::FuncOp function) { functions.push_back(function); });
-        for (ec::FuncOp function : functions) {
-            if (mlir::failed(eliminate(function))) {
-                signalPassFailure();
-                return;
-            }
-        }
+        const auto lowered = getOperation().walk<mlir::WalkOrder::PostOrder>(
+            [&](ec::FuncOp function) {
+                return mlir::failed(eliminate(function)) ? mlir::WalkResult::interrupt()
+                                                        : mlir::WalkResult::advance();
+            });
+        if (lowered.wasInterrupted()) { signalPassFailure(); }
     }
 
     mlir::LogicalResult eliminate(ec::FuncOp function) {

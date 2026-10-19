@@ -28,6 +28,22 @@ struct work {
         return true;
     }
 };
+
+bool pushIncoming(mlir::BlockArgument argument, llvm::SmallVectorImpl<mlir::Value> & pending,
+                  work & budget) {
+    mlir::Block & block = *argument.getOwner();
+    if (block.hasNoPredecessors()) { return false; }
+    for (auto pred = block.pred_begin(), end = block.pred_end(); pred != end; ++pred) {
+        if (!budget.spend()) { return false; }
+        auto branch = llvm::dyn_cast<mlir::BranchOpInterface>((*pred)->getTerminator());
+        if (!branch) { return false; }
+        auto operands = branch.getSuccessorOperands(pred.getSuccessorIndex());
+        unsigned index = argument.getArgNumber();
+        if (index >= operands.size() || operands.isOperandProduced(index)) { return false; }
+        pending.push_back(operands[index]);
+    }
+    return true;
+}
 } // namespace
 
 std::optional<llvm::SmallVector<mlir::OpOperand *>> registerFlowUses(mlir::Value value,
@@ -71,17 +87,7 @@ bool registerFlowHasOrigin(mlir::Value value, mlir::Value source, unsigned maxSt
         if (!seen.insert(value).second) { continue; }
         auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
         if (!argument || argument.getOwner()->isEntryBlock()) { return false; }
-        mlir::Block & block = *argument.getOwner();
-        if (block.hasNoPredecessors()) { return false; }
-        for (auto pred = block.pred_begin(), end = block.pred_end(); pred != end; ++pred) {
-            if (!budget.spend()) { return false; }
-            auto branch = llvm::dyn_cast<mlir::BranchOpInterface>((*pred)->getTerminator());
-            if (!branch) { return false; }
-            auto operands = branch.getSuccessorOperands(pred.getSuccessorIndex());
-            unsigned index = argument.getArgNumber();
-            if (index >= operands.size() || operands.isOperandProduced(index)) { return false; }
-            pending.push_back(operands[index]);
-        }
+        if (!pushIncoming(argument, pending, budget)) { return false; }
     }
     return foundSource;
 }
@@ -101,17 +107,7 @@ mlir::Value registerFlowOrigin(mlir::Value value, unsigned maxSteps) {
             origin = value;
             continue;
         }
-        mlir::Block & block = *argument.getOwner();
-        if (block.hasNoPredecessors()) { return {}; }
-        for (auto pred = block.pred_begin(), end = block.pred_end(); pred != end; ++pred) {
-            if (!budget.spend()) { return {}; }
-            auto branch = llvm::dyn_cast<mlir::BranchOpInterface>((*pred)->getTerminator());
-            if (!branch) { return {}; }
-            auto operands = branch.getSuccessorOperands(pred.getSuccessorIndex());
-            unsigned index = argument.getArgNumber();
-            if (index >= operands.size() || operands.isOperandProduced(index)) { return {}; }
-            pending.push_back(operands[index]);
-        }
+        if (!pushIncoming(argument, pending, budget)) { return {}; }
     }
     return origin;
 }

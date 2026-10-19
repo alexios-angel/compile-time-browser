@@ -39,18 +39,14 @@ bool isDeducible(mlir::Operation * o) {
     // C++ promotes bool and narrow integer operands of arithmetic and bitwise
     // operators to int. The explicit result type narrows back, which `auto`
     // would lose; SCF canonicalization can introduce a boolean xor like this.
-    auto integer = llvm::dyn_cast<mlir::IntegerType>(o->getResult(0).getType());
-    if (integer && integer.getWidth() < 32 &&
+    const bool arithmetic =
         llvm::isa<ec::AddOp, ec::SubOp, ec::MulOp, ec::DivOp, ec::RemOp, ec::UnaryMinusOp,
                   ec::UnaryPlusOp, ec::BitwiseAndOp, ec::BitwiseOrOp, ec::BitwiseXorOp,
-                  ec::BitwiseNotOp, ec::BitwiseLeftShiftOp, ec::BitwiseRightShiftOp>(o)) {
-        return false;
-    }
-    return llvm::isa<ec::AddOp, ec::SubOp, ec::MulOp, ec::DivOp, ec::RemOp, ec::CmpOp, ec::CastOp,
-                     ec::CallOp, ec::LogicalAndOp, ec::LogicalOrOp, ec::LogicalNotOp,
-                     ec::UnaryMinusOp, ec::UnaryPlusOp, ec::ConditionalOp, ec::BitwiseAndOp,
-                     ec::BitwiseOrOp, ec::BitwiseXorOp, ec::BitwiseNotOp, ec::BitwiseLeftShiftOp,
-                     ec::BitwiseRightShiftOp>(o);
+                  ec::BitwiseNotOp, ec::BitwiseLeftShiftOp, ec::BitwiseRightShiftOp>(o);
+    auto integer = llvm::dyn_cast<mlir::IntegerType>(o->getResult(0).getType());
+    if (integer && integer.getWidth() < 32 && arithmetic) { return false; }
+    return arithmetic || llvm::isa<ec::CmpOp, ec::CastOp, ec::CallOp, ec::LogicalAndOp,
+                                    ec::LogicalOrOp, ec::LogicalNotOp, ec::ConditionalOp>(o);
 }
 
 /// The CTCOMPILE_PIN macro. The type is the last macro argument so a type

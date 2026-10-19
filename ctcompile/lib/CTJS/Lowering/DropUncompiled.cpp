@@ -33,23 +33,17 @@ struct CTJSDropUncompiledPass : impl::CTJSDropUncompiledBase<CTJSDropUncompiledP
     using CTJSDropUncompiledBase::CTJSDropUncompiledBase;
 
     void runOnOperation() override {
-        llvm::SmallVector<mlir::Operation *> refused;
-        getOperation().walk([&](mlir::Operation * op) {
-            if (op->getName().getStringRef() == "ctjs.func" && op->hasAttr(notLoweredMarker)) {
-                refused.push_back(op);
-            }
+        getOperation().walk<mlir::WalkOrder::PostOrder>([](mlir::Operation * op) {
+            if (mlir::isa<FuncOp>(op) && op->hasAttr(notLoweredMarker)) { op->erase(); }
         });
-        // Collected first, because erasing during a walk invalidates the
-        // iterator doing the walking.
-        for (mlir::Operation * op : refused) { op->erase(); }
 
         // A remaining ctjs.func without a reason means the lowering never ran,
         // the same pass-order mistake --emitc-eliminate-block-arguments
         // refuses. Continuing would quietly delete every function in the
         // module.
         if (mlir::WalkResult left = getOperation().walk([](mlir::Operation * op) {
-                return op->getName().getStringRef() == "ctjs.func" ? mlir::WalkResult::interrupt()
-                                                                   : mlir::WalkResult::advance();
+                return mlir::isa<FuncOp>(op) ? mlir::WalkResult::interrupt()
+                                             : mlir::WalkResult::advance();
             });
             left.wasInterrupted()) {
             getOperation().emitError()
