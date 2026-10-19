@@ -251,16 +251,18 @@ def CTNativeLowerToEmitC : Pass<"ctnative-lower-to-emitc", "mlir::ModuleOp"> {
         `ctnative.not_native = "<the first value or operation that failed>"`
         - never a boxed value under a collector.
 
-    The importer's top-level function becomes `main`, and at its end every
-    numeric global is printed as `name=` and its Number::toString, with -0
-    kept - the convention the compilation-unit gate compares against the
-    interpreter.
+    The importer's top-level function becomes `main`. A native program
+    prints only what the JavaScript prints. With the test-only option
+    `observe-globals`, `main` also prints every numeric global as `name=`
+    and its Number::toString, with -0 kept, at its end - the convention
+    the compilation-unit gate compares against the interpreter.
 
     With explicit `host-manifest`, instead preserve the fingerprinted input
     before admission and consume a bounded complete ordinary-global owner
     proof. This first tier requires one straight-line script function and
     one initialized numeric field. It emits a shared owning class handle,
-    separate from numeric storage, and prints only the driver's observations.
+    separate from numeric storage, and `observe-globals` prints only the
+    driver's observations.
     Default optimizations and closure/provider preparation do not rewrite
     this contract-bound input. Stale or incomplete proofs never authorize
     ownership; ordinary escape analysis remains unchanged.
@@ -328,6 +330,10 @@ def CTNativeLowerToEmitC : Pass<"ctnative-lower-to-emitc", "mlir::ModuleOp"> {
                "name in C++">,
     Option<"optimizationReport", "optimization-report", "bool", "false",
            "Report precomputation and reachability counts for the default pipeline">,
+    Option<"observeGlobals", "observe-globals", "bool", /*default=*/"false",
+           "Test only: before main returns, print each global (or, with string-entries or a "
+           "host manifest, each observed one) as name=value for comparison with the "
+           "interpreter. Without it a native program prints only what the JavaScript prints">,
     Option<"report", "report", "bool", /*default=*/"false",
            "Emit the Phase 59 lift counts as a remark (the release LLVM package compiles pass statistics out)">,
     Option<"census", "census", "bool", /*default=*/"false",

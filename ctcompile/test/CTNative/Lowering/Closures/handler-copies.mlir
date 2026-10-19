@@ -19,15 +19,17 @@
 // no copy makes one closure; a handler whose capture is written after the
 // call, whose value a copy would take too early (the registry would call it
 // with k = 2, where JavaScript sees 12); a chain whose last function boxes
-// the parameter in a cell a nested closure captures; and one whose last
-// function passes the parameter on to another call, as Bootstrap's
+// the parameter in a cell a nested closure captures and passes on; and one
+// whose last function passes the parameter on to another call, as Bootstrap's
 // addHandler passes its handler to its argument normaliser. In the last two
 // no rule would lift the closure a copy makes, so copying would only move
-// the refusal.
+// the refusal. A nested closure that only calls the boxed parameter makes the
+// handler itself in the copy (ClosureLifting/ExecuteCalls.cpp's relay), so
+// that chain is a positive.
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/chain.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/chain.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/chain.mlir
 // RUN: FileCheck %s --check-prefix=CHAIN --implicit-check-not=ctnative.not_native < %t/chain.mlir
 // RUN: ctjs-opt %t/chain.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/chain.cpp
 // RUN: FileCheck %s --check-prefix=CHAINCPP --implicit-check-not=std::variant --implicit-check-not=std::visit < %t/chain.cpp
@@ -38,7 +40,7 @@
 // RUN: %native_reference %t/chain.js | FileCheck %s --check-prefix=CHAINOUT
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/chain.js | FileCheck %s --check-prefix=CHAINOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/forward.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/forward.mlir
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/forward.mlir
 // RUN: FileCheck %s --check-prefix=FORWARD --implicit-check-not=ctnative.not_native < %t/forward.mlir
 // RUN: ctjs-opt %t/forward.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/forward.cpp
 // RUN: %gxx -O2 %t/forward.cpp -o %t/forward-gcc
@@ -48,18 +50,30 @@
 // RUN: %native_reference %t/forward.js | FileCheck %s --check-prefix=FORWARDOUT
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/forward.js | FileCheck %s --check-prefix=FORWARDOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/choice.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=CHOICE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/later.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=LATER
 // RUN: %native_reference %t/later.js | FileCheck %s --check-prefix=LATEROUT
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/later.js | FileCheck %s --check-prefix=LATEROUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boxed.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
-// RUN:   | FileCheck %s --check-prefix=BOXED
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true -o %t/boxed.mlir
+// RUN: FileCheck %s --check-prefix=BOXED --implicit-check-not=ctnative.not_native < %t/boxed.mlir
+// RUN: ctjs-opt %t/boxed.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/boxed.cpp
+// RUN: %gxx -O2 %t/boxed.cpp -o %t/boxed-gcc
+// RUN: %t/boxed-gcc | FileCheck %s --check-prefix=BOXEDOUT
+// RUN: %clangxx -O2 %t/boxed.cpp -o %t/boxed-clang
+// RUN: %t/boxed-clang | FileCheck %s --check-prefix=BOXEDOUT
+// RUN: %native_reference %t/boxed.js | FileCheck %s --check-prefix=BOXEDOUT
+// RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/boxed.js | FileCheck %s --check-prefix=BOXEDOUT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boxed-passed.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
+// RUN:   | FileCheck %s --check-prefix=BOXEDPASSED
+// RUN: %native_reference %t/boxed-passed.js | FileCheck %s --check-prefix=BOXEDOUT
+// RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/boxed-passed.js | FileCheck %s --check-prefix=BOXEDOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/passed.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=observe-globals=true \
 // RUN:   | FileCheck %s --check-prefix=PASSED
 // RUN: %native_reference %t/passed.js | FileCheck %s --check-prefix=PASSEDOUT
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/passed.js | FileCheck %s --check-prefix=PASSEDOUT
@@ -105,10 +119,17 @@
 // LATER: closure_reason = "it is passed as an argument
 // LATEROUT: r=36
 
-// Negative: `add` boxes `h` in a cell, because `later` captures it, so the
-// call is not copied and the handler keeps its refusal at the call.
-// BOXED-NOT: ctnative.copies
-// BOXED: closure_reason = "it is passed as an argument
+// `add` boxes `h` in a cell, because `later` captures it; `later` only calls
+// it, so the copy of `add` gives `later` the handler's captures and `later`
+// makes the handler and calls it, and every function is native.
+// BOXED: ctnative.copies = {add${{[0-9]+}} = "add$2", fn${{[0-9]+}} = "fn$3", on${{[0-9]+}} = "on$4"}
+// BOXED-NOT: ctjs.func
+// BOXEDOUT: r=16
+
+// Negative: `later` passes the boxed `h` on to `apply`, so the call is not
+// copied and the handler keeps its refusal at the call.
+// BOXEDPASSED-NOT: ctnative.copies
+// BOXEDPASSED: closure_reason = "it is passed as an argument
 
 // Negative: `add` hands `h` (through a cell that only holds it) to `norm`,
 // which would refuse the closure a copy makes, so the call is not copied and
@@ -156,6 +177,18 @@ var r = (function () {
 //--- boxed.js
 var r = (function () {
     function add(n, h) { const later = () => h(n); return later(); }
+    function on(n, h) { return add(n, h); }
+    function run(c) {
+        const k = c ? 2 : 4;
+        return on(5, x => x + k);
+    }
+    return run(true) + run(false);
+})();
+
+//--- boxed-passed.js
+var r = (function () {
+    function apply(f, v) { return f(v); }
+    function add(n, h) { const later = () => apply(h, n); return later(); }
     function on(n, h) { return add(n, h); }
     function run(c) {
         const k = c ? 2 : 4;

@@ -34,6 +34,13 @@ CASES = {
         "not %compilation_unit --module %t/array-callbacks.emitc.mlir --js %S/array-callbacks.js --work %t --name array_callbacks_negative --core-build %build --mutate kept --mutate-as string 2>&1 | FileCheck %s --check-prefix=NEGATIVE",
         "%compile_clean --module %t/array-callbacks.emitc.mlir --work %t --name array_callbacks",
     ],
+    "Objects/array-sort": [
+        "python3 %S/string-arrays-calls.py --translate ctjs-translate --opt ctjs-opt --js %S/array-sort.js --out %t/array-sort.emitc.mlir",
+        "ctjs-translate --mlir-to-cpp %t/array-sort.emitc.mlir | FileCheck %s",
+        "%compilation_unit --module %t/array-sort.emitc.mlir --js %S/array-sort.js --work %t --name array_sort --core-build %build",
+        "not %compilation_unit --module %t/array-sort.emitc.mlir --js %S/array-sort.js --work %t --name array_sort_negative --core-build %build --mutate ascending --mutate-as string 2>&1 | FileCheck %s --check-prefix=NEGATIVE",
+        "%compile_clean --module %t/array-sort.emitc.mlir --work %t --name array_sort",
+    ],
     "Objects/dictionaries": [
         "python3 %S/string-arrays-calls.py --translate ctjs-translate --opt ctjs-opt --js %S/dictionaries.js --out %t/dictionaries.emitc.mlir",
         "ctjs-translate --mlir-to-cpp %t/dictionaries.emitc.mlir | FileCheck %s",

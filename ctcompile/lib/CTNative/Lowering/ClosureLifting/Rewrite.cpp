@@ -79,6 +79,9 @@ liftReport closureLifter::run() {
         makeRunOnceCellsStatic(out, /*functions=*/false);
         makeRunOnceCellsStatic(out, /*functions=*/true);
     }
+    // A capture of a binding that no write can change once the closure exists
+    // takes a cell of its own, which the by-value rules below accept.
+    snapshotSettledCaptures();
     specializeCallbacks(out);
     if (!allowSiblingCaptures && bindLocalFunctions(out, true)) {
         // Erasing a sibling's callable binding is valid only when both sides
@@ -515,7 +518,15 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     // "capture 0 is !ctnative.boxed - no caller proves it". ResolveGlobals
     // does the same under the same condition, which the checks above have
     // established: every caller of this function is visible.
-    mlir::SymbolTable::setSymbolVisibility(target, mlir::SymbolTable::Visibility::Private);
+    //
+    // A proved registry class's method that lifts with no call stays public:
+    // a private function nothing calls is dead to that analysis, and its
+    // receiver's type comes from the registry proof at that entry state, not
+    // from callers.
+    const bool registryEntry = liftsOnRegistryReceiver(made.front());
+    if (!registryEntry) {
+        mlir::SymbolTable::setSymbolVisibility(target, mlir::SymbolTable::Visibility::Private);
+    }
     ++out.functions;
 
     if (arrayCallbacks.contains(made.front())) {
@@ -557,7 +568,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     });
     const bool method = !constructor &&
                         (callsOfTarget.count(target.getOperation()) != 0 ||
-                         copiedAwayMethods.contains(target.getOperation())) &&
+                         copiedAwayMethods.contains(target.getOperation()) || registryEntry) &&
                         llvm::all_of(made, [&](ctjs::CreateClosureOp c) {
                             return methodClosures.contains(c.getOperation());
                         });

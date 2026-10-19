@@ -34,7 +34,10 @@ namespace ctcompile::ctnative::map_detail {
 /// attributes). `parameters` seeds the primitive kinds of host-method
 /// parameters. A `hostTyped` operation is a browser operation proved by the
 /// host contract: it cannot reach a local Map, so it keeps every fact an
-/// unknown call would erase.
+/// unknown call would erase. `staticOrigins` maps each read of a run-once
+/// static holding a Map to the value the static's one write stored
+/// (ClosedValueFlow's connectRunOnceStatics): the static is never written
+/// again, so every read is that one instance.
 std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> calls,
                           llvm::ArrayRef<ctjs::GetPropertyOp> sizes,
                           llvm::ArrayRef<ctjs::CallOp> reads,
@@ -44,6 +47,7 @@ std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> ca
                           llvm::function_ref<mlir::Value(mlir::Value)> familyOf,
                           const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & parameters,
                           const OwnedGlobalRoots * globals,
-                          llvm::function_ref<bool(mlir::Operation *)> hostTyped = nullptr);
+                          llvm::function_ref<bool(mlir::Operation *)> hostTyped = nullptr,
+                          const llvm::DenseMap<mlir::Value, mlir::Value> * staticOrigins = nullptr);
 
 } // namespace ctcompile::ctnative::map_detail

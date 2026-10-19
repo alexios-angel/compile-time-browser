@@ -301,13 +301,14 @@ std::optional<std::string> closureLifter::whyConstructorSetupDoesNotLift(ctjs::C
     // lexical, so every use of it looks like a legal constant-key access to
     // the receiver check below, and admitting one would give a wrong answer
     // rather than a refusal. (An arrow is not a constructor in the VM either:
-    // `ensure_prototype` returns undefined for one.)
+    // `ensure_prototype` returns undefined for one.) captureLexicalThis leaves
+    // an arrow's `$enclosing_this` undefined and marks the function instead.
     if (const std::optional<std::string> why = whyTargetIsNotLiftable(c)) { return why; }
-    if (!ctjs::isUndefinedConstant(c.getEnclosingThis())) {
+    ctjs::FuncOp target = targetOf(c);
+    if (!ctjs::isUndefinedConstant(c.getEnclosingThis()) || target->hasAttr(kNativeArrow)) {
         return "it is an arrow function, which cannot be constructed even without lexical this "
                "reads";
     }
-    ctjs::FuncOp target = targetOf(c);
     mlir::Block & entry = target.getBody().front();
     const unsigned parameters = entry.getNumArguments() - ctjs::implicit_arguments;
     // Check `prototype` access before the generic use checks, so the
@@ -393,7 +394,10 @@ std::optional<std::string> closureLifter::whyConstructorSetupDoesNotLift(ctjs::C
             llvm::all_of(made.getResult().getUses(), [&](mlir::OpOperand & use) {
                 return llvm::isa<ctjs::ReturnOp>(use.getOwner()) || isConstantKeyAccess(use);
             });
-        if (!returned && !usesCloseTheShape(made.getResult())) {
+        // A registry Map's class: the registry proof (Analysis/Instances.h)
+        // followed every value a `new` of it flows into, as it follows the
+        // instances read back from the Map.
+        if (!returned && !isIdentityClass(target) && !usesCloseTheShape(made.getResult())) {
             return "the instance `new` makes does not have a closed shape - " +
                    whyUsesOpenTheShape(made.getResult());
         }

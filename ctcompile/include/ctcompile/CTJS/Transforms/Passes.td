@@ -174,4 +174,17 @@ def CTJSResolveGlobals : Pass<"ctjs-resolve-globals", "mlir::ModuleOp"> {
   ];
 }
 
+def CTJSTestClosureValues : Pass<"ctjs-test-closure-values", "mlir::ModuleOp"> {
+  let summary = "Test only: write the closures each call through a value may enter";
+  let description = [{
+    Runs ClosureValues (lib/CTJS/Lowering/Globals/ClosureValues.h) on importer
+    IR and records, on each ctjs.call whose callee is not a global, what the
+    called value may hold: `ctjs.test_closures` lists the symbols of the
+    functions of its closures, sorted, and `ctjs.test_closures_unknown` says
+    why that set is not known. A call through `f.call` or `f.apply` is
+    answered for `f`. It changes nothing else, so the analysis can be tested
+    before a pass consumes it.
+  }];
+}
+
 #endif // CTCOMPILE_CTJS_PASSES

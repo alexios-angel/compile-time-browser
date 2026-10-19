@@ -328,7 +328,9 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             statics.try_emplace(name.str(), type.getValueType());
             mlir::Value place = ec::GetGlobalOp::create(
                 b, where, type, mlir::FlatSymbolRefAttr::get(context, name.getValue()));
-            if (!o->hasAttr(kNativeStaticReference)) {
+            // A static nothing reads before its one write (kAssignedBeforeRead)
+            // never shows its initial.
+            if (!o->hasAttr(kNativeStaticReference) && !o->hasAttr(kAssignedBeforeRead)) {
                 ec::AssignOp::create(
                     b, where, place,
                     convertScalar(b, where, cell.getInitial(), type.getValueType()));
@@ -834,7 +836,7 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                     b, where, mlir::TypeRange{},
                     b.getStringAttr("ctnative::microtasks::program().checkpoint"), {});
             }
-            printObservations(b, where);
+            if (observeGlobals) { printObservations(b, where); }
             mlir::Value zero = ec::ConstantOp::create(b, where, mlir::IntegerType::get(context, 32),
                                                       b.getI32IntegerAttr(0));
             ec::ReturnOp::create(b, where, zero);

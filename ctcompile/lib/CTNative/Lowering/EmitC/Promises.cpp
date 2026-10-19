@@ -6,7 +6,7 @@
 //
 //   new Promise(f)       ctnative::Promise.construct<T>(std::bind_front(f, captures...))
 //   p.then(f)            ctnative::Promise.prototype.then.call(p, std::bind_front(f, captures...))
-//   Promise.resolve(v)   ctnative::Promise.resolve(v)
+//   Promise.resolve(v)   ctnative::Promise.resolve(v), with undefined for no v
 //   resolve(v)           ctnative::invoke_callable(resolve, v)
 //
 // with the bare callback when it captures nothing. The runtime owns the bound
@@ -92,9 +92,11 @@ bool replacePromise(lowering & lower, mlir::Operation * o) {
         lowering::eraseIfUnused(o);
         return true;
     }
-    // Promise.resolve of a promise returns that promise.
+    // Promise.resolve of a promise returns that promise; Promise.resolve()
+    // resolves with undefined.
     auto promise = llvm::cast<PromiseType>(lower.typeOf(call.getResult()));
-    const mlir::Value given = call.getArgs().front();
+    const mlir::Value given =
+        call.getArgs().empty() ? lower.absentConstant(b, where) : call.getArgs().front();
     return swap(callValue(b, where, call.getResult().getType(), "ctnative::Promise.resolve",
                           holdsPromise(given) ? given : asValue(given, promise.getElementType())));
 }

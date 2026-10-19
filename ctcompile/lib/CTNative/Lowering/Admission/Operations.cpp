@@ -1115,7 +1115,14 @@ bool admission::nativeMapCall(mlir::Operation * o, llvm::StringRef action) {
 
 bool admission::closedObject(ctjs::CreateObjectOp object) {
     using namespace ctjs;
-    if (!isClosedObject(object.getResult())) { return refuse(whyOpen(object.getResult())); }
+    // A `new` of a registry Map's class is a std::shared_ptr<C> (its type is
+    // instance<C>), and the registry proof (Analysis/Instances.h) followed
+    // every value it flows into, as it follows the instances read back from
+    // the Map; it need not have a closed shape. Its fields are checked below.
+    if (!isClosedObject(object.getResult()) &&
+        !llvm::isa_and_nonnull<InstanceType>(typeOf(object.getResult()))) {
+        return refuse(whyOpen(object.getResult()));
+    }
     // Check every access in the receiver group, not only the literal's own. A
     // lifted method reaches these fields through its `%arg0`, in a different
     // function, and those reads and writes belong to this shape too, so
