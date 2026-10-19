@@ -26,6 +26,12 @@
 namespace ctcompile::ctnative {
 namespace {
 
+bool operandsInScope(mlir::Operation * op, mlir::DominanceInfo & dominance) {
+    return llvm::all_of(op->getOperands(), [&](mlir::Value value) {
+        return dominance.properlyDominates(value, op);
+    });
+}
+
 /// True when `use` is the key operand of a native Map set/get/has/delete.
 bool mapKeyUse(mlir::OpOperand & use) {
     auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
@@ -103,9 +109,7 @@ bool comparisonFieldEnvironment(mlir::ModuleOp module, const OwnedGlobalRoots * 
                                 OrdinaryObject ordinaryObject) {
     mlir::DominanceInfo dominance;
     const auto result = module.walk([&](mlir::Operation * op) {
-        if (llvm::any_of(op->getOperands(), [&](mlir::Value operand) {
-                return !dominance.properlyDominates(operand, op);
-            })) {
+        if (!operandsInScope(op, dominance)) {
             return mlir::WalkResult::interrupt();
         }
         bool safe = false;
@@ -299,10 +303,7 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
                            .str());
             }
             for (mlir::OpOperand & use : value.getUses()) {
-                if (comparisonOnly &&
-                    llvm::any_of(use.getOwner()->getOperands(), [&](mlir::Value operand) {
-                        return !dominance.properlyDominates(operand, use.getOwner());
-                    })) {
+                if (comparisonOnly && !operandsInScope(use.getOwner(), dominance)) {
                     reject("has an operand outside its live source scope");
                     continue;
                 }
