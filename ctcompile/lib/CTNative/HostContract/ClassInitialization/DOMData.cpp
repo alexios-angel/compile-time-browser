@@ -35,8 +35,7 @@ bool recordAliases(classInitialization & proof, mlir::Value record,
 bool mapSetValue(classInitialization & proof, mlir::OpOperand & use) {
     auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
     return call && use.getOperandNumber() == 3 && proof.mapOperations.contains(call) &&
-           ctjs::constantKey(call.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey()) ==
-               "set";
+           ctjs::methodKey(call) == "set";
 }
 
 } // namespace
@@ -145,11 +144,8 @@ bool classInitialization::forwardDOMDataFields(const HostContract & contract) {
             for (auto [op, actual] : reads) {
                 if (!step()) { return false; }
                 auto read = llvm::cast<ctjs::GetPropertyOp>(op);
-                for (auto & [cell, initial] : cells) {
-                    (void)cell;
-                    if (!step()) { return false; }
-                    if (initial == read.getResult()) { initial = actual; }
-                }
+                if (!spend(cells.size())) { return false; }
+                retargetCells(read.getResult(), actual);
                 read.getResult().replaceAllUsesWith(actual);
                 read.erase();
             }

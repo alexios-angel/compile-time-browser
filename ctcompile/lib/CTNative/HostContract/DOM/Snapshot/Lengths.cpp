@@ -126,31 +126,16 @@ llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostCont
             before.getOperations().size() != 3 || after.getOperations().size() != 4) {
             return error("DOM snapshot spread loop contains additional effects");
         }
-        auto compare = llvm::dyn_cast<ctjs::CompareOp>(before.front());
-        auto truth = llvm::dyn_cast<ctjs::TruthyOp>(before.front().getNextNode());
-        auto condition = llvm::dyn_cast<mlir::scf::ConditionOp>(before.back());
-        auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(after.front());
-        auto advance = llvm::dyn_cast<ctjs::BinaryStaticOp>(append->getNextNode());
-        auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(after.back());
+        auto [compare, read] = matchIndexCopyLoop(loop, append);
         auto length =
             compare ? compare.getRhs().getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
         auto iterable =
             length ? length.getObject().getDefiningOp<ctjs::IterableOp>() : ctjs::IterableOp{};
         auto snapshot =
             iterable ? iterable.getSource().getDefiningOp<ctjs::CallOp>() : ctjs::CallOp{};
-        if (!compare || compare.getKind() != ctjs::CompareKind::Lt ||
-            compare.getLhs() != before.getArgument(0) || !truth ||
-            truth.getValue() != compare.getResult() || !condition ||
-            condition.getCondition() != truth.getResult() || condition.getArgs().size() != 1 ||
-            condition.getArgs()[0] != before.getArgument(0) || !read ||
-            read->getNextNode() != append || read.getKey() != after.getArgument(0) ||
-            append.getElement() != read.getResult() || !advance ||
-            advance.getKind() != ctjs::BinaryKind::Add ||
-            advance.getLhs() != after.getArgument(0) || !numberIs(advance.getRhs(), 1) || !yield ||
-            yield.getNumOperands() != 1 || yield.getOperand(0) != advance.getResult() || !length ||
-            ctjs::constantKey(length.getKey()) != "length" || !iterable || !snapshot ||
-            read.getObject() != iterable.getResult() || iterable->getBlock() != call->getBlock() ||
-            length->getBlock() != call->getBlock() ||
+        if (!compare || !length || ctjs::constantKey(length.getKey()) != "length" || !iterable ||
+            !snapshot || read.getObject() != iterable.getResult() ||
+            iterable->getBlock() != call->getBlock() || length->getBlock() != call->getBlock() ||
             !dominance.properlyDominates(snapshot.getOperation(), iterable.getOperation()) ||
             !dominance.properlyDominates(iterable.getOperation(), length.getOperation()) ||
             !dominance.properlyDominates(length.getOperation(), loop.getOperation()) ||

@@ -607,8 +607,7 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
             continue;
         }
         auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(use.getOwner());
-        if (!load || use.getOperandNumber() != 0 || load.getIndex() < 0 ||
-            static_cast<size_t>(load.getIndex()) >= method.getUpvalues().size()) {
+        if (!load || use.getOperandNumber() != 0 || !capturesSlot(load, method)) {
             return refuse("class method observes or changes its captured identity");
         }
         auto value = sourceValue(cells.lookup(method.getUpvalues()[load.getIndex()]));
@@ -1288,10 +1287,8 @@ bool classInitialization::ownFieldSnapshots(
         auto constant = ctjs::ConstantOp::create(at, read->getLoc(), value);
         // A fixed cell may record this read as its value; point it at the
         // constant too before erasing the read.
-        for (auto & cell : cells) {
-            if (!step()) { return false; }
-            if (cell.second == result) { cell.second = constant; }
-        }
+        if (!spend(cells.size())) { return false; }
+        retargetCells(result, constant);
         result.replaceAllUsesWith(constant);
         read->erase();
     }
@@ -1416,18 +1413,18 @@ bool classInitialization::retainedMapReads(
                 return refuse("class retained Map alias requires data field reads");
             }
         }
-        if (!step() || !fieldsOnly(read, methodKeys, staticReads, true)) { return false; }
+        if (!step() || !fieldsOnly(read, methodKeys, staticReads)) { return false; }
     }
     return reason.empty();
 }
 
 /// Whether every use of `object` (an instance or receiver) is a plain own-field
 /// read or write: no escape, no prototype or descriptor access, and method keys
-/// only as direct method calls when `methodsAvailable`. Static getter reads
+/// only as direct method calls. Static getter reads
 /// through `this.constructor` are appended to `staticReads`.
 bool classInitialization::fieldsOnly(mlir::Value object, const llvm::StringSet<> & methodKeys,
                                      llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads,
-                                     bool methodsAvailable, bool unconstructed) {
+                                     bool unconstructed) {
     for (mlir::OpOperand * sourceUse : sourceUses(object)) {
         auto & use = *sourceUse;
         if (!step()) { return false; }
@@ -1486,7 +1483,7 @@ bool classInitialization::fieldsOnly(mlir::Value object, const llvm::StringSet<>
             constructorReads.push_back(read);
             continue;
         }
-        if (auto call = llvm::dyn_cast<ctjs::CallOp>(op); call && methodsAvailable) {
+        if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
             auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
             if (use.getOperandNumber() == 1 && read &&
                 sourceValue(read.getObject()) == sourceValue(object) &&
@@ -1508,7 +1505,7 @@ bool classInitialization::fieldsOnly(mlir::Value object, const llvm::StringSet<>
             auto call = read && read.getResult().hasOneUse()
                             ? llvm::dyn_cast<ctjs::CallOp>(*read.getResult().getUsers().begin())
                             : ctjs::CallOp{};
-            if (!methodsAvailable || !call || call.getCallee() != read.getResult() ||
+            if (!call || call.getCallee() != read.getResult() ||
                 sourceValue(call.getReceiver()) != sourceValue(object)) {
                 return refuse("class method is observed or shadowed");
             }
