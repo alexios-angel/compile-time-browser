@@ -217,9 +217,7 @@ struct state {
             kind = kind.joined(other.alternatives(value));
             if (!kind.known) { scalars.erase(value); }
         }
-        for (const auto & [value, origin] : llvm::make_early_inc_range(aliases)) {
-            if (other.aliases.lookup(value) != origin) { aliases.erase(value); }
-        }
+        keepAgreeing(aliases, other.aliases);
     }
 };
 
