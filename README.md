@@ -6,6 +6,9 @@ JavaScript into plain C++.
 This is an **alpha**. A lot works, a lot doesn't, and the interfaces will
 change. It's here so people can poke at it, not so they can ship on it.
 
+**The project is dormant.** Development is paused until AI coding tools are
+good enough to carry it forward.
+
 The repository holds two projects:
 
 - **ctbrowser**, the browser engine. It parses HTML and CSS, runs JavaScript in
