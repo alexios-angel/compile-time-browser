@@ -340,6 +340,7 @@ def main(argv=None):
         "for (const node of R.find('*',group.closest('.missing'))) node.matches('*'); "
         "return 0; }\n"
     )
+
     def refuse(item):
         name, text = item
         if name == "escaping-inner-member":

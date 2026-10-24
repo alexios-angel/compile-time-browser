@@ -55,17 +55,16 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         // message op::call_computed would produce; `site` carries a
         // backwards scan of bytecode that an AOT frame does not have.
         // Passing undefined and nullptr says this code has neither.
-        mapping.map(op.getResult(0),
-                    status_call(scope, build, where, callee("ct_aot_call"),
-                                {scope.frame, mapping.lookup(call->callee),
-                                 mapping.lookup(call->receiver), argv,
-                                 u32_literal(build, where, call->args.size()),
-                                 undefined(build, where, value),
-                                 literal(build, where,
-                                         pointer_to(build.getContext(),
-                                                    "const ctbrowser::aot::ct_aot_site"),
-                                         "nullptr")},
-                                value));
+        mapping.map(
+            op.getResult(0),
+            status_call(
+                scope, build, where, callee("ct_aot_call"),
+                {scope.frame, mapping.lookup(call->callee), mapping.lookup(call->receiver), argv,
+                 u32_literal(build, where, call->args.size()), undefined(build, where, value),
+                 literal(build, where,
+                         pointer_to(build.getContext(), "const ctbrowser::aot::ct_aot_site"),
+                         "nullptr")},
+                value));
         return true;
     }
 

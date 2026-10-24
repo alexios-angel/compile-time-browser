@@ -243,8 +243,7 @@ mlir::Attribute exactArithmetic(mlir::Operation * binary, dom_source_detail::DOM
     const auto number = [&](mlir::Attribute value) -> ctjs::NumberAttr {
         if (auto original = llvm::dyn_cast<ctjs::NumberAttr>(value)) { return original; }
         const auto converted = exactNumber(value, work);
-        return converted ? ctjs::numberAttr(binary->getContext(), *converted)
-                         : ctjs::NumberAttr{};
+        return converted ? ctjs::numberAttr(binary->getContext(), *converted) : ctjs::NumberAttr{};
     };
     auto left = number(lhs.getValue()), right = number(rhs.getValue());
     if (!left || !right) { return {}; }

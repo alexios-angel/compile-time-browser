@@ -55,7 +55,9 @@ mlir::Value mergedBy(mlir::OpOperand & use) {
 std::array<mlir::Value, 2> sourcesOf(mlir::OpResult merge) {
     auto branch = llvm::cast<mlir::scf::IfOp>(merge.getOwner());
     const unsigned at = merge.getResultNumber();
-    if (branch.getElseRegion().empty()) { return {mlir::Value{}, mlir::Value{}}; }
+    if (branch.getElseRegion().empty()) {
+        return {mlir::Value{}, mlir::Value{}};
+    }
     return {branch.thenYield().getOperand(at), branch.elseYield().getOperand(at)};
 }
 

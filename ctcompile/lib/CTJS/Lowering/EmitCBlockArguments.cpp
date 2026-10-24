@@ -56,9 +56,7 @@ struct EmitCEliminateBlockArgumentsPass
         // ctjs.func lacks a ctjs.not_lowered reason: functions the lowering
         // refused carry one, and an unlowered module has none.
         if (mlir::WalkResult early = getOperation().walk([](mlir::Operation * op) {
-                if (!mlir::isa<FuncOp>(op)) {
-                    return mlir::WalkResult::advance();
-                }
+                if (!mlir::isa<FuncOp>(op)) { return mlir::WalkResult::advance(); }
                 return op->hasAttr(notLoweredMarker) ? mlir::WalkResult::advance()
                                                      : mlir::WalkResult::interrupt();
             });

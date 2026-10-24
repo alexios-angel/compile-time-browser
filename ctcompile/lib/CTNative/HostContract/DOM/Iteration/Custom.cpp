@@ -200,9 +200,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     ctjs::CallOp open;
     const auto opens = entry.walk([&](ctjs::CallOp call) {
         if (!spend()) { return mlir::WalkResult::interrupt(); }
-        if (!customOpen(call)) {
-            return mlir::WalkResult::advance();
-        }
+        if (!customOpen(call)) { return mlir::WalkResult::advance(); }
         if (open) { return mlir::WalkResult::interrupt(); }
         open = call;
         return mlir::WalkResult::advance();
@@ -1170,7 +1168,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 }
                 if (!undefined(call->receiver) ||
                     (call->direct && (call->direct.getTarget() != target.body ||
-                                       !undefined(call->direct.getNewTarget())))) {
+                                      !undefined(call->direct.getNewTarget())))) {
                     return work.refuse(
                         "DOM iterator sibling helper has an unsupported call target");
                 }
@@ -1408,8 +1406,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         auto ready = llvm::find_if(pending, [&](mlir::Operation * operation) {
             if (!spend()) { return false; }
             targets.clear();
-            return resolveTargets(host_detail::jsCallOf(operation)->callee, tagCallables,
-                                  targets);
+            return resolveTargets(host_detail::jsCallOf(operation)->callee, tagCallables, targets);
         });
         if (ready == pending.end() || !work.remaining) {
             return error("DOM iterator sibling call has no proved target");
@@ -1707,8 +1704,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     };
     const auto selectedCloses = entry.walk([&](ctjs::CallOp call) {
         if (!spend()) { return mlir::WalkResult::interrupt(); }
-        if (ctjs::calleeGlobalName(call) != "__ctbrowser_iter_close" || call.getArgs().size() != 2 ||
-            call.getArgs()[0] == open.getResult() ||
+        if (ctjs::calleeGlobalName(call) != "__ctbrowser_iter_close" ||
+            call.getArgs().size() != 2 || call.getArgs()[0] == open.getResult() ||
             !recordDominance.properlyDominates(open.getResult(), call)) {
             return mlir::WalkResult::advance();
         }

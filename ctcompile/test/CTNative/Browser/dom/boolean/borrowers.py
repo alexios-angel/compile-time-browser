@@ -506,9 +506,7 @@ def main(argv=None):
         dom.parallel(
             check_malformed,
             {
-                "nested-return": program(
-                    CONDITIONAL.replace(WRITE, "ctjs.return %read\n" + WRITE)
-                ),
+                "nested-return": program(CONDITIONAL.replace(WRITE, "ctjs.return %read\n" + WRITE)),
                 "yield-result": program(
                     CONDITIONAL.replace("scf.yield", "scf.yield %read : !ctjs.value")
                 ),

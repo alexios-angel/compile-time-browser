@@ -67,7 +67,11 @@ def runs(mapping):
             if step in (1, 2) and mapping[points[i + 1]] - points[i + 1] == delta:
                 stride = step
         j = i + 1
-        while j < len(points) and points[j] == last + stride and mapping[points[j]] - points[j] == delta:
+        while (
+            j < len(points)
+            and points[j] == last + stride
+            and mapping[points[j]] - points[j] == delta
+        ):
             last = points[j]
             j += 1
         out.append((first, last, stride, delta))
@@ -140,7 +144,10 @@ def main():
         print("};")
     print("// clang-format on")
     total = sum(len(p) for p in properties.values())
-    print(f"unicode_case: {len(lower)} lower, {len(upper)} upper, {total} property points", file=sys.stderr)
+    print(
+        f"unicode_case: {len(lower)} lower, {len(upper)} upper, {total} property points",
+        file=sys.stderr,
+    )
 
 
 if __name__ == "__main__":

@@ -391,7 +391,9 @@ std::string ClosureValues::elementSources(CallOp next, llvm::SmallVectorImpl<mli
     } else {
         const objects found = objectsOf(source);
         if (!found.unknown.empty()) { return found.unknown; }
-        for (mlir::Operation * literal : found.made) { rows.push_back({literal, FuncOp{}}); }
+        for (mlir::Operation * literal : found.made) {
+            rows.push_back({literal, FuncOp{}});
+        }
     }
     for (auto [made, function] : rows) {
         auto array = mlir::dyn_cast<CreateArrayOp>(made);

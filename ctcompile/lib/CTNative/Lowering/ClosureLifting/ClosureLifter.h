@@ -590,9 +590,9 @@ struct closureLifter {
     /// copying functions with the copy's `cloneDeep`; it returns the execute
     /// helpers whose calls it replaced.
     bool relaysCallback(mlir::BlockArgument parameter);
-    llvm::SetVector<mlir::Operation *>
-    relayCallback(ctjs::CreateClosureOp inside, llvm::ArrayRef<mlir::Value> cells,
-                  llvm::function_ref<ctjs::FuncOp(ctjs::FuncOp)> cloneDeep);
+    llvm::SetVector<mlir::Operation *> relayCallback(
+        ctjs::CreateClosureOp inside, llvm::ArrayRef<mlir::Value> cells,
+        llvm::function_ref<ctjs::FuncOp(ctjs::FuncOp)> cloneDeep);
     void hostCallbackCensus();
     std::optional<std::string> whyNotHostCallback(ctjs::CreateClosureOp c);
     void rewriteHostCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);

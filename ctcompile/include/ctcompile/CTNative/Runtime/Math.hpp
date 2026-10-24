@@ -19,7 +19,9 @@ namespace ctnative {
 struct min_method {
     js_num operator()(js_num left, js_num right) const {
         const double a = left.value(), b = right.value();
-        if (std::isnan(a) || std::isnan(b)) { return js_num{js_nan_t{}}; }
+        if (std::isnan(a) || std::isnan(b)) {
+            return js_num{js_nan_t{}};
+        }
         if (a == 0.0 && b == 0.0) { return js_num{std::signbit(a) ? a : b}; }
         return js_num{a < b ? a : b};
     }

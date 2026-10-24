@@ -446,7 +446,8 @@ void closureLifter::callExecutedFunctions() {
 bool closureLifter::executeCallsRewritable() {
     if (!executeRewritable) {
         bool namesFunction = false;
-        module.walk([&](ctjs::LoadGlobalOp load) { namesFunction |= load.getName() == "Function"; });
+        module.walk(
+            [&](ctjs::LoadGlobalOp load) { namesFunction |= load.getName() == "Function"; });
         executeRewritable = !namesFunction && !realmBuiltinsUnproved(module);
     }
     return *executeRewritable;
@@ -534,9 +535,9 @@ void callExecuted(closureLifter & lifter, mlir::Value callback,
         auto executed = llvm::cast<ctjs::CallDirectOp>(use.getOwner());
         helpers.insert(executed.getTarget());
         mlir::OpBuilder at(executed);
-        auto call = ctjs::CallOp::create(at, executed.getLoc(), valueType, callback,
-                                         lifter.undefinedAt(at, executed.getLoc()),
-                                         mlir::ValueRange{});
+        auto call =
+            ctjs::CallOp::create(at, executed.getLoc(), valueType, callback,
+                                 lifter.undefinedAt(at, executed.getLoc()), mlir::ValueRange{});
         executed.getResult().replaceAllUsesWith(call.getResult());
         mlir::Operation * helper = executed.getCalleeValue().getDefiningOp();
         executed.erase();
@@ -575,9 +576,9 @@ bool closureLifter::relaysCallback(mlir::BlockArgument parameter) {
 /// first takes the function itself when `inside` is left with no use.
 /// Returns the execute helpers whose calls it replaced, which the copy's sweep
 /// of uncalled originals then also asks about.
-llvm::SetVector<mlir::Operation *>
-closureLifter::relayCallback(ctjs::CreateClosureOp inside, llvm::ArrayRef<mlir::Value> cells,
-                             llvm::function_ref<ctjs::FuncOp(ctjs::FuncOp)> cloneDeep) {
+llvm::SetVector<mlir::Operation *> closureLifter::relayCallback(
+    ctjs::CreateClosureOp inside, llvm::ArrayRef<mlir::Value> cells,
+    llvm::function_ref<ctjs::FuncOp(ctjs::FuncOp)> cloneDeep) {
     llvm::SetVector<mlir::Operation *> helpers;
     llvm::SmallVector<std::pair<ctjs::CreateCellOp, RelayHolders>> boxes;
     // Whether `inside` keeps a use here, so that no callback made in a
@@ -590,8 +591,9 @@ closureLifter::relayCallback(ctjs::CreateClosureOp inside, llvm::ArrayRef<mlir::
             kept = true;
             continue;
         }
-        kept |= llvm::any_of(box->getUsers(),
-                             [](mlir::Operation * user) { return llvm::isa<ctjs::CellGetOp>(user); });
+        kept |= llvm::any_of(box->getUsers(), [](mlir::Operation * user) {
+            return llvm::isa<ctjs::CellGetOp>(user);
+        });
         boxes.emplace_back(box, std::move(*holders));
     }
     const ctjs::FuncOp callback = targetOf(inside);

@@ -46,7 +46,7 @@ bool isDeducible(mlir::Operation * o) {
     auto integer = llvm::dyn_cast<mlir::IntegerType>(o->getResult(0).getType());
     if (integer && integer.getWidth() < 32 && arithmetic) { return false; }
     return arithmetic || llvm::isa<ec::CmpOp, ec::CastOp, ec::CallOp, ec::LogicalAndOp,
-                                    ec::LogicalOrOp, ec::LogicalNotOp, ec::ConditionalOp>(o);
+                                   ec::LogicalOrOp, ec::LogicalNotOp, ec::ConditionalOp>(o);
 }
 
 /// The CTCOMPILE_PIN macro. The type is the last macro argument so a type

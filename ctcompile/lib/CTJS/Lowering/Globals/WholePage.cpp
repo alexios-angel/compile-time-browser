@@ -261,7 +261,9 @@ std::string frameTarget(mlir::Value object, mlir::Value value, llvm::StringRef a
     if (const auto tag = elementTag(object, closures)) {
         if (!llvm::StringSwitch<bool>(tag->lower())
                  .Cases({"iframe", "frame", "object", "embed"}, true)
-                 .Default(false)) { return {}; }
+                 .Default(false)) {
+            return {};
+        }
     }
     return "`" + api.str() +
            "` navigates a frame to a document that may run scripts, whose code a native program "
@@ -274,8 +276,8 @@ bool ownedValue(mlir::Value value, globals_detail::ClosureValues & closures) {
     const auto leaves = closures.leafValuesOf(value);
     return leaves.unknown.empty() && !leaves.values.empty() &&
            llvm::all_of(leaves.values, [](mlir::Value leaf) {
-               return mlir::isa_and_present<ConstantOp, CreateObjectOp, CreateArrayOp, CreateClosureOp>(
-                   leaf.getDefiningOp());
+               return mlir::isa_and_present<ConstantOp, CreateObjectOp, CreateArrayOp,
+                                            CreateClosureOp>(leaf.getDefiningOp());
            });
 }
 
@@ -297,9 +299,7 @@ std::string urlWrite(llvm::StringRef key, mlir::Value value, mlir::Value receive
     if (why.empty() && key.equals_insensitive("src")) {
         why = scriptWrite(receiver, api, closures);
     }
-    if (why.empty() && source && !image) {
-        why = frameTarget(receiver, value, api, closures);
-    }
+    if (why.empty() && source && !image) { why = frameTarget(receiver, value, api, closures); }
     return why;
 }
 
@@ -390,7 +390,7 @@ std::string writeSink(mlir::ModuleOp module, mlir::Value object, mlir::Value key
             // unmarked, the way its safe controls require.
             const auto tag = elementTag(object, closures);
             return tag && tag->equals_insensitive("script") ? scriptWrite(object, name, closures)
-                                                           : std::string{};
+                                                            : std::string{};
         }
         if (name == "srcdoc") { return codeMarkup(value, name); }
         if (llvm::StringSwitch<bool>(name)
@@ -411,8 +411,8 @@ std::string writeSink(mlir::ModuleOp module, mlir::Value object, mlir::Value key
     const auto leaves = closures.leafValuesOf(key);
     if (!leaves.unknown.empty() || leaves.values.empty()) {
         for (llvm::StringRef name :
-             {"innerHTML", "outerHTML", "srcdoc", "text", "textContent", "innerText", "href",
-              "src", "data", "action", "formAction", "location"}) {
+             {"innerHTML", "outerHTML", "srcdoc", "text", "textContent", "innerText", "href", "src",
+              "data", "action", "formAction", "location"}) {
             if (!check(name).empty()) {
                 return "a property name not known at build time may write a code sink, whose code "
                        "a native program cannot compile";
@@ -448,8 +448,8 @@ std::string writeSink(mlir::ModuleOp module, mlir::Value object, mlir::Value key
         if (concat && ruledOut) { continue; }
         const auto prefix = leftmostPart(leaf);
         for (llvm::StringRef name :
-             {"innerHTML", "outerHTML", "srcdoc", "text", "textContent", "innerText", "href",
-              "src", "data", "action", "formAction", "location"}) {
+             {"innerHTML", "outerHTML", "srcdoc", "text", "textContent", "innerText", "href", "src",
+              "data", "action", "formAction", "location"}) {
             if (!prefix || name.starts_with(*prefix)) {
                 if (std::string why = check(name); !why.empty()) { return why; }
             }
@@ -589,9 +589,9 @@ std::string methodCall(llvm::StringRef method, CallView call, mlir::Operation * 
         const auto sink = [](llvm::StringRef name) {
             return name.empty() || name.starts_with_insensitive("on") ||
                    llvm::StringSwitch<bool>(name.lower())
-                       .Cases({"srcdoc", "href", "src", "data", "action", "formaction",
-                               "xlink:href"},
-                              true)
+                       .Cases(
+                           {"srcdoc", "href", "src", "data", "action", "formaction", "xlink:href"},
+                           true)
                        .Default(false);
         };
         if (names.empty() || llvm::any_of(names, sink)) {
@@ -714,8 +714,8 @@ GetPropertyOp setReadOf(mlir::Value value, mlir::ModuleOp module, unsigned depth
 /// field (`{R: Reflect}.R`); a capture load or a property read not proved to
 /// hold something else fails closed, the way the node rules treat a value
 /// they cannot follow.
-bool isReflect(mlir::Value value, mlir::ModuleOp module,
-               globals_detail::ClosureValues & closures, unsigned depth = 0) {
+bool isReflect(mlir::Value value, mlir::ModuleOp module, globals_detail::ClosureValues & closures,
+               unsigned depth = 0) {
     if (!value) { return false; }
     if (depth == 8) { return true; }
     const mlir::Value origin = registerFlowOrigin(value);
@@ -752,8 +752,8 @@ bool isReflect(mlir::Value value, mlir::ModuleOp module,
         }
         return found;
     }
-    if (mlir::isa_and_present<CellGetOp, LoadUpvalueOp>(
-            origin ? origin.getDefiningOp() : nullptr)) {
+    if (mlir::isa_and_present<CellGetOp, LoadUpvalueOp>(origin ? origin.getDefiningOp()
+                                                               : nullptr)) {
         // A capture load: the cell's stores are the values it can hold.
         const auto leaves = closures.leafValuesOf(value);
         if (!leaves.unknown.empty() || leaves.values.empty()) { return true; }
@@ -1110,20 +1110,44 @@ void markRuntimeCode(mlir::ModuleOp module) {
                     }
                     if (mlir::isa_and_present<ConstantOp>(leaf.getDefiningOp())) { continue; }
                     const auto prefix = leftmostPart(leaf);
-                    for (llvm::StringRef name :
-                         {"setTimeout", "setInterval", "createElement", "createElementNS", "write",
-                          "writeln", "createContextualFragment", "insertAdjacentHTML",
-                          "setHTMLUnsafe", "parseHTMLUnsafe", "parseFromString", "setAttribute",
-                          "setAttributeNS", "createAttribute", "createAttributeNS", "assign",
-                          "replace", "open", "appendChild", "insertBefore", "replaceChild",
-                          "append", "prepend", "before", "after", "replaceWith",
-                          "replaceChildren", "insertAdjacentElement", "insertAdjacentText",
-                          "setAttributeNode", "setAttributeNodeNS", "setNamedItem",
-                          "setNamedItemNS", "defineProperty", "getOwnPropertyDescriptor",
-                          "getOwnPropertyDescriptors", "set"}) {
-                        if (!prefix || name.starts_with(*prefix)) {
-                            names.push_back(name.str());
-                        }
+                    for (llvm::StringRef name : {"setTimeout",
+                                                 "setInterval",
+                                                 "createElement",
+                                                 "createElementNS",
+                                                 "write",
+                                                 "writeln",
+                                                 "createContextualFragment",
+                                                 "insertAdjacentHTML",
+                                                 "setHTMLUnsafe",
+                                                 "parseHTMLUnsafe",
+                                                 "parseFromString",
+                                                 "setAttribute",
+                                                 "setAttributeNS",
+                                                 "createAttribute",
+                                                 "createAttributeNS",
+                                                 "assign",
+                                                 "replace",
+                                                 "open",
+                                                 "appendChild",
+                                                 "insertBefore",
+                                                 "replaceChild",
+                                                 "append",
+                                                 "prepend",
+                                                 "before",
+                                                 "after",
+                                                 "replaceWith",
+                                                 "replaceChildren",
+                                                 "insertAdjacentElement",
+                                                 "insertAdjacentText",
+                                                 "setAttributeNode",
+                                                 "setAttributeNodeNS",
+                                                 "setNamedItem",
+                                                 "setNamedItemNS",
+                                                 "defineProperty",
+                                                 "getOwnPropertyDescriptor",
+                                                 "getOwnPropertyDescriptors",
+                                                 "set"}) {
+                        if (!prefix || name.starts_with(*prefix)) { names.push_back(name.str()); }
                     }
                 }
             }
@@ -1139,10 +1163,9 @@ void markRuntimeCode(mlir::ModuleOp module) {
                 const auto view = callView(use->getOwner());
                 if (!view || view->callee != use->get()) { continue; }
                 if (unbounded) {
-                    found.push_back(
-                        {use->getOwner(),
-                         "a method name not known at build time may create code when "
-                         "called, whose code a native program cannot compile"});
+                    found.push_back({use->getOwner(),
+                                     "a method name not known at build time may create code when "
+                                     "called, whose code a native program cannot compile"});
                     continue;
                 }
                 for (const std::string & name : names) {

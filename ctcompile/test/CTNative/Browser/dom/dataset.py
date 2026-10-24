@@ -652,7 +652,9 @@ def main(argv=None):
                         else (
                             ITERATION_INTRINSICS
                             if name in LOOP_SOURCES
-                            else (["Object", "Array", "String"] if name not in BODIES else ["Object"])
+                            else (
+                                ["Object", "Array", "String"] if name not in BODIES else ["Object"]
+                            )
                         )
                     )
                 ),
@@ -708,7 +710,13 @@ def main(argv=None):
     def build_combined(pair):
         _, optimize, layout = pair
         rows = [
-            (f"{item[0]}-{'session' in provider}-{optimize}-{layout}", provider, item, optimize, layout)
+            (
+                f"{item[0]}-{'session' in provider}-{optimize}-{layout}",
+                provider,
+                item,
+                optimize,
+                layout,
+            )
             for provider in dom.PROVIDERS
             for item in prepared
         ]
@@ -822,9 +830,7 @@ def main(argv=None):
                     optimize=optimize,
                     max_steps=budget,
                 )
-    values = dict(
-        by_name["dataset_values"][2], dataset_parameters=[0]
-    )
+    values = dict(by_name["dataset_values"][2], dataset_parameters=[0])
     for provider in dom.PROVIDERS:
         for optimize in (False, True):
             for missing in ITERATION_INTRINSICS:
@@ -844,9 +850,7 @@ def main(argv=None):
                 control(
                     f"value-budget-{budget}-{provider}-{optimize}",
                     "dataset_values",
-                    dict(
-                        values, provider=provider, initial_intrinsics=ITERATION_INTRINSICS
-                    ),
+                    dict(values, provider=provider, initial_intrinsics=ITERATION_INTRINSICS),
                     optimize=optimize,
                     max_steps=budget,
                 )
@@ -860,9 +864,7 @@ def main(argv=None):
             {"initial_intrinsics": ["Object"], "dataset_parameters": [0, 0]},
         )
     ):
-        control(
-            f"premise-{index}", prepared[0][0], dict(prepared[0][2], **changes)
-        )
+        control(f"premise-{index}", prepared[0][0], dict(prepared[0][2], **changes))
     filter_base = dict(by_name["dataset_filter"][2], dataset_parameters=[0])
     for provider in dom.PROVIDERS:
         for optimize in (False, True):
@@ -917,18 +919,14 @@ def main(argv=None):
                     dict(
                         prefix_base,
                         provider=provider,
-                        initial_intrinsics=[
-                            name for name in PREFIX_INTRINSICS if name != missing
-                        ],
+                        initial_intrinsics=[name for name in PREFIX_INTRINSICS if name != missing],
                     ),
                     optimize=optimize,
                 )
 
     def run_control(job):
         label, ir, contract, optimize, max_steps = job
-        dom.lower(
-            args, ir, contract, label, optimize=optimize, max_steps=max_steps, success=False
-        )
+        dom.lower(args, ir, contract, label, optimize=optimize, max_steps=max_steps, success=False)
         return 1
 
     refusals += sum(dom.parallel(run_control, controls))
